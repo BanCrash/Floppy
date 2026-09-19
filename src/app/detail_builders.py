@@ -767,8 +767,9 @@ _DETAIL_LINK_BRANDS = {
         "fallback_text": "MU",
     },
     Sources.MANGABAKA.value: {
-        "chip_classes": "border-rose-400/18 bg-rose-500/[0.07]",
-        "badge_classes": "border-rose-400/28 bg-rose-500/14",
+        "logo_src": static("img/mangabaka-logo.png"),
+        "chip_classes": "border-violet-400/18 bg-violet-500/[0.07]",
+        "badge_classes": "border-violet-400/28 bg-violet-500/14",
         "accent_classes": _DETAIL_LINK_ACCENT_CLASSES,
         "fallback_text": "MB",
     },
