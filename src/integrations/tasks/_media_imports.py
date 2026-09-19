@@ -25,6 +25,7 @@ from integrations.imports import (
     kitsu,
     komga,
     mal,
+    mangabaka,
     mdblist,
     mylar,
     plex,
@@ -276,6 +277,12 @@ def import_anilist(user_id, mode, token=None, username=None):
 def import_kitsu(username, user_id, mode):
     """Celery task for importing anime and manga data from Kitsu."""
     return import_media(kitsu.importer, username, user_id, mode)
+
+
+@shared_task(name="Import from MangaBaka")
+def import_mangabaka(token, user_id, mode):
+    """Celery task for importing a MangaBaka library from an API token."""
+    return import_media(mangabaka.importer, token, user_id, mode)
 
 
 # Task name stays "Import from Yamtrack": it is persisted in celery result
