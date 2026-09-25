@@ -13,6 +13,12 @@
 #   scripts/test.sh --network             Only @tag("network") tests (needs API
 #                                         keys and internet; excluded by default
 #                                         because they are slow and flaky)
+#   scripts/test.sh --affected            Tests reached by the diff since
+#                                         origin/latest, plus staged, unstaged,
+#                                         and untracked files. One app when a
+#                                         file has no importing test. The fast
+#                                         suite for templates, static, the
+#                                         lockfile, settings, and the runner.
 #
 # Extra manage.py test flags (e.g. -v 2, --failfast) pass through after the mode.
 set -euo pipefail
@@ -61,6 +67,46 @@ case "${1:-}" in
     shift
     exec env FLOPPY_TEST_ALLOW_NETWORK=1 \
       "${RUNNER[@]}" src/manage.py test "${APPS[@]}" "${COMMON[@]}" "$@" --tag network
+    ;;
+  --affected)
+    shift
+    # Run the file, not `python -m config.affected_tests`. Importing the
+    # config package executes config/__init__.py, which boots Celery.
+    selection="$(PYTHONPATH=src "${RUNNER[@]}" src/config/affected_tests.py)"
+    mode="${selection%%$'\n'*}"
+    case "$mode" in
+      none)
+        exit 0
+        ;;
+      full)
+        exec "${RUNNER[@]}" src/manage.py test "${APPS[@]}" "${COMMON[@]}" "$@" \
+          --exclude-tag slow --exclude-tag network
+        ;;
+      labels)
+        labels=()
+        rest="${selection#*$'\n'}"
+        if [ "$rest" = "$selection" ]; then
+          rest=""
+        fi
+        while IFS= read -r line; do
+          if [ -n "$line" ]; then
+            labels+=("$line")
+          fi
+        done <<EOF
+$rest
+EOF
+        if [ "${#labels[@]}" -eq 0 ]; then
+          echo "[test.sh] --affected produced no labels" >&2
+          exit 0
+        fi
+        exec "${RUNNER[@]}" src/manage.py test "${COMMON[@]}" "${labels[@]}" "$@" \
+          --exclude-tag network
+        ;;
+      *)
+        echo "[test.sh] --affected: unexpected selector output" >&2
+        exit 1
+        ;;
+    esac
     ;;
   "")
     exec "${RUNNER[@]}" src/manage.py test "${APPS[@]}" "${COMMON[@]}" \

@@ -350,6 +350,7 @@ Run tests through `scripts/test.sh`, in this priority order:
 3. **Full suite (rarely needed locally):** `scripts/test.sh --full` — all tags, including slow benchmarks/Playwright and live-provider `network` tests. Takes 20+ minutes and produces huge output. Only run it when the user asks or the risk clearly justifies it. Application-impacting PRs run the CI application suite, which excludes `network` tests; documentation-only trigger filtering is owned by `.github/workflows/app-tests.yml`.
 
 Notes:
+- **Diff selection:** `scripts/test.sh --affected` runs tests reached by commits since `origin/latest`, plus staged, unstaged, and untracked files. A changed test module runs. A source module runs the tests that import it. A file under one app with no importing test runs that app. Templates, static, the lockfile, settings, and the runner run the fast suite. A docs-only diff runs nothing.
 - Quick confidence: `uv run --no-sync ruff check src`
 - Deployment confidence: `uv run --no-sync python src/manage.py floppy_preflight` — paths,
   settings, database, migrations and Redis in one pass. Reads only, so it is safe against a
