@@ -86,10 +86,23 @@ class HomeScreenViewTests(TestCase):
         self.assertContains(response, "expanded: false")
         self.assertContains(response, 'x-html="section.icon_svg"')
         self.assertContains(response, "ensureSortable()")
-        self.assertNotContains(
+        self.assertContains(response, "sortablejs-1.15.3.min.js")
+        self.assertNotContains(response, "cdn.jsdelivr.net/npm/sortablejs")
+        self.assertContains(
             response,
-            'src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"',
+            "These groups are the rows on the home screen. Drag to reorder, click to edit.",
         )
+        self.assertContains(response, "sectionPreview(section)")
+        self.assertContains(response, 'aria-label="Reorder section"')
+        self.assertContains(response, 'aria-label="Reorder row"')
+        self.assertContains(response, 'aria-label="Delete row"')
+        self.assertContains(response, 'aria-label="Row name"')
+        self.assertNotContains(response, "!isDesktop || hovering")
+        tv_section = next(
+            section for section in sections if section["media_type"] == "tv"
+        )
+        self.assertIn("Not Caught Up", tv_section["rows"][0]["filter_label"])
+        self.assertNotIn("not_caught_up", tv_section["rows"][0]["filter_label"])
         self.assertNotContains(response, "section.rows.length === 1")
         self.assertContains(response, "Add Row")
         self.assertContains(response, "Add List")

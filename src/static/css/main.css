@@ -5951,27 +5951,25 @@
   max-height: 60vh;
   overflow-y: auto;
 }
-@media (max-width: 63.999rem) {
-  .home-settings-row-body {
-    height: auto;
-    min-height: 2.5rem;
-  }
-  .home-settings-row-body > div, .home-settings-row-controls {
-    flex-wrap: wrap;
-  }
-  .home-settings-row-title, .home-settings-row-controls {
-    flex-basis: 100%;
-    min-width: 0;
-    padding-block: 0.25rem;
-  }
-  .home-settings-row-controls .filter-control {
-    position: static;
-  }
-  .home-settings-row-controls .filter-control > .absolute {
-    left: 0;
-    width: auto;
-    max-width: 100%;
-  }
+.home-settings-row-body {
+  height: auto;
+  min-height: 2.5rem;
+}
+.home-settings-row-body > div, .home-settings-row-controls {
+  flex-wrap: wrap;
+}
+.home-settings-row-title, .home-settings-row-controls {
+  flex-basis: 100%;
+  min-width: 0;
+  padding-block: 0.25rem;
+}
+.home-settings-row-controls .filter-control {
+  position: static;
+}
+.home-settings-row-controls .filter-control > .absolute {
+  left: 0;
+  width: auto;
+  max-width: 100%;
 }
 :root {
   --color-surface: #2a2f35;

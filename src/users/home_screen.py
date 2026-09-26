@@ -1091,6 +1091,7 @@ def serialize_settings_sections(user) -> list[dict]:
                         "title": row_title(row, user),
                         "custom_title": row.title or "",
                         "summary": row_summary(row, user),
+                        "filter_label": settings_filter_label(row, user),
                     }
                     for row in media_rows
                 ],
@@ -1138,6 +1139,13 @@ def row_summary(row: HomeScreenRow, user) -> str:
         "Ascending" if row.direction == DirectionChoices.ASC else "Descending"
     )
     return f"Sorted by {sort_label} • {direction_label}"
+
+
+def settings_filter_label(row: HomeScreenRow, user) -> str:
+    """Return filter-button text without loading filter field metadata."""
+    if row.row_type != HomeScreenRowTypeChoices.LIBRARY_QUERY:
+        return row_summary(row, user)
+    return describe_library_query(row.filters or {}, user, row.media_type)
 
 
 def home_row_inline_summary(row: HomeScreenRow, user) -> str | None:

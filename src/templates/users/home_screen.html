@@ -18,12 +18,17 @@
       {% csrf_token %}
       <input type="hidden" name="home_screen_sections" x-ref="payloadInput">
 
+      <p class="mb-4 text-sm text-[var(--color-text-muted)]">
+        {% translate "These groups are the rows on the home screen. Drag to reorder, click to edit." %}
+      </p>
+
       <div class="space-y-1" data-home-section-list>
         <template x-for="section in sections" :key="section.media_type">
           <section :data-section-media-type="section.media_type">
             <div class="flex w-full items-center gap-3 rounded-md border border-gray-600 bg-[var(--color-panel)] px-3 py-2 text-[var(--color-text-secondary)] text-sm transition-colors hover:bg-[var(--color-surface-muted)]">
               <button type="button"
                       class="drag-handle hidden shrink-0 items-center justify-center text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing lg:inline-flex"
+                      aria-label="{% translate "Reorder section" %}"
                       @click.stop>
                 {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
               </button>
@@ -34,6 +39,10 @@
                      x-html="section.icon_svg"></div>
                 <div class="min-w-0 flex-1">
                   <h3 class="font-medium text-[var(--color-text-secondary)]" x-text="section.label"></h3>
+                  <p class="truncate text-xs text-[var(--color-text-muted)]"
+                     x-show="!section.expanded && section.rows.length"
+                     x-cloak
+                     x-text="sectionPreview(section)"></p>
                 </div>
                 <div class="shrink-0 text-[var(--color-text-muted)]">
                   <span x-show="!section.expanded">{% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}</span>
@@ -60,19 +69,15 @@
                    :data-home-row-list="section.media_type">
                 <template x-for="row in section.rows" :key="row.client_id">
                   <article class="home-settings-row relative border-t border-[var(--color-surface-strong)] first:rounded-t-md first:border-t-0 last:rounded-b-md"
-                           x-data="{ openMenu: null, filterView: 'root', filterSearch: '', hovering: false, isDesktop: window.matchMedia('(min-width: 1024px)').matches }"
+                           x-data="{ openMenu: null, filterView: 'root', filterSearch: '' }"
                            :class="{ 'z-50': openMenu !== null || row.editorOpen }"
                            @keydown.escape="if (openMenu !== null) { $event.stopPropagation(); $event.preventDefault(); $event.target.closest('.filter-control')?.querySelector('button')?.focus(); openMenu = null; filterView = 'root'; filterSearch = ''; }"
-                           @mouseenter="hovering = true"
-                           @mouseleave="if (openMenu === null && !row.editorOpen) hovering = false"
-                           @focusin="hovering = true"
-                           @focusout="if (!($el.contains($event.relatedTarget))) { hovering = false }"
-                           @click="hovering = true"
                            :data-row-client-id="row.client_id">
-                    <div class="home-settings-row-body h-10 rounded-[inherit] bg-[var(--color-hover-dim)] px-3 transition-colors hover:bg-[var(--color-surface)]">
+                    <div class="home-settings-row-body rounded-[inherit] bg-[var(--color-hover-dim)] px-3 transition-colors hover:bg-[var(--color-surface)]">
                       <div class="flex h-full min-w-0 items-center gap-2">
                         <button type="button"
                                 class="drag-handle hidden h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-surface-hover)] bg-[var(--color-page-bg)] text-slate-400 transition-colors hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing lg:inline-flex"
+                                aria-label="{% translate "Reorder row" %}"
                                 @click.stop>
                           {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
                         </button>
@@ -81,22 +86,15 @@
                           <input type="text"
                                  x-model="row.custom_title"
                                  maxlength="100"
-                                 :placeholder="rowAutoTitle(section, row)"
+                                 :placeholder="rowPlaceholder(section, row)"
+                                 aria-label="{% translate "Row name" %}"
                                  title="{% translate "Rename this row" %}"
                                  @click.stop
                                  @keydown.enter.prevent="$el.blur()"
-                                 class="w-full truncate whitespace-nowrap rounded border border-transparent bg-transparent px-1 -mx-1 text-sm font-medium text-[var(--color-text)] placeholder:text-[var(--color-text)] hover:border-[var(--color-surface-hover)] focus:border-indigo-500 focus:outline-none focus:placeholder:text-[var(--color-text-muted)]">
+                                 class="w-full truncate whitespace-nowrap rounded border border-[var(--color-surface-hover)] bg-transparent px-1 -mx-1 text-sm font-medium text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-indigo-500 focus:outline-none">
                         </div>
 
-                        <div x-show="!isDesktop || hovering || openMenu !== null || row.editorOpen"
-                             x-cloak
-                             x-transition:enter="transition ease-out duration-150"
-                             x-transition:enter-start="opacity-0"
-                             x-transition:enter-end="opacity-100"
-                             x-transition:leave="transition ease-in duration-100"
-                             x-transition:leave-start="opacity-100"
-                             x-transition:leave-end="opacity-0"
-                             class="home-settings-row-controls flex shrink-0 items-center gap-1 whitespace-nowrap">
+                        <div class="home-settings-row-controls flex items-center gap-1">
                           <template x-if="row.row_type === 'library_query'">
                             <div class="relative filter-control"
                                  @click.outside="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; }">
@@ -104,7 +102,7 @@
                                       class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                       :aria-expanded="openMenu === 'filter'"
                                       @click.stop="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; } else { openMenu = 'filter'; filterView = 'root'; filterSearch = ''; }">
-                                <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]" x-text="rowFilterLabel(section, row)"></span>
+                                <span class="block min-w-0" x-text="rowFilterLabel(section, row)"></span>
                                 <svg xmlns="http://www.w3.org/2000/svg"
                                      viewBox="0 0 20 20"
                                      class="w-4 h-4 ml-2"
@@ -261,6 +259,7 @@
 
                           <button type="button"
                                   class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-opacity duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 cursor-pointer"
+                                  aria-label="{% translate "Delete row" %}"
                                   @click.stop="removeRow(section, row.client_id)">
                             {% include "app/icons/trashcan.svg" with classes="w-5 h-5" %}
                           </button>
@@ -394,7 +393,6 @@
         filterFieldsUrl,
         directionChoices: directionChoices || [],
         sortables: [],
-        sortableLoadPromise: null,
         nextRowId: 0,
         init() {
           window.homeScreenSettingsInstance = this;
@@ -412,39 +410,8 @@
         },
         async ensureSortable() {
           if (typeof Sortable !== 'undefined') return true;
-          if (!this.sortableLoadPromise) {
-            this.sortableLoadPromise = new Promise(resolve => {
-              const existingScript = document.querySelector('script[data-home-screen-sortable]');
-              if (existingScript) {
-                if (existingScript.dataset.loaded === 'true') {
-                  resolve(true);
-                  return;
-                }
-                existingScript.addEventListener('load', () => resolve(true), { once: true });
-                existingScript.addEventListener('error', () => resolve(false), { once: true });
-                return;
-              }
-
-              const script = document.createElement('script');
-              script.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js';
-              script.dataset.homeScreenSortable = 'true';
-              script.addEventListener('load', () => {
-                script.dataset.loaded = 'true';
-                resolve(true);
-              }, { once: true });
-              script.addEventListener('error', () => {
-                console.warn('Home screen drag-and-drop is unavailable because SortableJS could not be loaded.');
-                resolve(false);
-              }, { once: true });
-              document.head.appendChild(script);
-            });
-          }
-
-          const loaded = await this.sortableLoadPromise;
-          if (!loaded) {
-            this.sortableLoadPromise = null;
-          }
-          return loaded;
+          console.warn('Home screen drag-and-drop is unavailable because SortableJS could not be loaded.');
+          return false;
         },
         rowTypeLabel(type) {
           if (type === 'library_query') return gettext('Library Row');
@@ -463,6 +430,16 @@
         rowDisplayTitle(section, row) {
           const custom = (row.custom_title || '').trim();
           return custom || this.rowAutoTitle(section, row);
+        },
+        rowPlaceholder(section, row) {
+          if ((section.filter_fields || []).length) return this.rowAutoTitle(section, row);
+          return row.title || this.rowAutoTitle(section, row);
+        },
+        sectionPreview(section) {
+          return section.rows.map(row => {
+            const custom = (row.custom_title || '').trim();
+            return custom || this.rowPlaceholder(section, row);
+          }).filter(Boolean).join(', ');
         },
         activeLibraryFilterCount(row) {
           return Object.entries(row.filters || {}).filter(([key, value]) => {
@@ -511,6 +488,9 @@
           return this.normalizeFieldValue(value) === this.normalizeFieldValue(row.filters?.[key]);
         },
         rowFilterLabel(section, row) {
+          if (!(section.filter_fields || []).length && row.filter_label) {
+            return row.filter_label;
+          }
           const labels = [];
           const statuses = this.rowStatusValues(row);
           if (statuses.length) {
@@ -529,8 +509,7 @@
             labels.push(prefix + tags.join(separator));
           }
           if (!labels.length) return gettext('All');
-          if (labels.length === 1) return labels[0];
-          return `${labels[0]} +${labels.length - 1}`;
+          return labels.join(', ');
         },
         statusButtonLabel(section, row) {
           const statuses = this.rowStatusValues(row);
