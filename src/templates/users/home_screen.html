@@ -532,7 +532,7 @@
           return pills;
         },
         hasLibraryFilters(section, row) {
-          return this.rowFilterPills(section, row).some(pill => !['status', 'subview'].includes(pill.key));
+          return this.rowFilterPills(section, row).some(pill => pill.key !== 'subview');
         },
         humanizeFilterValue(value) {
           const text = String(value).replace(/_/g, ' ');
