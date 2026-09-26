@@ -27,7 +27,7 @@
           <section :data-section-media-type="section.media_type">
             <div class="flex w-full items-center gap-3 rounded-md border border-gray-600 bg-[var(--color-panel)] px-3 py-2 text-[var(--color-text-secondary)] text-sm transition-colors hover:bg-[var(--color-surface-muted)]">
               <button type="button"
-                      class="drag-handle hidden shrink-0 items-center justify-center text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing lg:inline-flex"
+                      class="section-drag-handle hidden shrink-0 items-center justify-center text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing lg:inline-flex"
                       aria-label="{% translate "Reorder section" %}"
                       @click.stop>
                 {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
@@ -76,13 +76,13 @@
                     <div class="home-settings-row-body rounded-[inherit] bg-[var(--color-hover-dim)] px-3 transition-colors hover:bg-[var(--color-surface)]">
                       <div class="flex h-full min-w-0 items-center gap-2">
                         <button type="button"
-                                class="drag-handle hidden h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-surface-hover)] bg-[var(--color-page-bg)] text-slate-400 transition-colors hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing lg:inline-flex"
+                                class="row-drag-handle hidden h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-surface-hover)] bg-[var(--color-page-bg)] text-slate-400 transition-colors hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing lg:inline-flex"
                                 aria-label="{% translate "Reorder row" %}"
                                 @click.stop>
                           {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
                         </button>
 
-                        <div class="home-settings-row-title min-w-0 flex-1">
+                        <div class="home-settings-row-title min-w-0 flex-1 py-1.5">
                           <input type="text"
                                  x-model="row.custom_title"
                                  maxlength="100"
@@ -92,9 +92,20 @@
                                  @click.stop
                                  @keydown.enter.prevent="$el.blur()"
                                  class="w-full truncate whitespace-nowrap rounded border border-[var(--color-surface-hover)] bg-transparent px-1 -mx-1 text-sm font-medium text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-indigo-500 focus:outline-none">
+                          <div x-show="row.row_type === 'library_query'"
+                               class="mt-1 flex flex-wrap items-center gap-1 text-xs">
+                            <template x-for="pill in rowFilterPills(section, row)" :key="pill.key">
+                              <span class="whitespace-nowrap rounded-md bg-[var(--color-surface-strong)] px-2 py-0.5 text-[var(--color-text-secondary)]">
+                                <span class="text-[var(--color-text-muted)]" x-text="`${pill.label}:`"></span>
+                                <span x-text="pill.value"></span>
+                              </span>
+                            </template>
+                            <span x-show="!rowFilterPills(section, row).length"
+                                  class="text-[var(--color-text-muted)]">{% translate "All items" %}</span>
+                          </div>
                         </div>
 
-                        <div class="home-settings-row-controls flex items-center gap-1">
+                        <div class="home-settings-row-controls flex shrink-0 items-center gap-1 whitespace-nowrap">
                           <template x-if="row.row_type === 'library_query'">
                             <div class="relative filter-control"
                                  @click.outside="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; }">
@@ -102,7 +113,7 @@
                                       class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                       :aria-expanded="openMenu === 'filter'"
                                       @click.stop="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; } else { openMenu = 'filter'; filterView = 'root'; filterSearch = ''; }">
-                                <span class="block min-w-0" x-text="rowFilterLabel(section, row)"></span>
+                                <span>{% translate "Filter" %}</span>
                                 <svg xmlns="http://www.w3.org/2000/svg"
                                      viewBox="0 0 20 20"
                                      class="w-4 h-4 ml-2"
@@ -117,7 +128,7 @@
                                             class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]"
                                             @click.stop="clearLibraryFilters(section, row); openMenu = null; filterView = 'root'; filterSearch = ''">
                                       <span>{% translate "All" %}</span>
-                                      <span class="ml-auto text-xs text-[var(--color-text-muted)]" x-show="rowFilterLabel(section, row) === 'All'">{% translate "Active" %}</span>
+                                      <span class="ml-auto text-xs text-[var(--color-text-muted)]" x-show="!hasLibraryFilters(section, row)">{% translate "Active" %}</span>
                                     </button>
 
                                     <div class="border-t border-gray-700 my-1"></div>
@@ -179,7 +190,7 @@
                                       class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                       :aria-expanded="openMenu === 'status'"
                                       @click.stop="openMenu = openMenu === 'status' ? null : 'status'">
-                                <span x-text="statusButtonLabel(section, row)"></span>
+                                <span>{% translate "Status" %}</span>
                                 <svg xmlns="http://www.w3.org/2000/svg"
                                      viewBox="0 0 20 20"
                                      class="w-4 h-4 ml-2"
@@ -371,6 +382,8 @@
 
 {% block js %}
   <script>
+    var LIBRARY_FILTER_KEYS = ['progress', 'rating', 'collection', 'genre', 'year', 'release', 'source', 'language', 'country', 'platform', 'origin', 'format', 'author', 'provider'];
+
     function homeScreenSettings({ sections, listSearchUrl, filterFieldsUrl, directionChoices }) {
       return {
         sections: (sections || []).map(section => ({
@@ -487,37 +500,43 @@
           if (key === 'status') return this.isRowStatusSelected(row, value);
           return this.normalizeFieldValue(value) === this.normalizeFieldValue(row.filters?.[key]);
         },
-        rowFilterLabel(section, row) {
-          if (!(section.filter_fields || []).length && row.filter_label) {
-            return row.filter_label;
-          }
-          const labels = [];
-          const statuses = this.rowStatusValues(row);
-          if (statuses.length) {
-            const statusLabels = statuses.map(value => this.fieldOptionLabel(section, 'status', value));
-            labels.push(statuses.length === 1 ? statusLabels[0] : interpolate(ngettext('%s status', '%s Statuses', statuses.length), [statuses.length]));
-          }
-          for (const key of ['progress', 'rating', 'collection', 'genre', 'year', 'release', 'source', 'language', 'country', 'platform', 'origin', 'format', 'author', 'provider']) {
+        rowFilterPills(section, row) {
+          if (row.row_type !== 'library_query') return [];
+          const pills = [];
+          const addPill = (key, values) => {
+            if (!values.length) return;
+            const field = this.fieldDefinition(section, key);
+            pills.push({
+              key,
+              label: field?.label || this.humanizeFilterValue(key),
+              value: values
+                .map(value => (field ? this.fieldOptionLabel(section, key, value) : this.humanizeFilterValue(value)))
+                .join(', ')
+            });
+          };
+          addPill('status', this.rowStatusValues(row));
+          if (section.media_type === 'music') addPill('subview', [row.filters?.subview || 'tracks']);
+          LIBRARY_FILTER_KEYS.forEach(key => {
             const value = row.filters?.[key];
-            if (!value || value === 'all') continue;
-            labels.push(this.fieldOptionLabel(section, key, value));
-          }
+            if (value && value !== 'all') addPill(key, [value]);
+          });
           const tags = this.rowTagValues(row);
           if (tags.length) {
-            const separator = (row.filters?.tag_mode || 'or') === 'and' ? ' & ' : ', ';
-            const prefix = row.filters?.tag_mode === 'not' ? gettext('Not tagged ') : '';
-            labels.push(prefix + tags.join(separator));
+            const mode = row.filters?.tag_mode || 'or';
+            pills.push({
+              key: 'tag',
+              label: mode === 'not' ? gettext('Not tagged') : gettext('Tags'),
+              value: tags.join(mode === 'and' ? ' & ' : gettext(' or '))
+            });
           }
-          if (!labels.length) return gettext('All');
-          return labels.join(', ');
+          return pills;
         },
-        statusButtonLabel(section, row) {
-          const statuses = this.rowStatusValues(row);
-          if (statuses.length === 1) {
-            const option = this.statusFilterOptions(section).find(candidate => candidate.value === statuses[0]);
-            return option ? option.label : statuses[0];
-          }
-          return statuses.length ? interpolate(ngettext('%s status', '%s Statuses', statuses.length), [statuses.length]) : gettext('Status');
+        hasLibraryFilters(section, row) {
+          return this.rowFilterPills(section, row).some(pill => !['status', 'subview'].includes(pill.key));
+        },
+        humanizeFilterValue(value) {
+          const text = String(value).replace(/_/g, ' ');
+          return text.charAt(0).toUpperCase() + text.slice(1);
         },
         sortButtonLabel(section, row) {
           const choice = this.sortChoices(section, row).find(candidate => candidate.value === row.sort_by);
@@ -553,7 +572,7 @@
             return option ? option.label : value;
           };
 
-          ['progress', 'rating', 'collection', 'genre', 'year', 'release', 'source', 'language', 'country', 'platform', 'origin', 'format', 'author', 'provider']
+          LIBRARY_FILTER_KEYS
             .forEach(key => {
               const value = row.filters?.[key];
               if (!value || value === 'all') return;
@@ -766,13 +785,16 @@
           this.sortables.forEach(sortable => sortable.destroy());
           this.sortables = [];
           if (typeof Sortable === 'undefined') return;
+          const sectionList = document.querySelector('[data-home-section-list]');
+          if (!sectionList) return;
 
-          this.$el.querySelectorAll('[data-home-row-list]').forEach(container => {
+          sectionList.querySelectorAll('[data-home-row-list]').forEach(container => {
             const mediaType = container.dataset.homeRowList;
             this.sortables.push(
               Sortable.create(container, {
                 animation: 150,
-                handle: '.drag-handle',
+                draggable: 'article',
+                handle: '.row-drag-handle',
                 onEnd: () => {
                   const section = this.sections.find(entry => entry.media_type === mediaType);
                   if (!section) return;
@@ -785,21 +807,19 @@
             );
           });
 
-          const sectionList = this.$el.querySelector('[data-home-section-list]');
-          if (sectionList) {
-            this.sortables.push(
-              Sortable.create(sectionList, {
-                animation: 150,
-                handle: '.drag-handle',
-                onEnd: () => {
-                  const orderedTypes = Array.from(sectionList.querySelectorAll('[data-section-media-type]')).map(node => node.dataset.sectionMediaType);
-                  this.sections = orderedTypes
-                    .map(mediaType => this.sections.find(section => section.media_type === mediaType))
-                    .filter(Boolean);
-                }
-              })
-            );
-          }
+          this.sortables.push(
+            Sortable.create(sectionList, {
+              animation: 150,
+              draggable: 'section',
+              handle: '.section-drag-handle',
+              onEnd: () => {
+                const orderedTypes = Array.from(sectionList.querySelectorAll('[data-section-media-type]')).map(node => node.dataset.sectionMediaType);
+                this.sections = orderedTypes
+                  .map(mediaType => this.sections.find(section => section.media_type === mediaType))
+                  .filter(Boolean);
+              }
+            })
+          );
         }
       };
     }
