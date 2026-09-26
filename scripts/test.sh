@@ -13,12 +13,19 @@
 #   scripts/test.sh --network             Only @tag("network") tests (needs API
 #                                         keys and internet; excluded by default
 #                                         because they are slow and flaky)
-#   scripts/test.sh --affected            Tests reached by the diff since
-#                                         origin/latest, plus staged, unstaged,
-#                                         and untracked files. One app when a
-#                                         file has no importing test. The fast
-#                                         suite for templates, static, the
-#                                         lockfile, settings, and the runner.
+#   scripts/test.sh --affected            Tests that executed the changed lines,
+#                                         from .floppy/affected.coverage when
+#                                         that map exists. Otherwise the import
+#                                         walk. The fast suite for templates,
+#                                         static, the lockfile, settings, and
+#                                         the runner.
+#   scripts/test.sh --affected --include-slow
+#                                         Same selection. A full fallback keeps
+#                                         @tag("slow"), matching CI.
+#   scripts/test.sh --affected-record     Record the map: the CI suite (slow
+#                                         included, network excluded) under
+#                                         coverage, written to
+#                                         .floppy/affected.coverage.
 #
 # Extra manage.py test flags (e.g. -v 2, --failfast) pass through after the mode.
 set -euo pipefail
@@ -68,8 +75,29 @@ case "${1:-}" in
     exec env FLOPPY_TEST_ALLOW_NETWORK=1 \
       "${RUNNER[@]}" src/manage.py test "${APPS[@]}" "${COMMON[@]}" "$@" --tag network
     ;;
+  --affected-record)
+    shift
+    mkdir -p .floppy
+    rm -f .coverage .coverage.* .floppy/affected.coverage
+    # A failing test still executed lines. Keep the map, then propagate the
+    # suite's exit status.
+    set +e
+    env COVERAGE_CORE=ctrace "${RUNNER[@]}" -m coverage run \
+      src/manage.py test "${APPS[@]}" --parallel "$@" --exclude-tag network
+    status=$?
+    set -e
+    uv run --no-sync coverage combine
+    cp .coverage .floppy/affected.coverage
+    echo "[test.sh] wrote .floppy/affected.coverage" >&2
+    exit "$status"
+    ;;
   --affected)
     shift
+    include_slow=0
+    if [ "${1:-}" = "--include-slow" ]; then
+      include_slow=1
+      shift
+    fi
     # Run the file, not `python -m config.affected_tests`. Importing the
     # config package executes config/__init__.py, which boots Celery.
     selection="$(PYTHONPATH=src "${RUNNER[@]}" src/config/affected_tests.py)"
@@ -79,6 +107,10 @@ case "${1:-}" in
         exit 0
         ;;
       full)
+        if [ "$include_slow" -eq 1 ]; then
+          exec "${RUNNER[@]}" src/manage.py test "${APPS[@]}" "${COMMON[@]}" "$@" \
+            --exclude-tag network
+        fi
         exec "${RUNNER[@]}" src/manage.py test "${APPS[@]}" "${COMMON[@]}" "$@" \
           --exclude-tag slow --exclude-tag network
         ;;

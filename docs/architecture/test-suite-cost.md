@@ -452,8 +452,13 @@ SECRET=test-only scripts/test.sh app.tests.test_statistics_sync
 SECRET=test-only scripts/test.sh
 
 # Tests the current diff can reach. Still pays the migration floor
-# unless FLOPPY_TEST_FAST_DB=1 is set.
+# unless FLOPPY_TEST_FAST_DB=1 is set. Uses the coverage map when present.
 SECRET=test-only scripts/test.sh --affected
+
+# Record the map. Same suite CI runs on latest: slow included, network
+# excluded. Do not set FLOPPY_TEST_FAST_DB. Line numbers have to match the
+# tree the map was recorded on, which is origin/latest for a branch diff.
+SECRET=test-only scripts/test.sh --affected-record
 ```
 
 ## Tests for the diff in front of you
@@ -462,26 +467,43 @@ SECRET=test-only scripts/test.sh --affected
 want to type a label. The change set is every commit since the merge-base
 with `origin/latest`, plus staged, unstaged, and untracked files.
 
-A changed test module runs. A changed source module runs the test modules
-that import it, including a name re-exported from a package `__init__.py`.
-The walk is not transitive: `from app.models import Movie` selects tests
-when `media.py` changes, and does not select them when some other model
-file changes. If nothing imports the file and it sits under one app, that
-app runs. Modules loaded by string from `AppConfig.ready()` (`app.signals`,
-`app.signals_watch_state`, `app.signals_music`, `integrations.signals_state`,
-`users.signals`) run the app, because a static importer list is the wrong
-set. Music hook files under `MUSIC_HOOKS_DIR` run `app`.
+When `.floppy/affected.coverage` is present (or `FLOPPY_AFFECTED_MAP`
+points at one), selection is the test modules whose coverage context
+executed the old side of the diff. The map is built with
+`dynamic_context = test_function` and `core = ctrace`. The ctrace core is
+required: on Python 3.12 the sysmon core records only the first test to
+hit a line. A changed test module always runs. A pure insertion selects
+tests that executed the anchor line. A new file, or a file coverage does
+not measure (`migrations`, `__init__.py`, `admin.py`), falls through to
+the import walk below.
+
+`scripts/test.sh --affected-record` runs the CI suite (slow included,
+network excluded) and writes that file. Pull requests download the copy
+uploaded by the last successful run on `latest`. A push to `latest` or
+`release` still runs the full app list and replaces the map.
+
+Without a map, a changed test module runs. A changed source module runs
+the test modules that import it, including a name re-exported from a
+package `__init__.py`. The walk is not transitive: `from app.models import
+Movie` selects tests when `media.py` changes, and does not select them
+when some other model file changes. If nothing imports the file and it
+sits under one app, that app runs. Modules loaded by string from
+`AppConfig.ready()` (`app.signals`, `app.signals_watch_state`,
+`app.signals_music`, `integrations.signals_state`, `users.signals`) run
+the app when the map has no line for them, because a static importer list
+is the wrong set. Music hook files under `MUSIC_HOOKS_DIR` run `app`.
 
 `src/templates/`, `src/static/`, `uv.lock`, `pyproject.toml`, settings, and
 the runner (`scripts/test.sh`, `src/config/test_runner.py`,
 `src/config/affected_tests.py`, and the other paths in
-`ESCAPE_HATCH`) run the fast suite. Docs and other non-code run nothing.
-`mcp_server/` and `scripts/tests/` are named and do not escalate: the Django
-suite does not collect them.
+`ESCAPE_HATCH`) run the fast suite. Coverage never sees a template.
+Docs and other non-code run nothing. `mcp_server/` and `scripts/tests/`
+are named and do not escalate: the Django suite does not collect them.
 
-The run excludes `@tag("network")` and does not exclude `@tag("slow")`, so
-a slow test you changed still runs. CI is unchanged, and so is
-`scripts/test.sh` with no arguments.
+A selected label excludes `@tag("network")` and does not exclude
+`@tag("slow")`, so a slow test you changed still runs. The fast-suite
+fallback excludes both, unless CI passes `--include-slow`.
+`scripts/test.sh` with no arguments is still the fast suite.
 
 Running apps one at a time (`app`, then `users`, …) both avoids the
 lost-result hang seen so far and gives usable per-app timings:

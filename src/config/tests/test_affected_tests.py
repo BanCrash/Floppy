@@ -14,7 +14,9 @@ from config.affected_tests import (
     MODE_NONE,
     MissingBaseError,
     changed_paths,
+    parse_diff_hunks,
     select,
+    test_module_from_context,
 )
 
 _REPO = Path(__file__).resolve().parents[3]
@@ -155,9 +157,146 @@ class AffectedTestsSelectionTests(SimpleTestCase):
             self.skipTest("origin/latest is not available")
         self.assertIsInstance(paths, list)
 
+    def test_coverage_map_selects_the_test_that_executed_the_line(self):
+        mode, labels, _notes = select(
+            ["src/app/models/media.py"],
+            repo=self.repo,
+            line_map={
+                "src/app/models/media.py": (
+                    "src/app/models/media.py",
+                    frozenset({2}),
+                ),
+            },
+            coverage_index={
+                "src/app/models/media.py": {2: {"app.tests.test_services"}},
+            },
+        )
+        self.assertEqual(mode, MODE_LABELS)
+        self.assertEqual(labels, ["app.tests.test_services"])
+
+    def test_file_missing_from_the_map_uses_imports(self):
+        mode, labels, notes = select(
+            ["src/app/services.py"],
+            repo=self.repo,
+            line_map={
+                "src/app/services.py": ("src/app/services.py", frozenset({1})),
+            },
+            coverage_index={},
+        )
+        self.assertEqual(mode, MODE_LABELS)
+        self.assertEqual(labels, ["app.tests.test_services"])
+        self.assertIn("src/app/services.py", notes[0])
+
+    def test_new_file_uses_imports(self):
+        mode, labels, _notes = select(
+            ["src/app/services.py"],
+            repo=self.repo,
+            line_map={"src/app/services.py": ("src/app/services.py", frozenset())},
+            coverage_index={
+                "src/app/services.py": {1: {"app.tests.test_media"}},
+            },
+        )
+        self.assertEqual(mode, MODE_LABELS)
+        self.assertEqual(labels, ["app.tests.test_services"])
+
+    def test_measured_lines_with_no_test_do_not_run_the_app(self):
+        mode, labels, notes = select(
+            ["src/app/models/music.py"],
+            repo=self.repo,
+            line_map={
+                "src/app/models/music.py": (
+                    "src/app/models/music.py",
+                    frozenset({1}),
+                ),
+            },
+            coverage_index={"src/app/models/music.py": {1: set()}},
+        )
+        self.assertEqual(mode, MODE_NONE)
+        self.assertEqual(labels, [])
+        self.assertIn("src/app/models/music.py", notes[0])
+
+    def test_template_stays_full_when_a_map_is_present(self):
+        mode, _labels, _notes = select(
+            ["src/templates/base.html"],
+            repo=self.repo,
+            line_map={},
+            coverage_index={},
+        )
+        self.assertEqual(mode, MODE_FULL)
+
+    def test_changed_test_module_still_runs_with_a_map(self):
+        mode, labels, _notes = select(
+            ["src/app/tests/test_media.py", "src/app/models/media.py"],
+            repo=self.repo,
+            line_map={
+                "src/app/models/media.py": (
+                    "src/app/models/media.py",
+                    frozenset({2}),
+                ),
+            },
+            coverage_index={
+                "src/app/models/media.py": {2: {"app.tests.test_services"}},
+            },
+        )
+        self.assertEqual(mode, MODE_LABELS)
+        self.assertEqual(
+            labels,
+            ["app.tests.test_media", "app.tests.test_services"],
+        )
+
+
+class AffectedTestsDiffTests(SimpleTestCase):
+    def test_hunks_use_old_lines_and_the_insertion_anchor(self):
+        parsed = parse_diff_hunks(
+            "\n".join(
+                [
+                    "diff --git a/src/app/models/media.py b/src/app/models/media.py",
+                    "--- a/src/app/models/media.py",
+                    "+++ b/src/app/models/media.py",
+                    "@@ -10,3 +10,4 @@",
+                    "@@ -40,0 +41,2 @@",
+                    "diff --git a/src/app/old.py b/src/app/new.py",
+                    "--- a/src/app/old.py",
+                    "+++ b/src/app/new.py",
+                    "@@ -2 +2 @@",
+                ],
+            ),
+        )
+        _lookup, lines = parsed["src/app/models/media.py"]
+        self.assertEqual(set(lines), {10, 11, 12, 40})
+        self.assertEqual(parsed["src/app/new.py"][0], "src/app/old.py")
+        self.assertEqual(set(parsed["src/app/old.py"][1]), {2})
+
+    def test_new_file_has_no_old_lines(self):
+        parsed = parse_diff_hunks(
+            "\n".join(
+                [
+                    "diff --git a/src/app/new.py b/src/app/new.py",
+                    "--- /dev/null",
+                    "+++ b/src/app/new.py",
+                    "@@ -0,0 +1,4 @@",
+                ],
+            ),
+        )
+        self.assertEqual(set(parsed["src/app/new.py"][1]), set())
+
+    def test_context_collapses_to_the_test_module(self):
+        self.assertEqual(
+            test_module_from_context(
+                "app.tests.test_media.MediaTests.test_movie",
+            ),
+            "app.tests.test_media",
+        )
+        self.assertEqual(
+            test_module_from_context("app.tests.test_media.test_func"),
+            "app.tests.test_media",
+        )
+        self.assertIsNone(test_module_from_context(""))
+        self.assertIsNone(test_module_from_context("app.services.do_thing"))
+
 
 class AffectedTestsScriptTests(SimpleTestCase):
-    def _run(self, stdout: str) -> tuple[int, str]:
+    def _run(self, stdout: str, *extra: str) -> tuple[int, str]:
         bindir = Path(self._tmpdir())
         invoked = bindir / "invoked"
         uv = bindir / "uv"
@@ -198,7 +337,7 @@ class AffectedTestsScriptTests(SimpleTestCase):
         env = os.environ.copy()
         env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
         result = subprocess.run(  # noqa: S603
-            ["bash", str(_REPO / "scripts" / "test.sh"), "--affected"],  # noqa: S607
+            ["bash", str(_REPO / "scripts" / "test.sh"), "--affected", *extra],  # noqa: S607
             cwd=_REPO,
             capture_output=True,
             text=True,
@@ -235,3 +374,9 @@ class AffectedTestsScriptTests(SimpleTestCase):
         self.assertIn("slow", recorded)
         self.assertIn("network", recorded)
         self.assertIn("src/manage.py", recorded)
+
+    def test_include_slow_keeps_slow_tests_on_a_full_fallback(self):
+        code, recorded = self._run("full\n", "--include-slow")
+        self.assertEqual(code, 0)
+        self.assertIn("network", recorded)
+        self.assertNotIn("slow", recorded)
