@@ -11,6 +11,7 @@ from django.utils.translation import ngettext
 from app.models.choices import MediaTypes
 
 VERSION = 1
+MAX_LINE_FIELDS = 3
 DISPLAY_HOVER = "hover"
 DISPLAY_ALWAYS = "always"
 DISPLAY_DORMANT = "dormant"
@@ -66,9 +67,11 @@ def _default_field_ids(media_type):
 
 def default_profile(media_type):
     """Return the profile that reproduces today's tile for ``media_type``."""
+    fields = list(_default_field_ids(media_type))
     return {
         "display": DISPLAY_HOVER,
-        "fields": list(_default_field_ids(media_type)),
+        "fields": fields,
+        "lines": _lines_from_fields(fields, DISPLAY_HOVER, {}),
         "options": {"rating": {"hide_zero": False}},
     }
 
@@ -85,6 +88,11 @@ def profiles_from_legacy(display, progress_bar, hide_zero):
                 field_id for field_id in profile["fields"] if field_id != "progress"
             ]
         profile["options"] = {"rating": {"hide_zero": bool(hide_zero)}}
+        profile["lines"] = _lines_from_fields(
+            profile["fields"],
+            display_value,
+            profile["options"],
+        )
         types[media_type] = profile
     return {"version": VERSION, "types": types}
 
@@ -126,17 +134,15 @@ def parse_tile_metadata(raw_payload):
             for field_id, spec in TILE_FIELDS.items()
             if media_type in spec["types"]
         }
-        fields = []
-        for field_id in entry.get("fields") or []:
-            if isinstance(field_id, str) and field_id in allowed and field_id not in fields:
-                fields.append(field_id)
         display = entry.get("display")
         if display not in DISPLAY_CHOICES:
             display = DISPLAY_HOVER
         options = entry.get("options") if isinstance(entry.get("options"), dict) else {}
+        lines = _parse_lines(entry, allowed, display, options)
         types[media_type] = {
             "display": display,
-            "fields": fields,
+            "fields": [field_id for line in lines for field_id in line["fields"]],
+            "lines": lines,
             "options": _clean_options(options, allowed),
         }
     return {"version": VERSION, "types": types}
@@ -156,6 +162,11 @@ def resolve_profile(user, media_type):
                     field_id for field_id in base["fields"] if field_id != "progress"
                 ]
             base["options"]["rating"]["hide_zero"] = _legacy_hide_zero(user)
+            base["lines"] = _lines_from_fields(
+                base["fields"],
+                base["display"],
+                base["options"],
+            )
         return base
     return parse_tile_metadata({"types": {media_type: saved}})["types"].get(
         media_type, default_profile(media_type)
@@ -172,18 +183,76 @@ def uses_custom_fields(user, media_type):
 
 
 def uses_line_renderer(user, media_type):
-    """Return whether this card should draw one line per field.
+    """Return whether this card should draw the saved lines.
 
     The shared card keeps its old year-and-progress markup until the field
-    list changes or a field has its own hover/dormant choice.
+    list changes, a line holds more than one property, or a line stays visible.
     """
     if uses_custom_fields(user, media_type):
         return True
     profile = resolve_profile(user, media_type)
+    for line in profile.get("lines") or []:
+        if len(line.get("fields") or []) > 1 or line.get("display") == DISPLAY_DORMANT:
+            return True
     for field_id in profile["fields"]:
         if _stored_field_display(profile, field_id) is not None:
             return True
     return False
+
+
+def _fallback_line_display(display):
+    """Map the old type-level choice onto a line."""
+    if display == DISPLAY_ALWAYS:
+        return DISPLAY_DORMANT
+    return DISPLAY_HOVER
+
+
+def _lines_from_fields(fields, display, options):
+    """Wrap each field as its own line."""
+    fallback = _fallback_line_display(display)
+    lines = []
+    for field_id in fields:
+        raw = (options or {}).get(field_id)
+        stored = None
+        if isinstance(raw, dict):
+            stored = _known_field_display(raw.get("display"))
+        lines.append({"fields": [field_id], "display": stored or fallback})
+    return lines
+
+
+def _parse_lines(entry, allowed, display, options):
+    """Read lines of up to three fields, or wrap a flat field list."""
+    raw_lines = entry.get("lines")
+    if isinstance(raw_lines, list):
+        lines = []
+        used = []
+        for raw in raw_lines:
+            if not isinstance(raw, dict):
+                continue
+            fields = []
+            for field_id in raw.get("fields") or []:
+                if len(fields) == MAX_LINE_FIELDS:
+                    break
+                if (
+                    isinstance(field_id, str)
+                    and field_id in allowed
+                    and field_id not in used
+                    and field_id not in fields
+                ):
+                    fields.append(field_id)
+            if not fields:
+                continue
+            used.extend(fields)
+            line_display = raw.get("display")
+            if line_display not in FIELD_DISPLAY_CHOICES:
+                line_display = _fallback_line_display(display)
+            lines.append({"fields": fields, "display": line_display})
+        return lines
+    fields = []
+    for field_id in entry.get("fields") or []:
+        if isinstance(field_id, str) and field_id in allowed and field_id not in fields:
+            fields.append(field_id)
+    return _lines_from_fields(fields, display, options)
 
 
 def _clean_options(options, allowed):
@@ -523,17 +592,26 @@ def tile_lines(user, media_type, item=None, media=None):
     card is at rest. Hover lines appear with the card hover.
     """
     profile = resolve_profile(user, media_type)
+    source = profile.get("lines") or _lines_from_fields(
+        profile["fields"],
+        profile["display"],
+        profile.get("options"),
+    )
     lines = []
-    for field_id in profile["fields"]:
-        renderer = _RENDERERS.get(field_id)
-        if renderer is None:
-            continue
-        text = renderer(item, media, user)
-        if text:
+    for line in source:
+        parts = []
+        for field_id in line.get("fields") or []:
+            renderer = _RENDERERS.get(field_id)
+            if renderer is None:
+                continue
+            text = renderer(item, media, user)
+            if text:
+                parts.append(text)
+        if parts:
             lines.append(
                 {
-                    "text": text,
-                    "dormant": field_visibility(profile, field_id) == DISPLAY_DORMANT,
+                    "text": " · ".join(parts),
+                    "dormant": line.get("display") == DISPLAY_DORMANT,
                 }
             )
     return lines
@@ -593,16 +671,24 @@ def _write_scalar(profile, field_name, value, media_type):
     """Write one legacy preference onto a type profile."""
     if field_name == "media_card_subtitle_display":
         profile["display"] = value if value in DISPLAY_CHOICES else DISPLAY_HOVER
+        mode = _fallback_line_display(profile["display"])
+        for line in profile.get("lines") or []:
+            line["display"] = mode
         return
     if field_name == "progress_bar":
         if "progress" not in default_profile(media_type)["fields"]:
             return
-        fields = list(profile["fields"])
-        if value and "progress" not in fields:
-            fields.append("progress")
+        lines = list(profile.get("lines") or [])
+        if value and "progress" not in profile["fields"]:
+            lines.append({"fields": ["progress"], "display": _fallback_line_display(profile["display"])})
         if not value:
-            fields = [field_id for field_id in fields if field_id != "progress"]
-        profile["fields"] = fields
+            lines = [
+                {**line, "fields": [field_id for field_id in line["fields"] if field_id != "progress"]}
+                for line in lines
+            ]
+            lines = [line for line in lines if line["fields"]]
+        profile["lines"] = lines
+        profile["fields"] = [field_id for line in lines for field_id in line["fields"]]
         return
     profile["options"]["rating"]["hide_zero"] = bool(value)
 

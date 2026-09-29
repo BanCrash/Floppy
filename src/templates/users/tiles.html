@@ -31,7 +31,7 @@
 
     <div class="preferences-section">
       <h2 class="text-lg font-semibold text-[var(--color-text)] mb-1">{% translate "Tiles" %}</h2>
-      <p class="text-sm text-[var(--color-text-muted)] mb-4">{% translate "Choose the lines under each tile title. Drag to reorder them for every type. The title always stays." %}</p>
+      <p class="text-sm text-[var(--color-text-muted)] mb-4">{% translate "Choose the lines under each tile title. A line holds up to three properties. Drag a line to reorder it. The title always stays." %}</p>
 
       <div class="flex flex-wrap gap-2 mb-4">
         <template x-for="entry in catalog" :key="entry.id">
@@ -56,36 +56,55 @@
             <input type="checkbox" x-model="saved[active].options.rating.hide_zero" @change="refreshPreview()">
             {% translate "Hide zero ratings" %}
           </label>
-          <template x-for="field in orderedFields" :key="field.id">
-            <div class="py-1 rounded" :class="dragOverId === field.id ? 'bg-[var(--color-surface-strong)]' : ''"
-                 @dragover.prevent="dragOverId = field.id"
-                 @dragleave="dragOverId = dragOverId === field.id ? '' : dragOverId"
-                 @drop.prevent="dropOn(field.id)">
-              <div class="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+          <template x-for="(line, lineIndex) in saved[active].lines" :key="lineIndex">
+            <div class="py-2 rounded" :class="dragOverId === lineIndex ? 'bg-[var(--color-surface-strong)]' : ''"
+                 @dragover.prevent="dragOverId = lineIndex"
+                 @dragleave="dragOverId = dragOverId === lineIndex ? '' : dragOverId"
+                 @drop.prevent="dropLine(lineIndex)">
+              <div class="flex items-start gap-2 text-sm text-[var(--color-text-secondary)]">
                 <button type="button"
                         draggable="true"
                         class="cursor-grab px-1 text-[var(--color-text-muted)]"
-                        aria-label="{% translate 'Reorder' %}"
-                        @dragstart="startDrag($event, field.id)"
-                        @dragend="dragId = ''; dragOverId = ''">⋮⋮</button>
-                <label class="flex items-center gap-2">
-                  <input type="checkbox" :value="field.id" x-model="saved[active].fields" @change="syncOrder()">
-                  <span x-text="field.label"></span>
-                  <span x-show="field.extra" class="text-xs px-1.5 py-0.5 rounded bg-[var(--color-surface-strong)]">{% translate "extra query" %}</span>
-                </label>
+                        aria-label="{% translate 'Reorder line' %}"
+                        @dragstart="startDrag($event, lineIndex)"
+                        @dragend="dragIndex = null; dragOverId = ''">⋮⋮</button>
+                <div class="flex flex-wrap items-center gap-1">
+                  <template x-for="fieldId in line.fields" :key="fieldId">
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--color-surface-strong)]">
+                      <span x-text="fieldLabel(fieldId)"></span>
+                      <button type="button" class="text-[var(--color-text-muted)]" @click="removeFromLine(lineIndex, fieldId)" aria-label="{% translate 'Remove' %}">×</button>
+                    </span>
+                  </template>
+                  <button type="button"
+                          class="text-xs text-[var(--color-link)]"
+                          x-show="line.fields.length < 3 && unusedFields().length"
+                          @click="picker = picker === lineIndex ? null : lineIndex">{% translate "Add property" %}</button>
+                </div>
               </div>
-              <div class="ml-6 mt-1 flex flex-wrap gap-1" x-show="saved[active].fields.includes(field.id)" x-cloak>
+              <div class="ml-6 mt-1 flex flex-wrap gap-1" x-show="picker === lineIndex" x-cloak>
+                <template x-for="field in unusedFields()" :key="field.id">
+                  <button type="button"
+                          class="px-2 py-0.5 rounded text-xs border border-transparent text-[var(--color-text-muted)]"
+                          @click="addToLine(lineIndex, field.id)"
+                          x-text="field.label"></button>
+                </template>
+              </div>
+              <div class="ml-6 mt-1 flex flex-wrap gap-1">
                 <button type="button"
                         class="px-2 py-0.5 rounded text-xs border"
-                        :class="fieldMode(field.id) === 'hover' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setMode(field.id, 'hover')">{% translate "Show on hover" %}</button>
+                        :class="line.display === 'hover' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setLineMode(lineIndex, 'hover')">{% translate "Show on hover" %}</button>
                 <button type="button"
                         class="px-2 py-0.5 rounded text-xs border"
-                        :class="fieldMode(field.id) === 'dormant' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setMode(field.id, 'dormant')">{% translate "Show dormant" %}</button>
+                        :class="line.display === 'dormant' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setLineMode(lineIndex, 'dormant')">{% translate "Show dormant" %}</button>
               </div>
             </div>
           </template>
+          <button type="button"
+                  class="mt-2 text-sm text-[var(--color-link)]"
+                  x-show="unusedFields().length"
+                  @click="addLine()">{% translate "Add line" %}</button>
           </div>
           <div class="tiles-preview-slot">
             <p class="text-xs text-[var(--color-text-muted)] mb-2">{% translate "Preview" %}</p>
@@ -108,102 +127,100 @@
       return {
         catalog: [],
         saved: {},
-        fieldOrder: [],
         active: "movie",
         previewHtml: "",
-        dragId: "",
+        dragIndex: null,
         dragOverId: "",
+        picker: null,
         init() {
           this.catalog = JSON.parse(document.getElementById("tile-catalog").textContent);
           this.saved = JSON.parse(document.getElementById("tile-saved").textContent);
           this.active = this.catalog[0] ? this.catalog[0].id : "movie";
-          let ids = [];
-          for (const entry of this.catalog) {
-            for (const field of entry.fields) {
-              if (!ids.includes(field.id)) ids.push(field.id);
-            }
-          }
-          for (const profile of Object.values(this.saved)) {
-            ids = this.mergeOrder(ids, profile.fields || []);
-          }
-          this.fieldOrder = ids;
-          this.applySavedOrder();
           this.refreshPreview();
         },
         get current() {
           return this.catalog.find((entry) => entry.id === this.active);
         },
-        get orderedFields() {
-          const rank = new Map(this.fieldOrder.map((id, index) => [id, index]));
-          return this.current.fields.slice().sort(
-            (a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0),
-          );
+        fieldLabel(fieldId) {
+          const field = this.current.fields.find((item) => item.id === fieldId);
+          return field ? field.label : fieldId;
         },
-        mergeOrder(base, subsequence) {
-          const rank = new Map(subsequence.map((id, index) => [id, index]));
-          const present = base.filter((id) => rank.has(id)).sort((a, b) => rank.get(a) - rank.get(b));
-          let index = 0;
-          return base.map((id) => (rank.has(id) ? present[index++] : id));
-        },
-        applySavedOrder() {
-          const rank = new Map(this.fieldOrder.map((id, index) => [id, index]));
-          for (const profile of Object.values(this.saved)) {
-            profile.fields = profile.fields.slice().sort(
-              (a, b) => (rank.get(a) ?? 999) - (rank.get(b) ?? 999),
-            );
+        unusedFields() {
+          const used = new Set();
+          for (const line of this.saved[this.active].lines) {
+            for (const fieldId of line.fields) used.add(fieldId);
           }
+          return this.current.fields.filter((field) => !used.has(field.id));
         },
-        syncOrder() {
-          this.applySavedOrder();
+        flatten() {
+          const ids = [];
+          for (const line of this.saved[this.active].lines) {
+            for (const fieldId of line.fields) ids.push(fieldId);
+          }
+          this.saved[this.active].fields = ids;
+        },
+        addLine() {
+          const next = this.unusedFields()[0];
+          if (!next) return;
+          this.saved[this.active].lines.push({ fields: [next.id], display: "hover" });
+          this.picker = null;
+          this.flatten();
           this.refreshPreview();
         },
-        startDrag(event, fieldId) {
-          this.dragId = fieldId;
-          event.dataTransfer.setData("text/plain", fieldId);
+        addToLine(lineIndex, fieldId) {
+          const line = this.saved[this.active].lines[lineIndex];
+          if (!fieldId || line.fields.length >= 3 || line.fields.includes(fieldId)) return;
+          line.fields.push(fieldId);
+          this.picker = null;
+          this.flatten();
+          this.refreshPreview();
+        },
+        removeFromLine(lineIndex, fieldId) {
+          const line = this.saved[this.active].lines[lineIndex];
+          line.fields = line.fields.filter((id) => id !== fieldId);
+          if (!line.fields.length) this.saved[this.active].lines.splice(lineIndex, 1);
+          this.flatten();
+          this.refreshPreview();
+        },
+        setLineMode(lineIndex, mode) {
+          this.saved[this.active].lines[lineIndex].display = mode;
+          this.refreshPreview();
+        },
+        startDrag(event, lineIndex) {
+          this.dragIndex = lineIndex;
+          event.dataTransfer.setData("text/plain", String(lineIndex));
           event.dataTransfer.effectAllowed = "move";
         },
-        dropOn(fieldId) {
-          const fromId = this.dragId;
-          this.dragId = "";
+        dropLine(lineIndex) {
+          const from = this.dragIndex;
+          this.dragIndex = null;
           this.dragOverId = "";
-          if (!fromId || fromId === fieldId) return;
-          const order = this.fieldOrder.filter((id) => id !== fromId);
-          const index = order.indexOf(fieldId);
-          order.splice(index < 0 ? order.length : index, 0, fromId);
-          this.fieldOrder = order;
-          this.applySavedOrder();
+          if (from === null || from === lineIndex) return;
+          const lines = this.saved[this.active].lines;
+          const [moved] = lines.splice(from, 1);
+          lines.splice(lineIndex, 0, moved);
+          this.flatten();
           this.refreshPreview();
         },
         checkAll() {
-          this.saved[this.active].fields = this.current.fields.map((field) => field.id);
-          this.applySavedOrder();
+          this.saved[this.active].lines = this.current.fields.map((field) => ({
+            fields: [field.id],
+            display: "hover",
+          }));
+          this.flatten();
           this.refreshPreview();
         },
         checkNone() {
-          this.saved[this.active].fields = [];
+          this.saved[this.active].lines = [];
+          this.flatten();
           this.refreshPreview();
         },
         checkAllMode(mode) {
-          const profile = this.saved[this.active];
-          profile.fields = this.current.fields.map((field) => field.id);
-          for (const field of this.current.fields) {
-            const current = profile.options[field.id] || {};
-            profile.options[field.id] = Object.assign({}, current, { display: mode });
-          }
-          this.applySavedOrder();
-          this.refreshPreview();
-        },
-        fieldMode(fieldId) {
-          const raw = this.saved[this.active].options[fieldId];
-          if (raw && (raw.display === "hover" || raw.display === "dormant")) {
-            return raw.display;
-          }
-          return this.saved[this.active].display === "always" ? "dormant" : "hover";
-        },
-        setMode(fieldId, mode) {
-          const profile = this.saved[this.active];
-          const current = profile.options[fieldId] || {};
-          profile.options[fieldId] = Object.assign({}, current, { display: mode });
+          this.saved[this.active].lines = this.current.fields.map((field) => ({
+            fields: [field.id],
+            display: mode,
+          }));
+          this.flatten();
           this.refreshPreview();
         },
         writePayload() {
