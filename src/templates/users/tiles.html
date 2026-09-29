@@ -82,10 +82,73 @@
               <button type="button" class="text-sm text-[var(--color-link)]" @click="setAllLinesMode('hover')">{% translate "All hover" %}</button>
               <button type="button" class="text-sm text-[var(--color-link)]" @click="setAllLinesMode('dormant')">{% translate "All dormant" %}</button>
             </div>
-            <label class="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-              <input type="checkbox" x-model="saved[active].options.rating.hide_zero" @change="refreshPreview()">
-              {% translate "Hide zero ratings" %}
-            </label>
+            <div class="space-y-2">
+              <p class="text-xs font-medium text-[var(--color-text-muted)]">{% translate "Score" %}</p>
+              <div class="flex flex-wrap gap-1">
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="saved[active].options.rating.show !== false ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setScoreShow(true)">{% translate "Show" %}</button>
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="saved[active].options.rating.show === false ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setScoreShow(false)">{% translate "Hide" %}</button>
+              </div>
+              <label class="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]"
+                     x-show="saved[active].options.rating.show !== false">
+                <input type="checkbox" x-model="saved[active].options.rating.hide_zero" @change="refreshPreview()">
+                {% translate "Hide zero ratings" %}
+              </label>
+            </div>
+
+            <div class="space-y-2">
+              <p class="text-xs font-medium text-[var(--color-text-muted)]">{% translate "Title" %}</p>
+              <div class="flex flex-wrap gap-1">
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="saved[active].options.title.overflow === 'ellipsis' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setTitleOverflow('ellipsis')">{% translate "Ellipsis" %}</button>
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="saved[active].options.title.overflow === 'wrap' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setTitleOverflow('wrap')">{% translate "Wrap" %}</button>
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="saved[active].options.title.overflow === 'clip' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setTitleOverflow('clip')">{% translate "Clip" %}</button>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs text-[var(--color-text-muted)]">{% translate "Lines" %}</span>
+                <template x-for="count in [1, 2, 3]" :key="'title-lines-' + count">
+                  <button type="button"
+                          class="px-2 py-0.5 rounded text-xs border"
+                          :class="saved[active].options.title.lines === count ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                          @click="setTitleLines('lines', count)"
+                          x-text="count"></button>
+                </template>
+              </div>
+              <div class="flex flex-wrap gap-1">
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="saved[active].options.title.hover === 'bleed' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setTitleHover('bleed')">{% translate "Bleed on hover" %}</button>
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="saved[active].options.title.hover === 'stay' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setTitleHover('stay')">{% translate "Stay put" %}</button>
+              </div>
+              <div class="flex flex-wrap items-center gap-2" x-show="saved[active].options.title.hover === 'bleed'">
+                <span class="text-xs text-[var(--color-text-muted)]">{% translate "Hover lines" %}</span>
+                <template x-for="count in [1, 2, 3]" :key="'title-hover-lines-' + count">
+                  <button type="button"
+                          class="px-2 py-0.5 rounded text-xs border"
+                          x-show="count >= saved[active].options.title.lines"
+                          :class="saved[active].options.title.hover_lines === count ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                          @click="setTitleLines('hover_lines', count)"
+                          x-text="count"></button>
+                </template>
+              </div>
+            </div>
 
             <div>
               <div class="flex flex-wrap items-center gap-2 mb-2">
@@ -244,6 +307,7 @@
             const fields = profile.fields || [];
             profile.lines = fields.map((fieldId) => ({ fields: [fieldId], display: "hover" }));
           }
+          this.ensureTitle(profile);
           this.flatten(typeId);
         },
         typeHref(typeId) {
@@ -308,6 +372,46 @@
         },
         setAllLinesMode(mode) {
           for (const line of this.saved[this.active].lines) line.display = mode;
+          this.refreshPreview();
+        },
+        ensureTitle(profile) {
+          if (!profile.options || typeof profile.options !== "object") profile.options = {};
+          if (!profile.options.rating) profile.options.rating = { hide_zero: false, show: true };
+          if (profile.options.rating.show === undefined) profile.options.rating.show = true;
+          const title = profile.options.title;
+          if (!title || typeof title !== "object") {
+            profile.options.title = { overflow: "ellipsis", lines: 1, hover: "bleed", hover_lines: 3 };
+            return;
+          }
+          if (!["ellipsis", "wrap", "clip"].includes(title.overflow)) title.overflow = "ellipsis";
+          if (!["bleed", "stay"].includes(title.hover)) title.hover = "bleed";
+          title.lines = this.clampTitleLines(title.lines);
+          title.hover_lines = this.clampTitleLines(title.hover_lines);
+          if (title.hover_lines < title.lines) title.hover_lines = title.lines;
+        },
+        clampTitleLines(value) {
+          const count = Number(value);
+          if (!Number.isInteger(count)) return 1;
+          return Math.min(3, Math.max(1, count));
+        },
+        setScoreShow(visible) {
+          this.saved[this.active].options.rating.show = visible;
+          this.refreshPreview();
+        },
+        setTitleOverflow(mode) {
+          this.saved[this.active].options.title.overflow = mode;
+          this.refreshPreview();
+        },
+        setTitleHover(mode) {
+          const title = this.saved[this.active].options.title;
+          title.hover = mode;
+          if (title.hover_lines < title.lines) title.hover_lines = title.lines;
+          this.refreshPreview();
+        },
+        setTitleLines(key, count) {
+          const title = this.saved[this.active].options.title;
+          title[key] = count;
+          if (title.hover_lines < title.lines) title.hover_lines = title.lines;
           this.refreshPreview();
         },
         resetType() {

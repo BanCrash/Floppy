@@ -1894,20 +1894,22 @@ def show_media_score(rating, user):
 @register.simple_tag(takes_context=True)
 def score_is_visible(context, rating, media_type=None):
     """Return whether ``rating`` should show for this tile's media type."""
-    from users.tile_metadata import hides_zero_rating
+    from users.tile_metadata import hides_zero_rating, shows_score
 
-    if rating is None:
-        return False
-    try:
-        rating_value = float(rating)
-    except (TypeError, ValueError):
-        return True
     user = context.get("user")
     if media_type is None:
         media_type = context.get("resolved_media_type")
     item = context.get("item")
     if media_type is None and item is not None:
         media_type = getattr(item, "media_type", None)
+    if not shows_score(user, media_type):
+        return False
+    if rating is None:
+        return False
+    try:
+        rating_value = float(rating)
+    except (TypeError, ValueError):
+        return True
     hide_zero = hides_zero_rating(user, media_type)
     return not hide_zero or rating_value > 0
 

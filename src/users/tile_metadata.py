@@ -17,6 +17,10 @@ DISPLAY_ALWAYS = "always"
 DISPLAY_DORMANT = "dormant"
 DISPLAY_CHOICES = (DISPLAY_HOVER, DISPLAY_ALWAYS)
 FIELD_DISPLAY_CHOICES = (DISPLAY_HOVER, DISPLAY_DORMANT)
+TITLE_OVERFLOW_CHOICES = ("ellipsis", "wrap", "clip")
+TITLE_HOVER_CHOICES = ("bleed", "stay")
+TITLE_LINE_MIN = 1
+TITLE_LINE_MAX = 3
 PERSON = "person"
 
 _MEDIA_TYPES = tuple(choice.value for choice in MediaTypes)
@@ -40,7 +44,7 @@ TILE_FIELDS = {
     "progress": _field("Progress", _ALL_MEDIA),
     "series_position": _field("Series position", {"book"}),
     "status": _field("Status", _ALL_MEDIA),
-    "rating": _field("Your rating", _ALL_MEDIA),
+    "rating": _field("Score", _ALL_MEDIA),
     "last_played": _field("Last played", _ALL_MEDIA),
     "synopsis": _field("Synopsis", _ALL_MEDIA),
     "artist": _field("Artist", {"music"}, _EXTRA),
@@ -72,7 +76,10 @@ def default_profile(media_type):
         "display": DISPLAY_HOVER,
         "fields": fields,
         "lines": _lines_from_fields(fields, DISPLAY_HOVER, {}),
-        "options": {"rating": {"hide_zero": False}},
+        "options": {
+            "rating": {"hide_zero": False, "show": True},
+            "title": default_title_options(),
+        },
     }
 
 
@@ -87,7 +94,7 @@ def profiles_from_legacy(display, progress_bar, hide_zero):
             profile["fields"] = [
                 field_id for field_id in profile["fields"] if field_id != "progress"
             ]
-        profile["options"] = {"rating": {"hide_zero": bool(hide_zero)}}
+        profile["options"]["rating"]["hide_zero"] = bool(hide_zero)
         profile["lines"] = _lines_from_fields(
             profile["fields"],
             display_value,
@@ -255,10 +262,56 @@ def _parse_lines(entry, allowed, display, options):
     return _lines_from_fields(fields, display, options)
 
 
+def default_title_options():
+    """Return the title treatment the cards use today.
+
+    One ellipsis line at rest, growing to three wrapped lines on hover.
+    """
+    return {"overflow": "ellipsis", "lines": 1, "hover": "bleed", "hover_lines": 3}
+
+
+def _title_line_count(value, fallback):
+    """Return a line count inside the allowed range."""
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return min(TITLE_LINE_MAX, max(TITLE_LINE_MIN, count))
+
+
+def title_options(profile):
+    """Return the title treatment for a resolved profile."""
+    raw = (profile.get("options") or {}).get("title")
+    cleaned = default_title_options()
+    if isinstance(raw, dict):
+        if raw.get("overflow") in TITLE_OVERFLOW_CHOICES:
+            cleaned["overflow"] = raw["overflow"]
+        if raw.get("hover") in TITLE_HOVER_CHOICES:
+            cleaned["hover"] = raw["hover"]
+        cleaned["lines"] = _title_line_count(raw.get("lines"), cleaned["lines"])
+        cleaned["hover_lines"] = _title_line_count(
+            raw.get("hover_lines"), cleaned["hover_lines"]
+        )
+    cleaned["hover_lines"] = max(cleaned["hover_lines"], cleaned["lines"])
+    return cleaned
+
+
+def _clean_title_options(options):
+    """Return a stored title treatment, or the default when it is missing."""
+    return title_options({"options": {"title": options.get("title")}})
+
+
 def _clean_options(options, allowed):
-    """Keep hide-zero and a hover/dormant choice for known fields."""
+    """Keep hide-zero, the title treatment, and a mode for known fields."""
     rating = options.get("rating") if isinstance(options.get("rating"), dict) else {}
-    cleaned = {"rating": {"hide_zero": bool(rating.get("hide_zero"))}}
+    show_score = rating.get("show", True)
+    cleaned = {
+        "rating": {
+            "hide_zero": bool(rating.get("hide_zero")),
+            "show": show_score is not False,
+        },
+        "title": _clean_title_options(options),
+    }
     rating_display = _known_field_display(rating.get("display"))
     if rating_display is not None:
         cleaned["rating"]["display"] = rating_display
@@ -323,6 +376,12 @@ def hides_zero_rating(user, media_type):
     """Return whether a zero score is hidden for this type."""
     profile = resolve_profile(user, media_type)
     return bool(profile["options"]["rating"]["hide_zero"])
+
+
+def shows_score(user, media_type):
+    """Return whether the title-row score star is drawn for this type."""
+    profile = resolve_profile(user, media_type)
+    return profile["options"]["rating"].get("show", True) is not False
 
 
 def field_enabled(user, media_type, field_id):
@@ -436,9 +495,22 @@ def _status(item, media, user):
 
 
 def _rating(item, media, user):
+    """Return the same score the title-row star shows."""
     score = _from_obj(media, "score")
-    if score in (None, "", 0):
+    if score in (None, ""):
         return None
+    try:
+        numeric = float(score)
+    except (TypeError, ValueError):
+        return _text(score)
+    if numeric == 0 and hides_zero_rating(user, _from_obj(item, "media_type")):
+        return None
+    if user is not None and hasattr(user, "format_score_for_display"):
+        formatted = user.format_score_for_display(score)
+        if formatted not in (None, ""):
+            return str(formatted)
+    if numeric == int(numeric):
+        return str(int(numeric))
     return str(score)
 
 
@@ -673,11 +745,12 @@ def tile_lines(user, media_type, item=None, media=None):
                 continue
             text = renderer(item, media, user)
             if text:
-                parts.append(text)
+                parts.append({"text": text, "score": field_id == "rating"})
         if parts:
             lines.append(
                 {
-                    "text": " · ".join(parts),
+                    "text": " · ".join(part["text"] for part in parts),
+                    "parts": parts,
                     "dormant": line.get("display") == DISPLAY_DORMANT,
                 }
             )

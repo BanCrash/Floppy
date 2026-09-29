@@ -131,9 +131,11 @@ def _tile_render_context(rendered_context):
     """Attach the subtitle profile for this card."""
     from users.tile_metadata import (
         DISPLAY_HOVER,
+        resolve_profile,
         show_progress_field,
         subtitle_display,
         tile_lines,
+        title_options,
         uses_line_renderer,
     )
 
@@ -154,4 +156,5 @@ def _tile_render_context(rendered_context):
         "tile_show_progress": show_progress_field(user, media_type),
         "tile_use_lines": use_lines,
         "tile_line_list": tile_lines(user, media_type, item, media),
+        "tile_title": title_options(resolve_profile(user, media_type)),
     }
