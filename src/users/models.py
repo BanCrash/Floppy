@@ -406,13 +406,6 @@ class QuickSeasonUpdateChoices(models.TextChoices):
     BOTH = "both", _("Both")
 
 
-class MediaCardSubtitleDisplayChoices(models.TextChoices):
-    """Choices for media card subtitle visibility."""
-
-    HOVER = "hover", _("On hover")
-    ALWAYS = "always", _("Always visible")
-
-
 class TitleDisplayPreferenceChoices(models.TextChoices):
     """Choices for how item titles are displayed across the app."""
 
@@ -792,12 +785,6 @@ class User(AbstractUser):
         default=False,
         help_text="Hide hover overlay on touch devices",
     )
-    media_card_subtitle_display = models.CharField(
-        max_length=20,
-        default=MediaCardSubtitleDisplayChoices.HOVER,
-        choices=MediaCardSubtitleDisplayChoices.choices,
-        help_text="Control when media card subtitles are visible",
-    )
     title_display_preference = models.CharField(
         max_length=20,
         default=TitleDisplayPreferenceChoices.LOCALIZED,
@@ -820,17 +807,9 @@ class User(AbstractUser):
     )
 
     # Progress visibility preferences
-    progress_bar = models.BooleanField(
-        default=True,
-        help_text="Show progress bar",
-    )
     hide_completed_recommendations = models.BooleanField(
         default=False,
         help_text="Hide completed media in recommendations",
-    )
-    hide_zero_rating = models.BooleanField(
-        default=False,
-        help_text="Hide zero ratings from media cards",
     )
     obfuscate_episodes = models.BooleanField(
         default=False,
@@ -1132,6 +1111,12 @@ class User(AbstractUser):
         default=dict,
         blank=True,
         help_text="Visible and ordered sections for each detail page family",
+    )
+
+    tile_metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Per-media-type subtitle fields shown under a tile title",
     )
 
     ui_language = models.CharField(
@@ -1537,12 +1522,6 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="duration_format_valid",
                 condition=models.Q(duration_format__in=DurationFormatChoices.values),
-            ),
-            models.CheckConstraint(
-                name="media_card_subtitle_display_valid",
-                condition=models.Q(
-                    media_card_subtitle_display__in=MediaCardSubtitleDisplayChoices.values
-                ),
             ),
             models.CheckConstraint(
                 name="title_display_preference_valid",

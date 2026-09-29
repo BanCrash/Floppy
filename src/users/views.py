@@ -95,7 +95,6 @@ from users.models import (
     ImportFrequencyChoices,
     ImportModeChoices,
     LogoStyleChoices,
-    MediaCardSubtitleDisplayChoices,
     MediaStatusChoices,
     MobileGridLayoutChoices,
     PlannedHomeDisplayChoices,
@@ -982,6 +981,178 @@ def appearance(request):
 
 
 @require_http_methods(["GET", "POST"])
+def tiles(request):
+    """Edit per-media-type subtitle fields."""
+    from users.tile_metadata import (
+        PROFILE_TYPES,
+        editor_catalog,
+        parse_tile_metadata,
+        resolve_profile,
+    )
+
+    if request.method == "POST":
+        if request.user.is_demo:
+            messages.error(request, "This section is view-only for demo accounts.")
+            return redirect("tiles")
+        request.user.tile_metadata = parse_tile_metadata(
+            request.POST.get("tile_metadata")
+        )
+        request.user.save(update_fields=["tile_metadata"])
+        messages.success(request, "Tiles updated")
+        return redirect("tiles")
+
+    saved = {
+        media_type: resolve_profile(request.user, media_type)
+        for media_type in PROFILE_TYPES
+    }
+    return render(
+        request,
+        "users/tiles.html",
+        {
+            "tile_catalog_json": editor_catalog(),
+            "tile_saved_json": saved,
+        },
+    )
+
+
+@require_GET
+def tiles_preview(request):
+    """Return a real media card for the draft profile of one type."""
+    from users.tile_metadata import PROFILE_TYPES, parse_tile_metadata
+
+    media_type = request.GET.get("type") or "movie"
+    if media_type not in PROFILE_TYPES:
+        media_type = "movie"
+    request.user.tile_metadata = parse_tile_metadata(request.GET.get("draft") or "{}")
+    sample = _tile_preview_sample(request.user, media_type)
+    if sample is None:
+        item, media = _tile_preview_stand_in(media_type)
+        public_view = True
+    else:
+        item, media = sample
+        public_view = False
+    return render(
+        request,
+        "users/tiles_preview.html",
+        {
+            "item": item,
+            "media": media,
+            "preview_type": media_type,
+            "public_view": public_view,
+        },
+    )
+
+
+def _tile_preview_stand_in(media_type):
+    """Return a card-shaped sample when this account has no row of the type."""
+    from types import SimpleNamespace
+
+    from django.utils import timezone
+
+    titles = {
+        "tv": "Sample Show",
+        "season": "Sample Season",
+        "episode": "Sample Episode",
+        "movie": "Sample Movie",
+        "anime": "Sample Anime",
+        "manga": "Sample Manga",
+        "game": "Sample Game",
+        "book": "Sample Book",
+        "comic": "Sample Comic",
+        "comicissue": "Sample Issue",
+        "boardgame": "Sample Board Game",
+        "music": "Sample Album",
+        "podcast": "Sample Podcast",
+        "person": "Sample Person",
+    }
+    item = {
+        "title": titles.get(media_type, "Sample"),
+        "media_type": "movie" if media_type == "person" else media_type,
+        "source": "manual",
+        "media_id": "tile-preview",
+        "year": 2024,
+        "genres": ["Drama", "Thriller"],
+        "runtime": "42 min",
+        "synopsis": "A short sample line so this field has something to show.",
+        "season_number": 1,
+        "episode_number": 3,
+        "role": "Lead",
+        "character": "Lead",
+        "artist_name": "Sample Artist",
+        "author": "Sample Author",
+        "series_position": 2,
+        "show_title": "Sample Show",
+        "image": "",
+    }
+    media = SimpleNamespace(
+        id=0,
+        status="In progress",
+        progress=4,
+        max_progress=10,
+        score=8,
+        repeats=2,
+        formatted_progress="4 / 10",
+        aggregated_status="In progress",
+        last_played_at=timezone.now(),
+        is_statusless=False,
+        end_date=None,
+        aggregated_end_date=None,
+        next_event=None,
+        card_tile_url="",
+        album=None,
+        artist=None,
+    )
+    return item, media
+
+
+def _tile_preview_sample(user, media_type):
+    """Return ``(item, media)`` for the user's newest row of this type."""
+    model_names = {
+        "movie": "Movie",
+        "tv": "TV",
+        "season": "Season",
+        "episode": "Episode",
+        "anime": "Anime",
+        "manga": "Manga",
+        "game": "Game",
+        "book": "Book",
+        "comic": "Comic",
+        "comicissue": "ComicIssue",
+        "boardgame": "BoardGame",
+        "podcast": "Podcast",
+    }
+    if media_type == "music":
+        tracker_model = apps.get_model("app", "AlbumTracker")
+        tracker = (
+            tracker_model.objects.filter(user=user)
+            .select_related("album")
+            .order_by("-id")
+            .first()
+        )
+        if tracker is None:
+            return None
+        return tracker.album, tracker
+    model_name = model_names.get(media_type)
+    if model_name is None:
+        return None
+    try:
+        model = apps.get_model("app", model_name)
+    except LookupError:
+        return None
+    if not hasattr(model, "item"):
+        return None
+    sample = model.objects.select_related("item")
+    if media_type == "episode":
+        sample = sample.filter(related_season__user=user)
+    else:
+        sample = sample.filter(user=user)
+    media = sample.order_by("-id").first()
+    if media is None:
+        return None
+    return media.item, media
+
+
+@require_http_methods(["GET", "POST"])
 def preferences(request):
     """Render the preferences settings page."""
     media_types = [
@@ -1041,15 +1212,12 @@ def preferences(request):
         activity_history_view = request.POST.get("activity_history_view")
         game_logging_style = request.POST.get("game_logging_style")
         mobile_grid_layout = request.POST.get("mobile_grid_layout")
-        media_card_subtitle_display = request.POST.get("media_card_subtitle_display")
         title_display_preference = request.POST.get("title_display_preference")
         top_talent_sort_by = request.POST.get("top_talent_sort_by")
         rating_scale = request.POST.get("rating_scale")
         hide_completed_recommendations_raw = request.POST.get(
             "hide_completed_recommendations"
         )
-        hide_zero_rating_raw = request.POST.get("hide_zero_rating")
-        progress_bar_raw = request.POST.get("progress_bar")
         # Read these as None-when-absent. The header theme toggle posts only
         # `theme` to this endpoint, so defaulting an absent field to its
         # "off" value silently reset preferences the user never touched.
@@ -1174,15 +1342,6 @@ def preferences(request):
             fields_to_update.append("mobile_grid_layout")
 
         if (
-            media_card_subtitle_display
-            and media_card_subtitle_display
-            in [choice[0] for choice in MediaCardSubtitleDisplayChoices.choices]
-            and request.user.media_card_subtitle_display != media_card_subtitle_display
-        ):
-            request.user.media_card_subtitle_display = media_card_subtitle_display
-            fields_to_update.append("media_card_subtitle_display")
-
-        if (
             title_display_preference
             and title_display_preference
             in [choice[0] for choice in TitleDisplayPreferenceChoices.choices]
@@ -1220,18 +1379,6 @@ def preferences(request):
                     hide_completed_recommendations
                 )
                 fields_to_update.append("hide_completed_recommendations")
-
-        if hide_zero_rating_raw is not None:
-            hide_zero_rating = hide_zero_rating_raw == "1"
-            if request.user.hide_zero_rating != hide_zero_rating:
-                request.user.hide_zero_rating = hide_zero_rating
-                fields_to_update.append("hide_zero_rating")
-
-        if progress_bar_raw is not None:
-            progress_bar = progress_bar_raw == "1"
-            if request.user.progress_bar != progress_bar:
-                request.user.progress_bar = progress_bar
-                fields_to_update.append("progress_bar")
 
         if (
             quick_season_update_mobile is not None

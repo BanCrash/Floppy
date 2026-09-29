@@ -1,0 +1,224 @@
+{% extends "users/base.html" %}
+{% load i18n %}
+
+{% block settings_content %}
+  <style>
+    .tiles-layout {
+      display: grid;
+      gap: 2rem;
+      align-items: start;
+    }
+    @media (min-width: 768px) {
+      .tiles-layout {
+        grid-template-columns: minmax(0, 1fr) 20rem;
+      }
+    }
+    .tiles-preview-slot {
+      width: 18rem;
+      justify-self: end;
+      position: sticky;
+      top: 5rem;
+    }
+  </style>
+  <form method="post"
+        x-data="tilesEditor()"
+        x-init="init()"
+        @submit="writePayload()">
+    {% csrf_token %}
+    <input type="hidden" name="tile_metadata" x-ref="payload">
+    {{ tile_catalog_json|json_script:"tile-catalog" }}
+    {{ tile_saved_json|json_script:"tile-saved" }}
+
+    <div class="preferences-section">
+      <h2 class="text-lg font-semibold text-[var(--color-text)] mb-1">{% translate "Tiles" %}</h2>
+      <p class="text-sm text-[var(--color-text-muted)] mb-4">{% translate "Choose the lines under each tile title. Drag to reorder them for every type. The title always stays." %}</p>
+
+      <div class="flex flex-wrap gap-2 mb-4">
+        <template x-for="entry in catalog" :key="entry.id">
+          <button type="button"
+                  @click="active = entry.id"
+                  class="px-3 py-1 rounded-md text-sm border"
+                  :class="active === entry.id ? 'bg-[var(--color-surface-strong)] text-[var(--color-text)] border-[var(--color-link)]' : 'text-[var(--color-text-muted)] border-transparent'"
+                  x-text="entry.label"></button>
+        </template>
+      </div>
+
+      <template x-if="current">
+        <div class="tiles-layout">
+          <div>
+          <div class="flex gap-2 mb-3">
+            <button type="button" class="text-sm text-[var(--color-link)]" @click="checkAll()">{% translate "Check all" %}</button>
+            <button type="button" class="text-sm text-[var(--color-link)]" @click="checkNone()">{% translate "Check none" %}</button>
+            <button type="button" class="text-sm text-[var(--color-link)]" @click="checkAllMode('hover')">{% translate "Check all hover" %}</button>
+            <button type="button" class="text-sm text-[var(--color-link)]" @click="checkAllMode('dormant')">{% translate "Check all dormant" %}</button>
+          </div>
+          <label class="flex items-center gap-2 text-sm mb-3 text-[var(--color-text-secondary)]">
+            <input type="checkbox" x-model="saved[active].options.rating.hide_zero" @change="refreshPreview()">
+            {% translate "Hide zero ratings" %}
+          </label>
+          <template x-for="field in orderedFields" :key="field.id">
+            <div class="py-1 rounded" :class="dragOverId === field.id ? 'bg-[var(--color-surface-strong)]' : ''"
+                 @dragover.prevent="dragOverId = field.id"
+                 @dragleave="dragOverId = dragOverId === field.id ? '' : dragOverId"
+                 @drop.prevent="dropOn(field.id)">
+              <div class="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                <button type="button"
+                        draggable="true"
+                        class="cursor-grab px-1 text-[var(--color-text-muted)]"
+                        aria-label="{% translate 'Reorder' %}"
+                        @dragstart="startDrag($event, field.id)"
+                        @dragend="dragId = ''; dragOverId = ''">⋮⋮</button>
+                <label class="flex items-center gap-2">
+                  <input type="checkbox" :value="field.id" x-model="saved[active].fields" @change="syncOrder()">
+                  <span x-text="field.label"></span>
+                  <span x-show="field.extra" class="text-xs px-1.5 py-0.5 rounded bg-[var(--color-surface-strong)]">{% translate "extra query" %}</span>
+                </label>
+              </div>
+              <div class="ml-6 mt-1 flex flex-wrap gap-1" x-show="saved[active].fields.includes(field.id)" x-cloak>
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="fieldMode(field.id) === 'hover' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setMode(field.id, 'hover')">{% translate "Show on hover" %}</button>
+                <button type="button"
+                        class="px-2 py-0.5 rounded text-xs border"
+                        :class="fieldMode(field.id) === 'dormant' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
+                        @click="setMode(field.id, 'dormant')">{% translate "Show dormant" %}</button>
+              </div>
+            </div>
+          </template>
+          </div>
+          <div class="tiles-preview-slot">
+            <p class="text-xs text-[var(--color-text-muted)] mb-2">{% translate "Preview" %}</p>
+            <div id="tile-preview" x-html="previewHtml"></div>
+          </div>
+        </div>
+      </template>
+
+      <p class="text-sm text-[var(--color-text-muted)] mt-4">
+        <a class="text-[var(--color-link)]" href="{% url 'preferences' %}#display-layout">{% translate "Title language and book progress stay in Preferences." %}</a>
+      </p>
+
+      <div class="mt-4">
+        <button type="submit" class="px-4 py-2 rounded-md bg-indigo-600 text-white text-sm">{% translate "Save" %}</button>
+      </div>
+    </div>
+  </form>
+  <script>
+    function tilesEditor() {
+      return {
+        catalog: [],
+        saved: {},
+        fieldOrder: [],
+        active: "movie",
+        previewHtml: "",
+        dragId: "",
+        dragOverId: "",
+        init() {
+          this.catalog = JSON.parse(document.getElementById("tile-catalog").textContent);
+          this.saved = JSON.parse(document.getElementById("tile-saved").textContent);
+          this.active = this.catalog[0] ? this.catalog[0].id : "movie";
+          let ids = [];
+          for (const entry of this.catalog) {
+            for (const field of entry.fields) {
+              if (!ids.includes(field.id)) ids.push(field.id);
+            }
+          }
+          for (const profile of Object.values(this.saved)) {
+            ids = this.mergeOrder(ids, profile.fields || []);
+          }
+          this.fieldOrder = ids;
+          this.applySavedOrder();
+          this.refreshPreview();
+        },
+        get current() {
+          return this.catalog.find((entry) => entry.id === this.active);
+        },
+        get orderedFields() {
+          const rank = new Map(this.fieldOrder.map((id, index) => [id, index]));
+          return this.current.fields.slice().sort(
+            (a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0),
+          );
+        },
+        mergeOrder(base, subsequence) {
+          const rank = new Map(subsequence.map((id, index) => [id, index]));
+          const present = base.filter((id) => rank.has(id)).sort((a, b) => rank.get(a) - rank.get(b));
+          let index = 0;
+          return base.map((id) => (rank.has(id) ? present[index++] : id));
+        },
+        applySavedOrder() {
+          const rank = new Map(this.fieldOrder.map((id, index) => [id, index]));
+          for (const profile of Object.values(this.saved)) {
+            profile.fields = profile.fields.slice().sort(
+              (a, b) => (rank.get(a) ?? 999) - (rank.get(b) ?? 999),
+            );
+          }
+        },
+        syncOrder() {
+          this.applySavedOrder();
+          this.refreshPreview();
+        },
+        startDrag(event, fieldId) {
+          this.dragId = fieldId;
+          event.dataTransfer.setData("text/plain", fieldId);
+          event.dataTransfer.effectAllowed = "move";
+        },
+        dropOn(fieldId) {
+          const fromId = this.dragId;
+          this.dragId = "";
+          this.dragOverId = "";
+          if (!fromId || fromId === fieldId) return;
+          const order = this.fieldOrder.filter((id) => id !== fromId);
+          const index = order.indexOf(fieldId);
+          order.splice(index < 0 ? order.length : index, 0, fromId);
+          this.fieldOrder = order;
+          this.applySavedOrder();
+          this.refreshPreview();
+        },
+        checkAll() {
+          this.saved[this.active].fields = this.current.fields.map((field) => field.id);
+          this.applySavedOrder();
+          this.refreshPreview();
+        },
+        checkNone() {
+          this.saved[this.active].fields = [];
+          this.refreshPreview();
+        },
+        checkAllMode(mode) {
+          const profile = this.saved[this.active];
+          profile.fields = this.current.fields.map((field) => field.id);
+          for (const field of this.current.fields) {
+            const current = profile.options[field.id] || {};
+            profile.options[field.id] = Object.assign({}, current, { display: mode });
+          }
+          this.applySavedOrder();
+          this.refreshPreview();
+        },
+        fieldMode(fieldId) {
+          const raw = this.saved[this.active].options[fieldId];
+          if (raw && (raw.display === "hover" || raw.display === "dormant")) {
+            return raw.display;
+          }
+          return this.saved[this.active].display === "always" ? "dormant" : "hover";
+        },
+        setMode(fieldId, mode) {
+          const profile = this.saved[this.active];
+          const current = profile.options[fieldId] || {};
+          profile.options[fieldId] = Object.assign({}, current, { display: mode });
+          this.refreshPreview();
+        },
+        writePayload() {
+          this.$refs.payload.value = JSON.stringify({ version: 1, types: this.saved });
+        },
+        refreshPreview() {
+          const params = new URLSearchParams({
+            type: this.active,
+            draft: JSON.stringify({ version: 1, types: this.saved }),
+          });
+          fetch("{% url 'tiles_preview' %}?" + params.toString(), { credentials: "same-origin" })
+            .then((response) => response.text())
+            .then((html) => { this.previewHtml = html; });
+        },
+      };
+    }
+  </script>
+{% endblock %}

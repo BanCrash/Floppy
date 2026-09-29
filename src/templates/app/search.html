@@ -78,7 +78,7 @@
             </div>
             <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
               {% for tracker in local_music_albums %}
-                <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}{% if user.clickable_media_cards %} media-card-hide-overlay{% endif %}"
+                <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group{% tile_subtitle_class 'music' %}{% if user.clickable_media_cards %} media-card-hide-overlay{% endif %}"
                      data-media-type="{{ MediaTypes.MUSIC.value }}"
                      x-data="{ trackOpen: false, revealed: false, tapToReveal(e) { if (this.revealed) { if (e.target.closest('button, a, input, select, textarea')) { return; } const link = this.$root.querySelector('.media-card-overlay a[href]') || this.$root.querySelector('a.media-card-title[href]'); if (link) { e.preventDefault(); e.stopPropagation(); link.click(); } return; } if (!window.matchMedia('(pointer: coarse)').matches || this.$root.classList.contains('media-card-hide-overlay')) { return; } e.preventDefault(); e.stopPropagation(); this.revealed = true; window.dispatchEvent(new CustomEvent('media-card-revealed', { detail: this.$root })); } }"
                      @click.capture="tapToReveal($event)"
@@ -159,13 +159,7 @@
                         </span>
                       {% endif %}
                     </div>
-                    <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1">
-                      {% with credits=tracker.album.artist_credits.all %}
-                        {% if credits %}{% for credit in credits %}{{ credit.artist.name }}{{ credit.join_phrase|music_artist_join_phrase }}{% endfor %}
-                        {% elif tracker.album.artist %}{{ tracker.album.artist.name }}{% endif %}
-                        {% if tracker.album.release_date %}{% if credits or tracker.album.artist %} • {% endif %}{{ tracker.album.release_date|date:"Y" }}{% endif %}
-                      {% endwith %}
-                    </p>
+                    {% tile_lines 'music' tracker.album tracker %}
                   </div>
 
                   <div x-show="trackOpen"
@@ -197,7 +191,7 @@
               {% for artist in music_online_artists %}
                 {% if artist.artist_id %}
                   <a href="{% url 'create_artist_from_search' artist.artist_id %}"
-                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card hover:ring-2 hover:ring-indigo-500 transition-all group block{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card hover:ring-2 hover:ring-indigo-500 transition-all group block{% tile_subtitle_class 'music' %}">
                     <div class="relative">
                       {% if artist.image and artist.image != IMG_NONE %}
                         <img alt="{{ artist.name }}"
@@ -217,20 +211,14 @@
                           {{ artist.name }}
                         </h4>
                       </div>
-                      <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1">
-                        {% if artist.type %}{{ artist.type }}{% endif %}
-                        {% if artist.begin_year %}
-                          {% if artist.type %} • {% endif %}
-                          {{ artist.begin_year }}
-                        {% endif %}
-                      </p>
+                      {% tile_lines 'music' artist %}
                       {% if artist.disambiguation %}
                         <p class="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1">{{ artist.disambiguation }}</p>
                       {% endif %}
                     </div>
                   </a>
                 {% else %}
-                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card{% tile_subtitle_class 'music' %}">
                     <div class="relative">
                       {% if artist.image and artist.image != IMG_NONE %}
                         <img alt="{{ artist.name }}"
@@ -261,7 +249,7 @@
               {% for release in music_online_releases %}
                 {% if release.release_id %}
                   <a href="{% url 'create_album_from_search' release.release_id %}"
-                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group block{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group block{% tile_subtitle_class 'music' %}">
                     <div class="relative">
                       {% if release.image and release.image != IMG_NONE %}
                         <img alt="{{ release.title }}"
@@ -281,14 +269,11 @@
                           {{ release.title }}
                         </h4>
                       </div>
-                      <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1">
-                        {{ release.artist_name }}
-                        {% if release.release_date %} • {{ release.release_date|slice:":4" }}{% endif %}
-                      </p>
+                      {% tile_lines 'music' release %}
                     </div>
                   </a>
                 {% else %}
-                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square{% tile_subtitle_class 'music' %}">
                     <div class="relative">
                       <div class="w-full aspect-[1/1] bg-[var(--color-surface-alt)] flex items-center justify-center">
                         {% include "app/icons/speaker.svg" with classes="w-12 h-12 text-gray-600" %}

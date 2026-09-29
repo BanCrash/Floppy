@@ -1,0 +1,3 @@
+{% for line in lines %}
+  <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1{% if line.dormant %} media-card-line-dormant{% endif %}">{{ line.text }}</p>
+{% endfor %}
