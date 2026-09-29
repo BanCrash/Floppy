@@ -60,6 +60,7 @@ urlpatterns = [
     path("settings/appearance", views.appearance, name="appearance"),
     path("settings/tiles", views.tiles, name="tiles"),
     path("settings/tiles/preview", views.tiles_preview, name="tiles_preview"),
+    path("settings/tiles/<str:media_type>", views.tiles, name="tiles_type"),
     path("settings/sidebar", views.sidebar, name="sidebar"),
     path("settings/home-screen", views.home_screen, name="home_screen"),
     path(

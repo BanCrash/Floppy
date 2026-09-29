@@ -980,50 +980,95 @@ def appearance(request):
     return render(request, "users/appearance.html", context)
 
 
+def _tiles_redirect(media_type):
+    """Return the settings URL for one tile type, or the first type."""
+    from users.tile_metadata import PROFILE_TYPES
+
+    if media_type not in PROFILE_TYPES:
+        media_type = PROFILE_TYPES[0]
+    return redirect("tiles_type", media_type=media_type)
+
+
+def _tiles_catalog():
+    """Return the editor catalog with a child route for each type."""
+    from django.urls import reverse
+
+    from users.tile_metadata import editor_catalog
+
+    catalog = editor_catalog()
+    for entry in catalog:
+        entry["href"] = reverse("tiles_type", kwargs={"media_type": entry["id"]})
+    return catalog
+
+
 @require_http_methods(["GET", "POST"])
-def tiles(request):
+def tiles(request, media_type=None):
     """Edit per-media-type subtitle fields."""
     from users.tile_metadata import (
         PROFILE_TYPES,
-        editor_catalog,
         parse_tile_metadata,
         resolve_profile,
     )
 
+    if media_type not in PROFILE_TYPES:
+        media_type = None
     if request.method == "POST":
         if request.user.is_demo:
             messages.error(request, "This section is view-only for demo accounts.")
-            return redirect("tiles")
+            return _tiles_redirect(media_type)
         request.user.tile_metadata = parse_tile_metadata(
             request.POST.get("tile_metadata")
         )
         request.user.save(update_fields=["tile_metadata"])
         messages.success(request, "Tiles updated")
-        return redirect("tiles")
+        return _tiles_redirect(media_type)
+    if media_type is None:
+        return _tiles_redirect(None)
 
     saved = {
-        media_type: resolve_profile(request.user, media_type)
-        for media_type in PROFILE_TYPES
+        entry_type: resolve_profile(request.user, entry_type)
+        for entry_type in PROFILE_TYPES
     }
     return render(
         request,
         "users/tiles.html",
         {
-            "tile_catalog_json": editor_catalog(),
+            "tile_catalog_json": _tiles_catalog(),
             "tile_saved_json": saved,
+            "tile_active_type": media_type,
         },
     )
 
 
-@require_GET
+@require_http_methods(["GET", "POST"])
 def tiles_preview(request):
     """Return a real media card for the draft profile of one type."""
+    import json
+
     from users.tile_metadata import PROFILE_TYPES, parse_tile_metadata
 
-    media_type = request.GET.get("type") or "movie"
+    media_type = "movie"
+    draft_payload = {}
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body.decode() or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = {}
+        media_type = body.get("type") or media_type
+        draft_payload = body.get("draft") if isinstance(body.get("draft"), dict) else {}
+    else:
+        media_type = request.GET.get("type") or media_type
+        try:
+            draft_payload = json.loads(request.GET.get("draft") or "{}")
+        except json.JSONDecodeError:
+            draft_payload = {}
     if media_type not in PROFILE_TYPES:
         media_type = "movie"
-    request.user.tile_metadata = parse_tile_metadata(request.GET.get("draft") or "{}")
+    if not isinstance(draft_payload, dict):
+        draft_payload = {}
+    if "types" not in draft_payload and media_type in draft_payload:
+        draft_payload = {"version": 1, "types": {media_type: draft_payload}}
+    request.user.tile_metadata = parse_tile_metadata(draft_payload)
     sample = _tile_preview_sample(request.user, media_type)
     if sample is None:
         item, media = _tile_preview_stand_in(media_type)
@@ -1105,6 +1150,72 @@ def _tile_preview_stand_in(media_type):
     return item, media
 
 
+def _person_preview_sample(user):
+    """Return a cast card for the newest credit on this account."""
+    from types import SimpleNamespace
+
+    movie_model = apps.get_model("app", "Movie")
+    credit_model = apps.get_model("app", "ItemPersonCredit")
+    item_ids = movie_model.objects.filter(user=user).values("item_id")
+    credit = (
+        credit_model.objects.filter(item_id__in=item_ids)
+        .select_related("person", "item")
+        .order_by("-id")
+        .first()
+    )
+    if credit is None:
+        return None
+    person = credit.person
+    item = credit.item
+    return {
+        "id": person.id,
+        "title": person.name,
+        "media_type": "movie",
+        "source": item.source,
+        "media_id": item.media_id,
+        "image": person.image or item.image or "",
+        "role": credit.role or person.known_for_department,
+        "character": credit.role,
+        "department": credit.department,
+    }, SimpleNamespace(
+        id=0,
+        status="",
+        score=None,
+        progress=0,
+        is_statusless=True,
+        card_tile_url="",
+        album=None,
+        artist=None,
+        end_date=None,
+        progressed_at=None,
+    )
+
+
+def _music_preview_item(album):
+    """Return a card item for an album.
+
+    Album rows are not ``Item`` records, and the shared card looks up
+    ``media_type`` on whatever it is given.
+    """
+    artist = getattr(album, "artist", None)
+    release_date = getattr(album, "release_date", None)
+    release_id = (
+        album.musicbrainz_release_group_id or album.musicbrainz_release_id or album.id
+    )
+    return {
+        "id": album.id,
+        "title": album.title,
+        "media_type": "music",
+        "source": "musicbrainz",
+        "media_id": release_id,
+        "image": album.image or "",
+        "genres": album.genres or [],
+        "release_date": release_date,
+        "year": release_date.year if release_date else None,
+        "artist_name": getattr(artist, "name", None) or "",
+    }
+
+
 def _tile_preview_sample(user, media_type):
     """Return ``(item, media)`` for the user's newest row of this type."""
     model_names = {
@@ -1122,16 +1233,27 @@ def _tile_preview_sample(user, media_type):
         "podcast": "Podcast",
     }
     if media_type == "music":
-        tracker_model = apps.get_model("app", "AlbumTracker")
-        tracker = (
-            tracker_model.objects.filter(user=user)
-            .select_related("album")
+        music_model = apps.get_model("app", "Music")
+        music = (
+            music_model.objects.filter(user=user)
+            .select_related("item", "album", "album__artist", "artist", "track")
             .order_by("-id")
             .first()
         )
-        if tracker is None:
+        if music is not None:
+            return music.item, music
+        tracker_model = apps.get_model("app", "AlbumTracker")
+        tracker = (
+            tracker_model.objects.filter(user=user)
+            .select_related("album", "album__artist")
+            .order_by("-id")
+            .first()
+        )
+        if tracker is None or tracker.album_id is None:
             return None
-        return tracker.album, tracker
+        return _music_preview_item(tracker.album), tracker
+    if media_type == "person":
+        return _person_preview_sample(user)
     model_name = model_names.get(media_type)
     if model_name is None:
         return None

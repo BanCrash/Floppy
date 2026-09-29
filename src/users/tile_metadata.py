@@ -495,9 +495,42 @@ def _episode_code(item, media, user):
     return _format_episode_code(season, episode)
 
 
-def _last_played(item, media, user):
+def _resolve_last_played_dt(item, media):
+    """Return the datetime that should represent last played on a tile."""
+    if media is None:
+        return None
+    media_type = _from_obj(item, "media_type")
+    if media_type is None:
+        media_type = _from_obj(getattr(media, "item", None), "media_type")
+
     played = _from_obj(media, "last_played_at")
-    return _text(played)
+    if played:
+        return played
+
+    if media_type == MediaTypes.SEASON.value:
+        return (
+            _from_obj(media, "last_watched")
+            or _from_obj(media, "aggregated_end_date")
+            or _from_obj(media, "end_date")
+            or _from_obj(media, "progressed_at")
+        )
+
+    return (
+        _from_obj(media, "aggregated_end_date")
+        or _from_obj(media, "end_date")
+        or _from_obj(media, "progressed_at")
+    )
+
+
+def _last_played(item, media, user):
+    played = _resolve_last_played_dt(item, media)
+    if not played:
+        return None
+    if not user:
+        return _text(played)
+    from users.templatetags.user_tags import user_datetime_format
+
+    return _text(user_datetime_format(played, user))
 
 
 def _synopsis(item, media, user):
@@ -542,7 +575,22 @@ def _album(item, media, user):
 
 def _track_number(item, media, user):
     number = _from_obj(item, "track_number") or _from_obj(media, "track_number")
-    return _text(number)
+    if number:
+        return _text(number)
+    track = _from_obj(media, "track")
+    return _text(_from_obj(track, "track_number"))
+
+
+def _show_title(media):
+    """Return the parent show title for a season or episode row."""
+    if media is None:
+        return None
+    tv = _from_obj(media, "related_tv")
+    if tv is None:
+        season = _from_obj(media, "related_season")
+        tv = _from_obj(season, "related_tv")
+    show_item = _from_obj(tv, "item")
+    return _text(_from_obj(show_item, "title"))
 
 
 def _show_name(item, media, user):
@@ -550,11 +598,30 @@ def _show_name(item, media, user):
         name = _named(obj, "show") or _text(_from_obj(obj, "show_title"))
         if name:
             return name
-    return None
+    return _show_title(media)
+
+
+def _author_names(value):
+    if isinstance(value, str):
+        return _text(value)
+    if not isinstance(value, (list, tuple)):
+        return None
+    names = []
+    for author in value:
+        if isinstance(author, str) and author.strip():
+            names.append(author.strip())
+        elif isinstance(author, dict) and author.get("name"):
+            names.append(str(author["name"]).strip())
+    return ", ".join(names[:3]) or None
 
 
 def _author(item, media, user):
-    return _named(item, "author") or _text(_from_obj(item, "author_name"))
+    named = _named(item, "author") or _text(_from_obj(item, "author_name"))
+    if named:
+        return named
+    return _author_names(_from_obj(item, "authors")) or _author_names(
+        _from_obj(item, "creators")
+    )
 
 
 def _role(item, media, user):
