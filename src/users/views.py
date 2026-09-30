@@ -725,6 +725,11 @@ def sidebar(request):
             request.user.clickable_media_cards = clickable_media_cards
             fields_to_update.append("clickable_media_cards")
 
+        show_discover = request.POST.get("show_discover") == "on"
+        if request.user.show_discover != show_discover:
+            request.user.show_discover = show_discover
+            fields_to_update.append("show_discover")
+
         # Handle media types checkboxes + order
         fields_to_update += apply_media_type_preferences(
             request.user,
@@ -1048,6 +1053,7 @@ def preferences(request):
         hide_completed_recommendations_raw = request.POST.get(
             "hide_completed_recommendations"
         )
+        show_recommendations_raw = request.POST.get("show_recommendations")
         hide_zero_rating_raw = request.POST.get("hide_zero_rating")
         progress_bar_raw = request.POST.get("progress_bar")
         # Read these as None-when-absent. The header theme toggle posts only
@@ -1220,6 +1226,12 @@ def preferences(request):
                     hide_completed_recommendations
                 )
                 fields_to_update.append("hide_completed_recommendations")
+
+        if show_recommendations_raw is not None:
+            show_recommendations = show_recommendations_raw == "1"
+            if request.user.show_recommendations != show_recommendations:
+                request.user.show_recommendations = show_recommendations
+                fields_to_update.append("show_recommendations")
 
         if hide_zero_rating_raw is not None:
             hide_zero_rating = hide_zero_rating_raw == "1"

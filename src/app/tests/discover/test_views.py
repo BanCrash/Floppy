@@ -50,6 +50,17 @@ class DiscoverViewTests(TestCase):
     def tearDown(self):
         self.warmup_patcher.stop()
 
+    def test_discover_endpoints_404_when_discover_turned_off(self):
+        """Users who turn Discover off get no page, rows, refresh, or actions."""
+        self.user.show_discover = False
+        self.user.save(update_fields=["show_discover"])
+
+        self.assertEqual(self.client.get(reverse("discover")).status_code, 404)
+        self.assertEqual(self.client.get(reverse("discover_rows")).status_code, 404)
+        for name in ("refresh_discover", "discover_action", "discover_toggle_hidden"):
+            with self.subTest(name=name):
+                self.assertEqual(self.client.post(reverse(name)).status_code, 404)
+
     def _row(
         self,
         *,

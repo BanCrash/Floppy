@@ -1234,6 +1234,8 @@ def schedule_user_tab_warmup(
     show_more: bool = False,
 ) -> int:
     """Schedule missing or stale Discover tabs for a user in the background."""
+    if not user.show_discover:
+        return 0
     priority_media_type = _normalize_media_type(prioritize_media_type or ALL_MEDIA_KEY)
     targets = media_types or get_user_tab_targets(user)
     normalized_targets = list(

@@ -63,6 +63,8 @@ def _refresh_rows(user_id, media_type, row_keys, show_more):
     if not user:
         logger.warning("discover_refresh_rows_user_missing user_id=%s", user_id)
         return {"refreshed": 0, "reason": "missing_user"}
+    if not user.show_discover:
+        return {"refreshed": 0, "reason": "discover_disabled"}
 
     requested_media_type = (
         (media_type or discover_tab_cache.ALL_MEDIA_KEY).strip().lower()
@@ -123,6 +125,8 @@ def refresh_discover_tab_cache(
     if not user:
         logger.warning("discover_tab_refresh_user_missing user_id=%s", user_id)
         return {"refreshed": False, "reason": "missing_user"}
+    if not user.show_discover:
+        return {"refreshed": False, "reason": "discover_disabled"}
 
     requested_media_type = (
         (media_type or discover_tab_cache.ALL_MEDIA_KEY).strip().lower()
@@ -220,7 +224,7 @@ def warm_discover_startup_tabs(user_ids: list[int] | None = None):
     from app.discover.tab_cache import schedule_user_tab_warmup
 
     user_model = get_user_model()
-    users = user_model.objects.filter(is_active=True)
+    users = user_model.objects.filter(is_active=True, show_discover=True)
     if user_ids:
         users = users.filter(id__in=user_ids)
 
@@ -309,6 +313,8 @@ def refresh_discover_profile_for_user(
     user = user_model.objects.filter(id=user_id).first()
     if not user:
         return {"profiles_refreshed": 0, "reason": "missing_user"}
+    if not user.show_discover:
+        return {"profiles_refreshed": 0, "reason": "discover_disabled"}
 
     refreshed = 0
     skipped = 0
@@ -350,11 +356,17 @@ def refresh_discover_profiles(
     target_media_types = media_types or [ALL_MEDIA_KEY]
 
     if user_ids:
-        selected = list(user_model.objects.filter(id__in=user_ids))
+        selected = list(
+            user_model.objects.filter(id__in=user_ids, show_discover=True),
+        )
     else:
         cutoff = timezone.now() - timedelta(days=PROFILE_REFRESH_ACTIVE_DAYS)
         selected = _rotating_user_batch(
-            user_model.objects.filter(is_active=True, last_login__gte=cutoff),
+            user_model.objects.filter(
+                is_active=True,
+                show_discover=True,
+                last_login__gte=cutoff,
+            ),
             "discover_profile_refresh_cursor",
             settings.WARMUP_USER_LIMIT,
         )
@@ -386,6 +398,14 @@ def warm_discover_api_cache():
         return {
             "skipped": True,
             "reason": "interactive_request_active",
+            "warmed": 0,
+            "failed": 0,
+        }
+
+    if not get_user_model().objects.filter(is_active=True, show_discover=True).exists():
+        return {
+            "skipped": True,
+            "reason": "discover_disabled",
             "warmed": 0,
             "failed": 0,
         }

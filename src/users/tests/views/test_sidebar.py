@@ -122,6 +122,41 @@ class SidebarViewTests(TestCase):
         self.assertEqual(len(messages), 1)
         self.assertIn("Settings updated", str(messages[0]))
 
+    def test_sidebar_post_turns_discover_off_and_on(self):
+        """The Show Discover switch is saved from the Sidebar settings page."""
+        self.assertTrue(self.user.show_discover)
+
+        response = self.client.post(reverse("sidebar"), {})
+        self.assertRedirects(response, reverse("sidebar"))
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.show_discover)
+
+        self.client.post(reverse("sidebar"), {"show_discover": "on"})
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.show_discover)
+
+    def test_sidebar_link_hidden_when_discover_off(self):
+        """The sidebar shows the Discover link only while Discover is on."""
+        discover_link = f'href="{reverse("discover")}"'
+        self.assertContains(self.client.get(reverse("home")), discover_link)
+
+        self.user.show_discover = False
+        self.user.save(update_fields=["show_discover"])
+        self.assertNotContains(self.client.get(reverse("home")), discover_link)
+
+    def test_preferences_post_turns_recommendations_off(self):
+        """The Recommendations preference is saved from the Preferences page."""
+        self.assertTrue(self.user.show_recommendations)
+
+        self.client.post(reverse("preferences"), {"show_recommendations": "0"})
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.show_recommendations)
+
+        # A post that omits the field (e.g. the theme toggle) leaves it alone.
+        self.client.post(reverse("preferences"), {"theme": "dark"})
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.show_recommendations)
+
     def test_sidebar_post_demo_user(self):
         """Test POST request from a demo user to preferences."""
         self.user.is_demo = True
