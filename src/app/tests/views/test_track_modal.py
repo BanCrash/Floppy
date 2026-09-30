@@ -640,6 +640,32 @@ class TrackModalViewTests(TestCase):
         self.assertContains(response, "General")
         self.assertNotContains(response, "Metadata")
 
+    def test_music_tracker_modal_marks_existing_entries_for_edit(self):
+        """Saved trackers carry the marker that stops End date auto-filling to now (#1377)."""
+        artist = Artist.objects.create(name="Test Artist")
+        album = Album.objects.create(title="Test Album", artist=artist)
+        url = reverse("album_track_modal", args=[album.id]) + "?return_url=/music"
+
+        self.assertNotContains(self.client.get(url), "data-existing-instance")
+
+        AlbumTracker.objects.create(
+            user=self.user,
+            album=album,
+            status=Status.COMPLETED.value,
+            end_date=datetime(2020, 5, 6, 7, 8, 9, tzinfo=UTC),
+        )
+        self.assertContains(self.client.get(url), "data-existing-instance")
+
+        ArtistTracker.objects.create(
+            user=self.user,
+            artist=artist,
+            status=Status.COMPLETED.value,
+        )
+        response = self.client.get(
+            reverse("artist_track_modal", args=[artist.id]) + "?return_url=/music",
+        )
+        self.assertContains(response, "data-existing-instance")
+
     def test_album_track_modal_renders_release_date_shortcuts(self):
         """Album trackers should expose the shared release-date shortcut."""
         artist = Artist.objects.create(name="Test Artist")
