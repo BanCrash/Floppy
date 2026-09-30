@@ -1,0 +1,133 @@
+"""Home podcast shelves list shows, not every episode (#1378)."""
+
+from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.test import TestCase
+from django.urls import reverse
+
+from app.models import (
+    Item,
+    MediaTypes,
+    Podcast,
+    PodcastShow,
+    PodcastShowTracker,
+    Sources,
+    Status,
+)
+from users import home_screen
+from users.models import (
+    DirectionChoices,
+    HomeScreenRow,
+    HomeScreenRowTypeChoices,
+    HomeSortChoices,
+)
+
+
+class HomePodcastShowShelfTests(TestCase):
+    """A podcast shelf is one card per tracked show."""
+
+    def setUp(self):
+        """Create a show with two played episodes and a second, paused show."""
+        cache.clear()
+        self.user = get_user_model().objects.create_user(username="pod", password="x")
+        self.user.podcast_enabled = True
+        self.user.save()
+
+        self.show = PodcastShow.objects.create(
+            podcast_uuid="11111111-1111-1111-1111-111111111111",
+            title="The Show",
+            author="Some Host",
+            language="en",
+            genres=["Comedy"],
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user, show=self.show, status=Status.IN_PROGRESS.value
+        )
+        for number in (1, 2):
+            item = Item.objects.create(
+                media_id=f"ep-{number}",
+                source=Sources.POCKETCASTS.value,
+                media_type=MediaTypes.PODCAST.value,
+                title=f"Episode {number}",
+            )
+            Podcast.objects.create(
+                item=item,
+                user=self.user,
+                show=self.show,
+                status=Status.IN_PROGRESS.value,
+            )
+
+        paused = PodcastShow.objects.create(
+            podcast_uuid="22222222-2222-2222-2222-222222222222",
+            title="Paused Show",
+            language="de",
+            genres=["News"],
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user, show=paused, status=Status.PAUSED.value
+        )
+
+    def row(self, filters):
+        """Create a podcast library shelf with the given filters."""
+        return HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.PODCAST.value,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=HomeSortChoices.RECENT,
+            direction=DirectionChoices.DESC,
+            filters=filters,
+        )
+
+    def titles(self, row):
+        """Return the card titles and total the shelf loads."""
+        entries, total = home_screen._library_row_window(
+            self.user, row, 0, 14, seed=0
+        )
+        return [entry.item.title for entry in entries], total
+
+    def test_in_progress_shelf_shows_the_show_once(self):
+        """Two in-progress episodes still make one show card."""
+        titles, total = self.titles(self.row({"status": [Status.IN_PROGRESS.value]}))
+
+        self.assertEqual(titles, ["The Show"])
+        self.assertEqual(total, 1)
+
+    def test_entry_carries_show_for_card_link_and_modal(self):
+        """The card links to the show and edits the show's tracker."""
+        row = self.row({"status": [Status.IN_PROGRESS.value]})
+        entries, _ = home_screen._library_row_window(
+            self.user, row, 0, 14, seed=0
+        )
+
+        self.assertTrue(entries[0].use_podcast_show)
+        self.assertEqual(entries[0].podcast_show, self.show)
+        self.assertEqual(entries[0].media.card_subtitle_text, "Some Host")
+
+    def test_status_genre_and_language_filters_apply_to_shows(self):
+        """Filters match the show's tracker and metadata."""
+        self.assertEqual(
+            self.titles(self.row({"status": [Status.PAUSED.value]}))[0],
+            ["Paused Show"],
+        )
+        self.assertEqual(
+            self.titles(self.row({"status": [], "genre": "news"}))[0],
+            ["Paused Show"],
+        )
+        self.assertEqual(
+            self.titles(self.row({"status": [], "language": "EN"}))[0],
+            ["The Show"],
+        )
+
+    def test_home_page_renders_one_card_per_show(self):
+        """The Home page lists the show title once, not once per episode."""
+        self.row({"status": [Status.IN_PROGRESS.value]})
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The Show", count=3)  # title, alt text, link
+        self.assertNotContains(response, "Episode 1")
+        self.assertNotContains(response, "Episode 2")

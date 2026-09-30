@@ -1724,6 +1724,106 @@ def _build_artist_home_entries(
     return sort_home_entries(entries, sort_by, direction)
 
 
+class _PodcastShowHomeAdapter(_MusicTrackerAdapter):
+    """Media-like wrapper around a PodcastShowTracker for Home card rendering."""
+
+    def __init__(self, item: Item, tracker: object, show: object):
+        super().__init__(item, tracker)
+        self.show = show
+        self.home_music_card = True
+        self.card_subtitle_text = show.author or ""
+        self.card_subtitle_date = tracker.created_at
+        self.last_played_at = tracker.updated_at
+
+
+def _podcast_show_shell_items_bulk(shows: list[object]) -> dict[tuple[str, str], Item]:
+    """Return the card Item for each show, keyed by (source, podcast_uuid).
+
+    The same shell Item the Podcasts list page creates, so both pages share it.
+    """
+    existing = {
+        (item.source, item.media_id): item
+        for item in Item.objects.filter(
+            media_type=MediaTypes.PODCAST.value,
+            media_id__in=[show.podcast_uuid for show in shows],
+        )
+    }
+    missing = [
+        Item(
+            media_id=show.podcast_uuid,
+            source=show.source,
+            media_type=MediaTypes.PODCAST.value,
+            title=show.title,
+            image=show.image or settings.IMG_NONE,
+        )
+        for show in shows
+        if (show.source, show.podcast_uuid) not in existing
+    ]
+    if missing:
+        Item.objects.bulk_create(missing, ignore_conflicts=True)
+        for item in Item.objects.filter(
+            media_type=MediaTypes.PODCAST.value,
+            media_id__in=[item.media_id for item in missing],
+        ):
+            existing[(item.source, item.media_id)] = item
+    return existing
+
+
+def _build_podcast_show_home_entries(
+    user, filters: dict, sort_by: str, direction: str
+) -> list[HomeRowEntry]:
+    """Build Home entries from the user's tracked podcast shows (PodcastShowTracker).
+
+    A Home podcast shelf lists shows, like the Podcasts page, not every episode.
+    """
+    from app.models import PodcastShowTracker
+
+    status_filter = filters.get("status") or []
+    trackers = (
+        PodcastShowTracker.objects.filter(user=user)
+        .exclude(show__title__isnull=True)
+        .exclude(show__title__exact="")
+        .select_related("show")
+    )
+    if status_filter:
+        trackers = trackers.filter(status__in=status_filter)
+    trackers = list(
+        _apply_music_tracker_rating_filter(trackers, filters.get("rating", "all"))
+    )
+    genre = (filters.get("genre") or "").strip().lower()
+    if genre:
+        trackers = [
+            tracker
+            for tracker in trackers
+            if any(str(g).strip().lower() == genre for g in tracker.show.genres or [])
+        ]
+    language = (filters.get("language") or "").strip().lower()
+    if language:
+        trackers = [
+            tracker
+            for tracker in trackers
+            if (tracker.show.language or "").strip().lower() == language
+        ]
+
+    items = _podcast_show_shell_items_bulk([tracker.show for tracker in trackers])
+    entries = []
+    for tracker in trackers:
+        show = tracker.show
+        item = items.get((show.source, show.podcast_uuid))
+        if not item:
+            continue
+        entries.append(
+            HomeRowEntry(
+                item=item,
+                media=_PodcastShowHomeAdapter(item, tracker, show),
+                use_podcast_show=True,
+                podcast_show=show,
+                show_progress_controls=False,
+            ),
+        )
+    return sort_home_entries(entries, sort_by, direction)
+
+
 def _build_recent_music_album_entries(media_items: list[object]) -> list[HomeRowEntry]:
     albums_by_id = {}
     album_play_counts = defaultdict(int)
@@ -2537,6 +2637,11 @@ def _library_row_window(user, row, offset, limit, *, seed):
                 user, normalized, row.sort_by, row.direction,
             )
             return entries[offset : offset + limit], len(entries)
+    if row.media_type == MediaTypes.PODCAST.value:
+        entries = _build_podcast_show_home_entries(
+            user, normalized, row.sort_by, row.direction,
+        )
+        return entries[offset : offset + limit], len(entries)
     executor = _library_row_executor(user, row, normalized, seed=seed)
     items, total = _row_items(user, row, executor, offset, limit, seed=seed)
     planning = (normalized.get("status") or []) == [Status.PLANNING.value]
