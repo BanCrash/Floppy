@@ -765,7 +765,7 @@
         <div class="p-3 bg-[var(--color-surface-strong)] rounded-md mb-4">
           <div class="flex flex-col items-start gap-1 mb-2">
             <label class="text-[var(--color-text-secondary)] text-sm font-medium">{% translate "Recommendations" %}</label>
-            <span class="text-[var(--color-text-muted)] text-xs">{% translate "Show recommendations on media detail pages. When disabled, recommendations are not shown or matched against your library." %}</span>
+            <span class="text-[var(--color-text-muted)] text-xs">{% translate "Show recommendations on detail pages." %}</span>
           </div>
           <div class="relative w-full"
                x-data="{ open: false, selectedValue: '{{ user.show_recommendations|yesno:'1,0' }}', selectedLabel: '', options: [ { value: '1', label: gettext('Enabled - show recommendations') }, { value: '0', label: gettext('Disabled - hide recommendations') } ], init() { const match = this.options.find(o => o.value === this.selectedValue); this.selectedLabel = match ? match.label : this.options[0]?.label ?? ''; } }"
