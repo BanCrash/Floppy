@@ -84,10 +84,36 @@ MUSIC_SUBVIEW_LABELS = {
 }
 
 
-def _canonical_music_subview(value, default: str = MUSIC_SUBVIEW_DEFAULT) -> str:
-    """Normalize a music subview value to a known choice."""
+# Podcasts work the same way: a row lists the tracked shows or the episodes.
+PODCAST_SUBVIEW_SHOWS = "shows"
+PODCAST_SUBVIEW_EPISODES = "episodes"
+PODCAST_SUBVIEW_DEFAULT = PODCAST_SUBVIEW_SHOWS
+PODCAST_SUBVIEW_VALUES = (PODCAST_SUBVIEW_SHOWS, PODCAST_SUBVIEW_EPISODES)
+PODCAST_SUBVIEW_LABELS = {
+    PODCAST_SUBVIEW_SHOWS: "Shows",
+    PODCAST_SUBVIEW_EPISODES: "Episodes",
+}
+
+# media type -> (choices in menu order, labels, default choice)
+SUBVIEWS_BY_MEDIA_TYPE = {
+    MediaTypes.MUSIC.value: (
+        MUSIC_SUBVIEW_VALUES,
+        MUSIC_SUBVIEW_LABELS,
+        MUSIC_SUBVIEW_DEFAULT,
+    ),
+    MediaTypes.PODCAST.value: (
+        PODCAST_SUBVIEW_VALUES,
+        PODCAST_SUBVIEW_LABELS,
+        PODCAST_SUBVIEW_DEFAULT,
+    ),
+}
+
+
+def _canonical_subview(value, media_type: str) -> str:
+    """Normalize a row's subview value to a known choice for its media type."""
+    values, _labels, default = SUBVIEWS_BY_MEDIA_TYPE[media_type]
     raw_value = str(value or "").strip().lower()
-    return raw_value if raw_value in MUSIC_SUBVIEW_VALUES else default
+    return raw_value if raw_value in values else default
 
 
 AUTHOR_MEDIA_TYPES = {
@@ -301,6 +327,7 @@ SUPPORTED_FILTERS_BY_MEDIA_TYPE = {
         "tag",
     },
     MediaTypes.PODCAST.value: {
+        "subview",
         "status",
         "rating",
         "collection",
@@ -771,13 +798,16 @@ def build_filter_field_data(
     )
     filter_data["show_authors"] = media_type in AUTHOR_MEDIA_TYPES
 
+    values, labels, _default = SUBVIEWS_BY_MEDIA_TYPE.get(
+        media_type, SUBVIEWS_BY_MEDIA_TYPE[MediaTypes.MUSIC.value]
+    )
     field_definitions = [
         {
             "key": "subview",
             "label": "Media Type",
             "options": [
-                {"value": value, "label": MUSIC_SUBVIEW_LABELS[value]}
-                for value in MUSIC_SUBVIEW_VALUES
+                {"value": value, "label": labels[value]}
+                for value in values
             ],
         },
         {
@@ -995,9 +1025,9 @@ def describe_library_query(filters: dict, user, media_type: str) -> str:
     else:
         parts = ["Library"]
 
-    if media_type == MediaTypes.MUSIC.value:
-        subview_label = MUSIC_SUBVIEW_LABELS[
-            _canonical_music_subview(normalized.get("subview"))
+    if media_type in SUBVIEWS_BY_MEDIA_TYPE:
+        subview_label = SUBVIEWS_BY_MEDIA_TYPE[media_type][1][
+            _canonical_subview(normalized.get("subview"), media_type)
         ]
         if parts[0] == "Library":
             parts[0] = subview_label
@@ -1218,7 +1248,7 @@ def _normalize_status_list(raw_value, fallback: list[str]) -> list[str]:
 
 def _normalized_filter_payload(filters: dict | None, media_type: str) -> dict:
     raw_filters = dict(filters or {})
-    # subview is a music-only dimension, not a smart-rule filter. handling separately
+    # subview (music, podcast) is not a smart-rule filter. handling separately
     raw_subview = raw_filters.pop("subview", None)
     if "status" in raw_filters:
         raw_filters["status"] = _normalize_status_list(raw_filters.get("status"), [])
@@ -1245,8 +1275,8 @@ def _normalized_filter_payload(filters: dict | None, media_type: str) -> dict:
         for key in HOME_SCREEN_FILTER_KEYS
         if key != "subview"
     }
-    if media_type == MediaTypes.MUSIC.value:
-        payload["subview"] = _canonical_music_subview(raw_subview)
+    if media_type in SUBVIEWS_BY_MEDIA_TYPE:
+        payload["subview"] = _canonical_subview(raw_subview, media_type)
     return payload
 
 
@@ -1391,7 +1421,9 @@ def validate_library_row_filters(raw_filters: dict | None, media_type: str) -> d
         msg = f"Unsupported source filter for {media_type}."
         raise HomeScreenValidationError(msg)
     raw_subview = str(raw_filters.get("subview", "") or "").strip().lower()
-    if raw_subview and raw_subview not in MUSIC_SUBVIEW_VALUES:
+    if raw_subview and raw_subview not in SUBVIEWS_BY_MEDIA_TYPE.get(
+        media_type, ((),)
+    )[0]:
         msg = f"Unsupported media type for {media_type}."
         raise HomeScreenValidationError(msg)
     return normalized
@@ -2626,7 +2658,7 @@ def _library_row_window(user, row, offset, limit, *, seed):
     """Return (entries, total) for one window of a library-query shelf."""
     normalized = _normalized_filter_payload(row.filters or {}, row.media_type)
     if row.media_type == MediaTypes.MUSIC.value:
-        subview = _canonical_music_subview(normalized.get("subview"))
+        subview = _canonical_subview(normalized.get("subview"), row.media_type)
         if subview == MUSIC_SUBVIEW_ALBUMS:
             entries = _build_album_home_entries(
                 user, normalized, row.sort_by, row.direction,
@@ -2637,7 +2669,11 @@ def _library_row_window(user, row, offset, limit, *, seed):
                 user, normalized, row.sort_by, row.direction,
             )
             return entries[offset : offset + limit], len(entries)
-    if row.media_type == MediaTypes.PODCAST.value:
+    if (
+        row.media_type == MediaTypes.PODCAST.value
+        and _canonical_subview(normalized.get("subview"), row.media_type)
+        == PODCAST_SUBVIEW_SHOWS
+    ):
         entries = _build_podcast_show_home_entries(
             user, normalized, row.sort_by, row.direction,
         )

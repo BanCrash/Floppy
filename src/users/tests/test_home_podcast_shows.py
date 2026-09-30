@@ -1,4 +1,4 @@
-"""Home podcast shelves list shows, not every episode (#1378)."""
+"""Home podcast shelves list shows by default and can list episodes (#1378, #752)."""
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -118,6 +118,48 @@ class HomePodcastShowShelfTests(TestCase):
         self.assertEqual(
             self.titles(self.row({"status": [], "language": "EN"}))[0],
             ["The Show"],
+        )
+
+    def test_episodes_subview_lists_each_episode(self):
+        """Choosing Episodes keeps the per-episode shelf."""
+        row = self.row({"status": [Status.IN_PROGRESS.value], "subview": "episodes"})
+
+        titles, total = self.titles(row)
+
+        self.assertCountEqual(titles, ["Episode 1", "Episode 2"])
+        self.assertEqual(total, 2)
+
+    def test_settings_offer_shows_and_episodes(self):
+        """The Home settings filter menu has a Shows/Episodes choice for podcasts."""
+        fields = home_screen.build_filter_field_data(self.user, MediaTypes.PODCAST.value)
+        subview = next(field for field in fields if field["key"] == "subview")
+
+        self.assertEqual(
+            [option["value"] for option in subview["options"]],
+            ["shows", "episodes"],
+        )
+
+    def test_subview_is_validated_per_media_type(self):
+        """Podcast rows accept shows/episodes and reject music's values."""
+        for value in ("shows", "episodes"):
+            filters = home_screen.validate_library_row_filters(
+                {"subview": value}, MediaTypes.PODCAST.value
+            )
+            self.assertEqual(filters["subview"], value)
+        with self.assertRaises(home_screen.HomeScreenValidationError):
+            home_screen.validate_library_row_filters(
+                {"subview": "tracks"}, MediaTypes.PODCAST.value
+            )
+
+    def test_row_without_subview_defaults_to_shows(self):
+        """Rows saved before the choice existed show shows, and say so."""
+        row = self.row({"status": [Status.IN_PROGRESS.value]})
+
+        self.assertEqual(
+            home_screen.describe_library_query(
+                row.filters, self.user, MediaTypes.PODCAST.value
+            ),
+            "In Progress • Shows",
         )
 
     def test_home_page_renders_one_card_per_show(self):
