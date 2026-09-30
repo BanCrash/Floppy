@@ -119,12 +119,12 @@
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <span class="text-xs text-[var(--color-text-muted)]">{% translate "Lines" %}</span>
-                <template x-for="count in [1, 2, 3]" :key="'title-lines-' + count">
+                <template x-for="count in [1, 2, 3, 'all']" :key="'title-lines-' + count">
                   <button type="button"
                           class="px-2 py-0.5 rounded text-xs border"
                           :class="saved[active].options.title.lines === count ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
                           @click="setTitleLines('lines', count)"
-                          x-text="count"></button>
+                          x-text="count === 'all' ? '{% translate "All" %}' : count"></button>
                 </template>
               </div>
               <div class="flex flex-wrap gap-1">
@@ -139,13 +139,13 @@
               </div>
               <div class="flex flex-wrap items-center gap-2" x-show="saved[active].options.title.hover === 'bleed'">
                 <span class="text-xs text-[var(--color-text-muted)]">{% translate "Hover lines" %}</span>
-                <template x-for="count in [1, 2, 3]" :key="'title-hover-lines-' + count">
+                <template x-for="count in [1, 2, 3, 'all']" :key="'title-hover-lines-' + count">
                   <button type="button"
                           class="px-2 py-0.5 rounded text-xs border"
-                          x-show="count >= saved[active].options.title.lines"
+                          x-show="titleLineVisible(count)"
                           :class="saved[active].options.title.hover_lines === count ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
                           @click="setTitleLines('hover_lines', count)"
-                          x-text="count"></button>
+                          x-text="count === 'all' ? '{% translate "All" %}' : count"></button>
                 </template>
               </div>
             </div>
@@ -386,13 +386,26 @@
           if (!["ellipsis", "wrap", "clip"].includes(title.overflow)) title.overflow = "ellipsis";
           if (!["bleed", "stay"].includes(title.hover)) title.hover = "bleed";
           title.lines = this.clampTitleLines(title.lines);
-          title.hover_lines = this.clampTitleLines(title.hover_lines);
-          if (title.hover_lines < title.lines) title.hover_lines = title.lines;
+          title.hover_lines = this.raiseHoverLines(
+            this.clampTitleLines(title.hover_lines),
+            title.lines,
+          );
         },
         clampTitleLines(value) {
+          if (value === "all") return "all";
           const count = Number(value);
           if (!Number.isInteger(count)) return 1;
           return Math.min(3, Math.max(1, count));
+        },
+        raiseHoverLines(hoverLines, lines) {
+          if (lines === "all") return "all";
+          if (hoverLines === "all") return "all";
+          return hoverLines < lines ? lines : hoverLines;
+        },
+        titleLineVisible(count) {
+          const lines = this.saved[this.active].options.title.lines;
+          if (count === "all") return true;
+          return lines !== "all" && count >= lines;
         },
         setScoreShow(visible) {
           this.saved[this.active].options.rating.show = visible;
@@ -405,13 +418,13 @@
         setTitleHover(mode) {
           const title = this.saved[this.active].options.title;
           title.hover = mode;
-          if (title.hover_lines < title.lines) title.hover_lines = title.lines;
+          title.hover_lines = this.raiseHoverLines(title.hover_lines, title.lines);
           this.refreshPreview();
         },
         setTitleLines(key, count) {
           const title = this.saved[this.active].options.title;
           title[key] = count;
-          if (title.hover_lines < title.lines) title.hover_lines = title.lines;
+          title.hover_lines = this.raiseHoverLines(title.hover_lines, title.lines);
           this.refreshPreview();
         },
         resetType() {

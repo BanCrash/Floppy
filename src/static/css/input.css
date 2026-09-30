@@ -1719,6 +1719,44 @@ html.light .theme-toggle-icon-moon {
   max-height: calc(var(--card-title-hover-lines, 3) * var(--card-title-line));
 }
 
+.search-result-card.media-card-title-lines-all .media-card-title-row,
+.search-result-card-square.media-card-title-lines-all .media-card-title-row,
+.search-result-card.media-card-title-lines-all:hover .media-card-title-row,
+.search-result-card-square.media-card-title-lines-all:hover .media-card-title-row,
+.search-result-card.media-card-title-lines-all.media-card-title-stay:hover .media-card-title-row,
+.search-result-card-square.media-card-title-lines-all.media-card-title-stay:hover .media-card-title-row {
+  max-height: none;
+}
+
+.search-result-card.media-card-title-lines-all .media-card-title,
+.search-result-card-square.media-card-title-lines-all .media-card-title,
+.search-result-card.media-card-title-lines-all.media-card-title-clip .media-card-title,
+.search-result-card-square.media-card-title-lines-all.media-card-title-clip .media-card-title,
+.search-result-card.media-card-title-lines-all.media-card-title-clip.media-card-title-multiline .media-card-title,
+.search-result-card-square.media-card-title-lines-all.media-card-title-clip.media-card-title-multiline .media-card-title {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  max-height: none;
+  white-space: normal;
+}
+
+.search-result-card.media-card-title-hover-all.media-card-title-bleed:hover .media-card-title-row,
+.search-result-card-square.media-card-title-hover-all.media-card-title-bleed:hover .media-card-title-row {
+  max-height: none;
+}
+
+.search-result-card.media-card-title-hover-all.media-card-title-bleed:hover .media-card-title,
+.search-result-card-square.media-card-title-hover-all.media-card-title-bleed:hover .media-card-title,
+.search-result-card.media-card-title-hover-all.media-card-title-clip.media-card-title-bleed:hover .media-card-title,
+.search-result-card-square.media-card-title-hover-all.media-card-title-clip.media-card-title-bleed:hover .media-card-title,
+.search-result-card.media-card-title-hover-all.media-card-title-clip.media-card-title-multiline.media-card-title-bleed:hover .media-card-title,
+.search-result-card-square.media-card-title-hover-all.media-card-title-clip.media-card-title-multiline.media-card-title-bleed:hover .media-card-title {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  max-height: none;
+  white-space: normal;
+}
+
 .search-result-card-square .media-card-body {
   position: absolute;
   bottom: 0;
@@ -1883,6 +1921,13 @@ html.light .theme-toggle-icon-moon {
   .search-result-card.media-card-revealed.media-card-title-stay .media-card-title[title]::before,
   .search-result-card-square.media-card-revealed.media-card-title-stay .media-card-title[title]::before {
     opacity: 1;
+  }
+
+  .search-result-card.media-card-revealed.media-card-title-lines-all .media-card-title-row,
+  .search-result-card-square.media-card-revealed.media-card-title-lines-all .media-card-title-row,
+  .search-result-card.media-card-revealed.media-card-title-hover-all.media-card-title-bleed .media-card-title-row,
+  .search-result-card-square.media-card-revealed.media-card-title-hover-all.media-card-title-bleed .media-card-title-row {
+    max-height: none;
   }
 }
 

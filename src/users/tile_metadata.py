@@ -21,6 +21,7 @@ TITLE_OVERFLOW_CHOICES = ("ellipsis", "wrap", "clip")
 TITLE_HOVER_CHOICES = ("bleed", "stay")
 TITLE_LINE_MIN = 1
 TITLE_LINE_MAX = 3
+TITLE_LINE_ALL = "all"
 PERSON = "person"
 
 _MEDIA_TYPES = tuple(choice.value for choice in MediaTypes)
@@ -271,12 +272,23 @@ def default_title_options():
 
 
 def _title_line_count(value, fallback):
-    """Return a line count inside the allowed range."""
+    """Return a line count inside the allowed range, or every line."""
+    if value == TITLE_LINE_ALL:
+        return TITLE_LINE_ALL
     try:
         count = int(value)
     except (TypeError, ValueError):
         return fallback
     return min(TITLE_LINE_MAX, max(TITLE_LINE_MIN, count))
+
+
+def _title_hover_lines(hover_lines, lines):
+    """Keep the hover reveal at least as tall as the resting title."""
+    if lines == TITLE_LINE_ALL:
+        return TITLE_LINE_ALL
+    if hover_lines == TITLE_LINE_ALL:
+        return TITLE_LINE_ALL
+    return max(hover_lines, lines)
 
 
 def title_options(profile):
@@ -292,7 +304,7 @@ def title_options(profile):
         cleaned["hover_lines"] = _title_line_count(
             raw.get("hover_lines"), cleaned["hover_lines"]
         )
-    cleaned["hover_lines"] = max(cleaned["hover_lines"], cleaned["lines"])
+    cleaned["hover_lines"] = _title_hover_lines(cleaned["hover_lines"], cleaned["lines"])
     return cleaned
 
 
