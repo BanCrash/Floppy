@@ -107,7 +107,7 @@
                 {% if resolved_media_type == MediaTypes.PODCAST.value %}
                   {% with progress_percent=media|safe_attr:"progress_percentage" %}
                     {% if progress_percent is not None %}
-                      <div class="media-card-progress-bar absolute bottom-0 left-0 right-0 h-1 bg-gray-900/60 z-20">
+                      <div class="media-card-progress-bar absolute bottom-0 left-0 right-0 h-1 bg-gray-900/60 z-20{% if tile_progress_display == 'dormant' %} media-card-progress-dormant{% endif %}">
                         <div class="h-full {% if bar_status == Status.PAUSED.value %}bg-indigo-500/40{% else %}bg-indigo-500{% endif %} transition-[width] duration-300 ease-out"
                              style="width: {{ progress_percent }}%"></div>
                       </div>
@@ -116,14 +116,14 @@
                 {% elif resolved_media_type != MediaTypes.MOVIE.value and media.max_progress and media.progress %}
                   {% with count_percent=media|safe_attr:"progress_percentage" %}
                     {% if count_percent is not None %}
-                      <div class="media-card-progress-bar absolute bottom-0 left-0 right-0 h-1 bg-gray-900/60 z-20">
+                      <div class="media-card-progress-bar absolute bottom-0 left-0 right-0 h-1 bg-gray-900/60 z-20{% if tile_progress_display == 'dormant' %} media-card-progress-dormant{% endif %}">
                         <div class="h-full {% if bar_status == Status.PAUSED.value %}bg-indigo-500/40{% else %}bg-indigo-500{% endif %} transition-[width] duration-300 ease-out"
                              style="width: {{ count_percent }}%"></div>
                       </div>
                     {% else %}
                       {% widthratio media.progress media.max_progress 100 as progress_percent %}
                       {# Any overshoot (progress > max) renders as a full bar — the card's overflow-hidden clips it. #}
-                      <div class="media-card-progress-bar absolute bottom-0 left-0 right-0 h-1 bg-gray-900/60 z-20">
+                      <div class="media-card-progress-bar absolute bottom-0 left-0 right-0 h-1 bg-gray-900/60 z-20{% if tile_progress_display == 'dormant' %} media-card-progress-dormant{% endif %}">
                         <div class="h-full {% if bar_status == Status.PAUSED.value %}bg-indigo-500/40{% else %}bg-indigo-500{% endif %} transition-[width] duration-300 ease-out"
                              style="width: {{ progress_percent }}%"></div>
                       </div>

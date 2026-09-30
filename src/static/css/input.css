@@ -1855,6 +1855,18 @@ html.light .theme-toggle-icon-moon {
     opacity: 0;
   }
 
+  .search-result-card:hover .media-card-progress-bar,
+  .search-result-card-square:hover .media-card-progress-bar {
+    opacity: 0;
+  }
+
+  .search-result-card.media-card-revealed .media-card-progress-bar,
+  .search-result-card-square.media-card-revealed .media-card-progress-bar,
+  .search-result-card .media-card-progress-bar.media-card-progress-dormant,
+  .search-result-card-square .media-card-progress-bar.media-card-progress-dormant {
+    opacity: 1;
+  }
+
   .search-result-card.media-card-revealed:not(.media-card-subtitle-always) .media-card-year,
   .search-result-card-square.media-card-revealed:not(.media-card-subtitle-always) .media-card-year {
     max-height: 2lh;
@@ -1929,6 +1941,26 @@ html.light .theme-toggle-icon-moon {
   .search-result-card-square.media-card-revealed.media-card-title-hover-all.media-card-title-bleed .media-card-title-row {
     max-height: none;
   }
+}
+
+.search-result-card .media-card-progress-bar,
+.search-result-card-square .media-card-progress-bar {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+@media (pointer: fine) {
+  .search-result-card:hover .media-card-progress-bar,
+  .search-result-card-square:hover .media-card-progress-bar {
+    opacity: 1;
+  }
+}
+
+.search-result-card.media-card-revealed .media-card-progress-bar,
+.search-result-card-square.media-card-revealed .media-card-progress-bar,
+.search-result-card .media-card-progress-bar.media-card-progress-dormant,
+.search-result-card-square .media-card-progress-bar.media-card-progress-dormant {
+  opacity: 1;
 }
 
 .search-result-card .media-card-year.media-card-line-dormant,

@@ -131,6 +131,7 @@ def _tile_render_context(rendered_context):
     """Attach the subtitle profile for this card."""
     from users.tile_metadata import (
         DISPLAY_HOVER,
+        progress_bar_display,
         resolve_profile,
         show_progress_field,
         subtitle_display,
@@ -151,10 +152,12 @@ def _tile_render_context(rendered_context):
     # Per-line dormant classes own visibility once the line renderer is on.
     # A card-level always class would reveal the hover lines too.
     display = DISPLAY_HOVER if use_lines else subtitle_display(user, media_type)
+    profile = resolve_profile(user, media_type)
     return {
         "tile_display": display,
         "tile_show_progress": show_progress_field(user, media_type),
+        "tile_progress_display": progress_bar_display(profile) or "",
         "tile_use_lines": use_lines,
         "tile_line_list": tile_lines(user, media_type, item, media),
-        "tile_title": title_options(resolve_profile(user, media_type)),
+        "tile_title": title_options(profile),
     }

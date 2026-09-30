@@ -384,6 +384,22 @@ def show_progress_field(user, media_type):
     return "progress" in resolve_profile(user, media_type)["fields"]
 
 
+def progress_bar_display(profile):
+    """Return ``hover`` or ``dormant`` for the poster bar, or None when it is off.
+
+    Progress is not subtitle text. The line that holds it decides whether the
+    bar waits for hover or stays on the poster.
+    """
+    for line in profile.get("lines") or []:
+        if "progress" not in (line.get("fields") or []):
+            continue
+        display = line.get("display")
+        if display in FIELD_DISPLAY_CHOICES:
+            return display
+        return DISPLAY_HOVER
+    return None
+
+
 def hides_zero_rating(user, media_type):
     """Return whether a zero score is hidden for this type."""
     profile = resolve_profile(user, media_type)
@@ -752,6 +768,8 @@ def tile_lines(user, media_type, item=None, media=None):
     for line in source:
         parts = []
         for field_id in line.get("fields") or []:
+            if field_id == "progress" and media_type != MediaTypes.MOVIE.value:
+                continue
             renderer = _RENDERERS.get(field_id)
             if renderer is None:
                 continue
