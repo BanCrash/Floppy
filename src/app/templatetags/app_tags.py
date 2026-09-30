@@ -22,7 +22,7 @@ from app import card_surfaces, config, helpers, image_cache
 from app.models import Item, MediaTypes, Sources, Status
 from app.providers import tmdb
 from app.services import metadata_resolution
-from users.models import TimeFormatChoices
+from users.models import ALL_SEARCH_TYPE, TimeFormatChoices
 from users.templatetags.user_tags import user_date_format, user_time_format
 
 register = template.Library()
@@ -515,6 +515,8 @@ def media_type_readable(media_type):
 @register.filter
 def media_type_readable_plural(media_type):
     """Return the readable media type in plural form."""
+    if media_type == ALL_SEARCH_TYPE:
+        return _("All")
     # English suffixes do not produce correct plurals in other languages.
     return {
         MediaTypes.TV: _("TV Shows"),
@@ -985,7 +987,7 @@ def get_search_media_types(user):
         enabled_types = user.get_enabled_media_types()
 
     # Filter and format the types for search
-    return [
+    search_types = [
         {
             "display": media_type_readable_plural(media_type),
             "value": media_type,
@@ -993,6 +995,10 @@ def get_search_media_types(user):
         for media_type in enabled_types
         if media_type != MediaTypes.SEASON.value
     ]
+    if user and user.is_authenticated:
+        # Library-wide search across every enabled type (#1160).
+        search_types.insert(0, {"display": _("All"), "value": ALL_SEARCH_TYPE})
+    return search_types
 
 
 @register.simple_tag

@@ -26,9 +26,13 @@ PLAYBACK_WEBHOOK_SECRET_MAX_LENGTH = 128
 
 EXCLUDED_SEARCH_TYPES = [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]
 
+# Search-bar option that searches every enabled type in the user's own library
+# (tracked, collected or tagged items) instead of one provider (#1160).
+ALL_SEARCH_TYPE = "all"
+
 VALID_SEARCH_TYPES = [
     value for value in MediaTypes.values if value not in EXCLUDED_SEARCH_TYPES
-]
+] + [ALL_SEARCH_TYPE]
 
 VALID_HOME_SCREEN_MEDIA_TYPES = [
     value for value in MediaTypes.values if value != MediaTypes.EPISODE.value
@@ -499,7 +503,7 @@ class User(AbstractUser):
     last_search_type = models.CharField(
         max_length=10,
         default=MediaTypes.TV.value,
-        choices=MediaTypes.choices,
+        choices=[*MediaTypes.choices, (ALL_SEARCH_TYPE, "All")],
     )
 
     last_discover_type = models.CharField(
