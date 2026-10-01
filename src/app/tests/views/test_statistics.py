@@ -559,7 +559,12 @@ class StatisticsViewTests(TestCase):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()
         self.client.login(**self.credentials)
-        today = timezone.localdate()
+        # On the 1st the month-to-date range is a single day, which the view
+        # correctly names "Today". Pin "today" to the 15th of last month so the
+        # test does not depend on the day it runs.
+        today = (timezone.localdate().replace(day=1) - timedelta(days=1)).replace(
+            day=15
+        )
         month_start = today.replace(day=1)
         last_year_today = today - relativedelta(years=1)
 
@@ -568,14 +573,20 @@ class StatisticsViewTests(TestCase):
             "movie-last-year-mtd", "Last Year Movie", last_year_today, 60
         )
 
-        response = self.client.get(
-            reverse("statistics")
-            + (
-                f"?start-date={month_start.isoformat()}"
-                f"&end-date={today.isoformat()}"
-                "&compare=last_year"
-            ),
-        )
+        real_localdate = timezone.localdate
+
+        def pinned_localdate(value=None):
+            return real_localdate(value) if value is not None else today
+
+        with patch("django.utils.timezone.localdate", pinned_localdate):
+            response = self.client.get(
+                reverse("statistics")
+                + (
+                    f"?start-date={month_start.isoformat()}"
+                    f"&end-date={today.isoformat()}"
+                    "&compare=last_year"
+                ),
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_range_name"], "This Month")
