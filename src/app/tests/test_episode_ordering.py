@@ -410,3 +410,56 @@ class EpisodeOrderingPageTests(TestCase):
         self.assertRedirects(response, media_url(self.show), fetch_redirect_response=False)
         self.tv.refresh_from_db()
         self.assertIsNone(self.tv.active_episode_order_id)
+
+    def test_archiving_a_combined_viewing_is_rejected(self):
+        """A viewing cannot be both archived and combined into another."""
+        preview = self._preview().context
+        first, second = preview["watches"][0]["id"], preview["watches"][1]["id"]
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+        data[f"combine_{second}"] = str(first)
+        data[f"archive_{second}"] = "on"
+
+        response = self.client.post(self.url, data)
+
+        self.assertEqual(response.status_code, 400)
+        self.tv.refresh_from_db()
+        self.assertIsNone(self.tv.active_episode_order_id)
+
+    def test_archiving_the_target_of_a_combination_is_rejected(self):
+        """Archiving a viewing others are folded into would archive them silently."""
+        preview = self._preview().context
+        first, second = preview["watches"][0]["id"], preview["watches"][1]["id"]
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+        data[f"combine_{second}"] = str(first)
+        data[f"archive_{first}"] = "on"
+
+        self.assertEqual(self.client.post(self.url, data).status_code, 400)
+
+    def test_undo_names_the_order_it_returns_to(self):
+        """After two changes, undo says it restores the first order, not the original."""
+        preview = self._preview().context
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+        self.client.post(self.url, data)
+
+        self.assertEqual(self.client.get(self.url).context["revert_label"], "Original numbering")
+
+        second = persist_order(
+            self.show, Sources.TVDB.value, "74205", "dvd", "TVDB (DVD order)",
+            self.order.catalogue,
+        )
+        self.tv.refresh_from_db()
+        second_preview = preview_change(self.tv, second)
+        apply_change(self.tv, second, token=second_preview["token"], resolutions=[
+            {"watch_ids": [row["id"]], "episode_ids": ["t15"], "archive": False}
+            for row in second_preview["watches"]
+        ])
+
+        context = self.client.get(self.url).context
+        self.assertEqual(context["revert_label"], "TVDB (Aired order)")
+        self.assertTrue(context["can_revert"])

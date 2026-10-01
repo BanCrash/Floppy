@@ -132,18 +132,29 @@ if (!window.__floppyEpisodeOrderReviewBound) {
         });
       },
 
-      // A viewing can be folded into another only if that one stays separate
-      // and nothing is folded into this one.
-      combineTargets(id) {
+      hasFollowers(id) {
         const own = String(id);
-        const hasFollowers = Object.keys(this.rows).some(
+        return Object.keys(this.rows).some(
           (other) => other !== own && this.row(other).combine === own,
         );
-        if (hasFollowers) {
+      },
+
+      // Archiving and combining exclude each other: a viewing that others are
+      // folded into, or that is folded into another, cannot be archived.
+      canArchive(id) {
+        return !this.isCombined(id) && !this.hasFollowers(id);
+      },
+
+      // A viewing can be folded into another only if that one stays separate
+      // and is not archived, and nothing is folded into this one.
+      combineTargets(id) {
+        const own = String(id);
+        if (this.hasFollowers(id)) {
           return [];
         }
         return Object.keys(this.rows).filter(
-          (other) => other !== own && !this.isCombined(other),
+          (other) =>
+            other !== own && !this.isCombined(other) && !this.row(other).archive,
         );
       },
     }));

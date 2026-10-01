@@ -42,12 +42,14 @@
         {% if tv.active_episode_order %}
           <div class="flex items-center justify-between gap-4 rounded-lg bg-[var(--color-surface-strong)] px-4 py-3">
             <div class="min-w-0">
-              <p class="font-medium">{% translate "Original numbering" %}</p>
-              {% if not can_revert %}
-                <p class="text-xs text-[var(--color-text-muted)] mt-1">
-                  {% translate "Can't be restored automatically because viewings were added after the change." %}
-                </p>
-              {% endif %}
+              <p class="font-medium">{{ revert_label }}</p>
+              <p class="text-xs text-[var(--color-text-muted)] mt-1">
+                {% if can_revert %}
+                  {% translate "The order before the latest change." %}
+                {% else %}
+                  {% translate "Can't be restored automatically because viewings were added or edited after the change." %}
+                {% endif %}
+              </p>
             </div>
             {% if can_revert %}
               <form method="post">
@@ -142,10 +144,13 @@
                     <div class="min-w-0 md:w-5/12">
                       <p class="text-sm font-medium">S{{ w.season_number }}E{{ w.episode_number }} · {{ w.title }}</p>
                       <p class="text-xs text-[var(--color-text-muted)] mt-1">
-                        {% if w.end_date %}{{ w.end_date|user_date_format:user }}{% else %}{% translate "No date" %}{% endif %}
+                        {% if w.start_date %}{{ w.start_date|user_date_format:user }} – {% endif %}{% if w.end_date %}{{ w.end_date|user_date_format:user }}{% else %}{% translate "No date" %}{% endif %}
                         {% if w.score is not None %}· {% translate "Score:" %} {{ w.score }}{% endif %}
                         · {{ w.status }}
                       </p>
+                      {% if w.notes %}
+                        <p class="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">{{ w.notes }}</p>
+                      {% endif %}
                     </div>
 
                     <div class="relative min-w-0 flex-1 space-y-2"
@@ -228,12 +233,15 @@
                   <template x-if="openOptions === {{ w.id }}">
                     <div class="space-y-3 border-t border-[var(--color-border)] pt-3">
                       <label class="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                        <input type="checkbox" x-model="row({{ w.id }}).archive">
+                        <input type="checkbox"
+                               x-model="row({{ w.id }}).archive"
+                               :disabled="!canArchive({{ w.id }})">
                         {% translate "Archive under the original order, excluding it from active progress" %}
                       </label>
                       <label class="block text-sm text-[var(--color-text-secondary)]">
                         {% translate "Combine with another viewing and use its episode, dates, score, notes and status" %}
                         <select x-model="row({{ w.id }}).combine"
+                                :disabled="row({{ w.id }}).archive"
                                 class="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-strong)] p-2 text-[var(--color-text)] text-sm">
                           <option value="{{ w.id }}">{% translate "Keep as a separate viewing" %}</option>
                           <template x-for="other in combineTargets({{ w.id }})" :key="other">

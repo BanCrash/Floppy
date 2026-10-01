@@ -64,6 +64,9 @@ def _form_resolutions(data, preview):
         if anchor not in watches:
             message = _("Choose a viewing from this preview.")
             raise ValueError(message)
+        if anchor != watch_id and data.get(f"archive_{watch_id}") == "on":
+            message = _("Archive a viewing or combine it with another, not both.")
+            raise ValueError(message)
         groups.setdefault(anchor, []).append(int(watch_id))
     resolutions = []
     for anchor, watch_ids in groups.items():
@@ -71,6 +74,9 @@ def _form_resolutions(data, preview):
             message = _("Combined viewings must point to a viewing kept separate in its own row.")
             raise ValueError(message)
         archive = data.get(f"archive_{anchor}") == "on"
+        if archive and len(watch_ids) > 1:
+            message = _("Archive a viewing or combine it with another, not both.")
+            raise ValueError(message)
         resolution = {
             "watch_ids": watch_ids,
             "episode_ids": [] if archive else data.getlist(f"episodes_{anchor}"),
@@ -127,6 +133,17 @@ def _preview_context(order, preview):
     }
 
 
+def _revert_label(tv):
+    """Name the order an undo returns to: the one before the latest change."""
+    change = episode_ordering.latest_reversible_change(tv)
+    previous = change.before_state.get("active_order") if change else None
+    label = (
+        EpisodeOrder.objects.filter(pk=previous).values_list("label", flat=True).first()
+        if previous else None
+    )
+    return label or _("Original numbering")
+
+
 def _order_groups(orders):
     """Group provider orders for display, preserving provider order."""
     groups = {}
@@ -146,8 +163,11 @@ def episode_ordering_settings(request, tv_id):
         action, order = request.POST.get("action"), None
         try:
             if action == "revert":
+                label = _revert_label(tv)
                 episode_ordering.revert_change(tv)
-                messages.success(request, _("Episode ordering restored to the original numbering."))
+                messages.success(
+                    request, _("Episode ordering restored to %(order)s.") % {"order": label},
+                )
                 return redirect(media_url(tv.item))
             if action == "apply":
                 order = get_object_or_404(EpisodeOrder, pk=request.POST.get("order_id"), show=tv.item)
@@ -183,4 +203,5 @@ def episode_ordering_settings(request, tv_id):
         )
     context["order_groups"] = _order_groups(orders)
     context["can_revert"] = episode_ordering.can_revert(tv)
+    context["revert_label"] = _revert_label(tv)
     return render(request, "app/episode_ordering.html", context, status=status)
