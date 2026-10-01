@@ -33,10 +33,8 @@ from app.models import (
     CollectionField,
     CollectionFieldGroup,
     CollectionFieldType,
-    Game,
     Item,
     MediaTypes,
-    Status,
 )
 from app.providers import services
 from app.services import metadata_resolution
@@ -479,16 +477,6 @@ def collection_add(request):
         entry.user = request.user
         entry.item = item
         entry.save()
-
-        if item.media_type == MediaTypes.GAME.value:
-            game_exists = Game.objects.filter(user=request.user, item=item).exists()
-            if not game_exists:
-                Game.objects.create(
-                    user=request.user,
-                    item=item,
-                    status=Status.PLANNING.value,
-                    progress=0,
-                )
 
         collected_at = form.cleaned_data.get("collected_at")
         if collected_at:
