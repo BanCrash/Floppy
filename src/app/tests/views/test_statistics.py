@@ -560,6 +560,10 @@ class StatisticsViewTests(TestCase):
         cache.clear()
         self.client.login(**self.credentials)
         today = timezone.localdate()
+        if today.day == 1:
+            self.skipTest(
+                "Month-to-date is a single day, labelled Today, on the first of the month."
+            )
         month_start = today.replace(day=1)
         last_year_today = today - relativedelta(years=1)
 
