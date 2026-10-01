@@ -8,12 +8,18 @@ from django.utils.translation import gettext
 from django.views.decorators.http import require_GET
 
 from app import helpers
+from app.library_query import LibraryQueryExecutor
+from app.library_query.adapters import from_media_list_filters
 from app.log_safety import exception_summary
+from app.media_list_filters import (
+    MediaListEntry,
+    MediaListFilters,
+    media_list_entries_for_items,
+)
 from app.models import (
     AlbumTracker,
     ArtistTracker,
     BasicMedia,
-    CollectionEntry,
     Item,
     ItemTag,
     MediaTypes,
@@ -116,27 +122,15 @@ def _matched_title(item_obj, search_query, user):
     return None
 
 
-def _collected_untracked_items(user, media_type, query, tracked_item_ids):
-    """Return the user's collected or tagged ``media_type`` items no tracker covers.
+def _tagged_untracked_items(user, media_type, query, library_ids):
+    """Return the user's tagged ``media_type`` items the library query does not cover.
 
-    Collection entries and tags have no Media row, so the tracker queries
-    miss them (#1270, #1160). A collected episode stands for its show, as it
-    does in the media list. Kept as one relational query so a large collection
-    stays bounded by the caller's slice.
+    A tag can sit on an item with no tracker and no collection entry (#1160),
+    so the library query misses it. ``library_ids`` is what that query matched
+    (a subquery or a set of ids). Kept as one relational query so the caller's
+    slice bounds the work.
     """
-    user_entries = CollectionEntry.objects.filter(user=user)
-    in_library = Exists(user_entries.filter(item_id=OuterRef("pk"))) | Exists(
-        ItemTag.objects.filter(tag__user=user, item_id=OuterRef("pk")),
-    )
-    if media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
-        in_library |= Exists(
-            user_entries.filter(
-                item__media_type=MediaTypes.EPISODE.value,
-                item__media_id=OuterRef("media_id"),
-                item__source=OuterRef("source"),
-            ),
-        )
-
+    tagged = Exists(ItemTag.objects.filter(tag__user=user, item_id=OuterRef("pk")))
     include_anime_in_anime, include_anime_in_tv = (
         metadata_resolution.anime_library_visibility(user)
     )
@@ -156,30 +150,18 @@ def _collected_untracked_items(user, media_type, query, tracked_item_ids):
         type_filter = Q(media_type=media_type)
 
     return (
-        Item.objects.filter(type_filter, in_library, title__icontains=query)
-        .exclude(id__in=tracked_item_ids)
+        Item.objects.filter(type_filter, tagged, title__icontains=query)
+        .exclude(id__in=library_ids)
         .order_by("title", "id")
     )
 
 
-def _merge_collected_items(local_media, collected_items, media_type, limit):
-    """Merge tracked media and collected items by title, capped at ``limit``.
-
-    Returns ``(media, item)`` pairs; ``media`` is None for a collected-only item.
-    """
-    merged = [(media, media.item) for media in local_media[:limit]]
-    merged += [(None, item) for item in collected_items[:limit]]
-    merged.sort(key=lambda pair: (pair[1].title or "").lower())
-    merged = merged[:limit]
-    if media_type == MediaTypes.ANIME.value:
-        _mark_grouped_anime_route(
-            [
-                item
-                for media, item in merged
-                if media is None and item.media_type == MediaTypes.TV.value
-            ],
-        )
-    return merged
+def _merge_by_title(entries, extra_items, limit):
+    """Merge ``MediaListEntry`` rows with media-less items by title, capped at ``limit``."""
+    merged = list(entries)
+    merged += [MediaListEntry(item=item, media=None) for item in extra_items[:limit]]
+    merged.sort(key=lambda entry: (entry.item.title or "").lower())
+    return merged[:limit]
 
 
 class PodcastShowAdapter:
@@ -214,27 +196,49 @@ class PodcastShowAdapter:
 
 
 def _local_podcast_results(user, query, limit):
-    """Return ``(results, total)`` for the user's tracked podcast shows."""
+    """Return ``(results, total)`` for the user's tracked or tagged podcast shows."""
     show_trackers = (
         PodcastShowTracker.objects.filter(user=user)
         .exclude(show__title__isnull=True)
         .exclude(show__title__exact="")
         .filter(show__title__icontains=query)
     )
-    total = show_trackers.count()
-    adapted_media = [
-        PodcastShowAdapter(tracker)
-        for tracker in show_trackers.order_by("show__title")[:limit]
-    ]
+    # A show can be tagged without being tracked (#1160).
+    tagged_only = (
+        Item.objects.filter(
+            Exists(ItemTag.objects.filter(tag__user=user, item_id=OuterRef("pk"))),
+            media_type=MediaTypes.PODCAST.value,
+            title__icontains=query,
+        )
+        .exclude(
+            media_id__in=PodcastShowTracker.objects.filter(user=user).values(
+                "show__podcast_uuid",
+            ),
+        )
+        .order_by("title", "id")
+    )
+    total = show_trackers.count() + tagged_only.count()
     results = [
         {
             "item": media.item,
             "media": media,
             "matched_title": _matched_title(media.item, query, user),
         }
-        for media in adapted_media
+        for media in (
+            PodcastShowAdapter(tracker)
+            for tracker in show_trackers.order_by("show__title")[:limit]
+        )
     ]
-    return results, total
+    results += [
+        {
+            "item": item,
+            "media": None,
+            "matched_title": _matched_title(item, query, user),
+        }
+        for item in tagged_only[:limit]
+    ]
+    results.sort(key=lambda result: (result["item"].title or "").lower())
+    return results[:limit], total
 
 
 def _local_music_results(user, query, limit):
@@ -264,75 +268,55 @@ def _local_music_results(user, query, limit):
     }
 
 
-def _local_media_results(user, media_type, query, limit):
-    """Return ``(results, total)`` for tracked, collected or tagged ``media_type`` items."""
-    local_media = list(
-        BasicMedia.objects.get_media_list(
-            user,
-            media_type,
-            MediaStatusChoices.ALL,
-            "title",
-            search=query,
-            direction="asc",
-        ),
-    )
-    anime_library_mode = getattr(user, "anime_library_mode", MediaTypes.ANIME.value)
-    if (
-        media_type == MediaTypes.TV.value
-        and anime_library_mode == MediaTypes.ANIME.value
-    ):
-        local_media = [
-            media
-            for media in local_media
-            if getattr(getattr(media, "item", None), "library_media_type", None)
-            != MediaTypes.ANIME.value
-        ]
-    elif media_type == MediaTypes.ANIME.value and anime_library_mode in {
-        MediaTypes.ANIME.value,
-        "both",
-    }:
-        grouped_local_media = [
-            media
-            for media in BasicMedia.objects.get_media_list(
-                user,
-                MediaTypes.TV.value,
-                MediaStatusChoices.ALL,
-                "title",
-                search=query,
-                direction="asc",
-            )
-            if getattr(getattr(media, "item", None), "library_media_type", None)
-            == MediaTypes.ANIME.value
-        ]
-        _mark_grouped_anime_route(grouped_local_media)
-        local_media.extend(grouped_local_media)
-        local_media.sort(
-            key=lambda media: getattr(
-                getattr(media, "item", None),
-                "title",
-                "",
-            ).lower(),
-        )
+def _local_media_results(user, media_type, query, limit, *, annotate_progress=True):
+    """Return ``(results, total)`` for tracked, collected or tagged ``media_type`` items.
 
-    collected_items = _collected_untracked_items(
+    Only the first ``limit`` items are loaded; the total is counted in SQL.
+    """
+    # Every status plus "no status", so an imported rating with no status and
+    # a collected-only item both count (the media list's "everything" view).
+    filters = MediaListFilters(
+        statuses=tuple(
+            value
+            for value in MediaStatusChoices.values
+            if value != MediaStatusChoices.ALL
+        ),
+        include_no_status=True,
+        search=query,
+        sort="title",
+        direction="asc",
+    )
+    executor = LibraryQueryExecutor(
         user,
-        media_type,
-        query,
-        [media.item_id for media in local_media],
+        from_media_list_filters(filters, (media_type,)),
     )
-    total = len(local_media) + collected_items.count()
-    merged = _merge_collected_items(local_media, collected_items, media_type, limit)
-    BasicMedia.objects.annotate_max_progress(
-        [media for media, _item in merged if media is not None],
-        media_type,
+    library_total = executor.count()
+    entries = media_list_entries_for_items(
+        user,
+        executor.page(0, limit, total=library_total).items,
     )
+    tagged_only = _tagged_untracked_items(user, media_type, query, executor.matches())
+    total = library_total + tagged_only.count()
+    merged = _merge_by_title(entries, tagged_only, limit)
+
+    if media_type == MediaTypes.ANIME.value:
+        for entry in merged:
+            if entry.item.media_type == MediaTypes.TV.value:
+                _mark_grouped_anime_route(
+                    [entry.media] if entry.media is not None else [entry.item],
+                )
+    if annotate_progress:
+        BasicMedia.objects.annotate_max_progress(
+            [entry.media for entry in merged if entry.media is not None],
+            media_type,
+        )
     results = [
         {
-            "item": item,
-            "media": media,
-            "matched_title": _matched_title(item, query, user),
+            "item": entry.item,
+            "media": entry.media,
+            "matched_title": _matched_title(entry.item, query, user),
         }
-        for media, item in merged
+        for entry in merged
     ]
     return results, total
 
@@ -656,62 +640,14 @@ def get_saved_suggestions(user, media_type, query, limit=8):
                 )
         return suggestions[:limit]
 
-    local_queryset = BasicMedia.objects.get_media_list(
-        user,
-        media_type,
-        MediaStatusChoices.ALL,
-        "title",
-        search=query,
-        direction="asc",
-    )
-    local_media = list(local_queryset)
-
-    include_anime_in_anime, include_anime_in_tv = (
-        metadata_resolution.anime_library_visibility(user)
-    )
-    if media_type == MediaTypes.TV.value and not include_anime_in_tv:
-        local_media = [
-            media
-            for media in local_media
-            if getattr(getattr(media, "item", None), "library_media_type", None)
-            != MediaTypes.ANIME.value
-        ]
-    elif media_type == MediaTypes.ANIME.value and include_anime_in_anime:
-        grouped = [
-            media
-            for media in BasicMedia.objects.get_media_list(
-                user,
-                MediaTypes.TV.value,
-                MediaStatusChoices.ALL,
-                "title",
-                search=query,
-                direction="asc",
-            )
-            if getattr(getattr(media, "item", None), "library_media_type", None)
-            == MediaTypes.ANIME.value
-        ]
-        _mark_grouped_anime_route(grouped)
-        local_media.extend(grouped)
-        local_media.sort(
-            key=lambda media: getattr(
-                getattr(media, "item", None),
-                "title",
-                "",
-            ).lower(),
-        )
-
-    collected_items = _collected_untracked_items(
+    results, _total = _local_media_results(
         user,
         media_type,
         query,
-        [media.item_id for media in local_media],
+        limit,
+        annotate_progress=False,
     )
-    local_items = [
-        item
-        for _media, item in _merge_collected_items(
-            local_media, collected_items, media_type, limit
-        )
-    ]
+    local_items = [result["item"] for result in results]
 
     for item in local_items:
         if item is None:

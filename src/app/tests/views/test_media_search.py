@@ -4,7 +4,9 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from app.media_list_filters import media_list_entries_for_items
 from app.models import (
+    TV,
     Album,
     AlbumTracker,
     Artist,
@@ -665,3 +667,75 @@ class AllTypeSearchTests(TestCase):
         suggestions = get_saved_suggestions(self.user, MediaTypes.GAME.value, "dune")
 
         self.assertEqual([s["title"] for s in suggestions], [tagged.title])
+
+    def test_all_type_includes_tagged_only_podcast_shows(self):
+        item = self._item(
+            MediaTypes.PODCAST.value,
+            "Dune Cast",
+            "pc1",
+            Sources.POCKETCASTS.value,
+        )
+        ItemTag.objects.create(
+            tag=Tag.objects.create(user=self.user, name="listen"), item=item
+        )
+
+        response = self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        groups = {g["media_type"]: g for g in response.context["local_groups"]}
+        self.assertEqual(
+            [r["item"] for r in groups[MediaTypes.PODCAST.value]["results"]],
+            [item],
+        )
+
+    def test_all_type_loads_only_one_page_per_type(self):
+        """A common query must not hydrate every match in a large library."""
+        for number in range(30):
+            Movie.objects.create(
+                user=self.user,
+                item=self._item(
+                    MediaTypes.MOVIE.value, f"Dune {number:02d}", str(number)
+                ),
+                status=Status.COMPLETED.value,
+            )
+
+        with patch(
+            "app.search_views.media_list_entries_for_items",
+            wraps=media_list_entries_for_items,
+        ) as hydrate:
+            response = self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        group = response.context["local_groups"][0]
+        self.assertEqual(group["total"], 30)
+        self.assertEqual(len(group["results"]), 12)
+        self.assertEqual(
+            max(len(call.args[1]) for call in hydrate.call_args_list),
+            12,
+        )
+
+    def test_statusless_media_is_searchable(self):
+        """An imported rating with no status is in the library (#1270 gap)."""
+        item = self._item(MediaTypes.MOVIE.value, "Dune Rated", "77")
+        Movie.objects.create(user=self.user, item=item, status=None, score=7)
+
+        suggestions = get_saved_suggestions(self.user, MediaTypes.MOVIE.value, "dune")
+
+        self.assertEqual([s["title"] for s in suggestions], ["Dune Rated"])
+
+    def test_grouped_anime_is_in_the_anime_library_not_tv(self):
+        """Anime tracked as a TV show follows the user's anime library mode."""
+        item = self._item(MediaTypes.TV.value, "Dune Anime", "a1")
+        item.library_media_type = MediaTypes.ANIME.value
+        item.save()
+        TV.objects.create(user=self.user, item=item, status=Status.COMPLETED.value)
+
+        groups = {
+            g["media_type"]: g
+            for g in self.client.get(
+                reverse("search") + "?media_type=all&q=dune",
+            ).context["local_groups"]
+        }
+
+        self.assertNotIn(MediaTypes.TV.value, groups)
+        anime = groups[MediaTypes.ANIME.value]["results"][0]
+        self.assertEqual(anime["item"], item)
+        self.assertEqual(anime["media"].route_media_type, MediaTypes.ANIME.value)
