@@ -1,5 +1,6 @@
 """Tests for saved media list views pinned under the sidebar."""
 
+import re
 from urllib.parse import parse_qs, urlparse
 
 from django.contrib.auth import get_user_model
@@ -340,3 +341,30 @@ class HistorySavedViewTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertFalse(SavedView.objects.exists())
+
+    def _toggle_button_classes(self, url):
+        """Return the class list of the sidebar's "Saved History views" button."""
+        html = self.client.get(url).content.decode()
+        match = re.search(
+            r'<button[^>]*?class="([^"]*)"[^>]*?aria-label="Saved History views"',
+            html,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1)
+
+    def test_sidebar_chevron_shows_on_hover_or_when_current(self):
+        """The expand arrow is hidden at rest, except on the page that is open."""
+        SavedView.objects.create(
+            user=self.user,
+            media_type=HISTORY_VIEW_TYPE,
+            name="No music",
+            query="media_type=tv",
+        )
+
+        elsewhere = self._toggle_button_classes(reverse("calendar"))
+        on_history = self._toggle_button_classes(reverse("history"))
+
+        self.assertIn("pointer-fine:opacity-0", elsewhere)
+        self.assertIn("pointer-fine:group-hover:opacity-100", elsewhere)
+        self.assertNotIn("pointer-fine:opacity-0", on_history)

@@ -3,14 +3,14 @@
 {% load app_tags %}
 {% url 'saved_view_reorder' as saved_view_reorder_url %}
 <li x-data="savedViewGroup('{{ group_key|escapejs }}', '{{ saved_view_reorder_url|escapejs }}', '{{ csrf_token|escapejs }}')">
-  <div class="flex items-center rounded-md transition-colors duration-200 text-sm {% if group_current %}text-[var(--color-text)] bg-[var(--color-border)]{% else %}text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-dim)]{% endif %}">
+  <div class="group flex items-center rounded-md transition-colors duration-200 text-sm {% if group_current %}text-[var(--color-text)] bg-[var(--color-border)]{% else %}text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-dim)]{% endif %}">
     <a href="{{ group_url }}"
        class="flex-1 min-w-0 flex items-center space-x-3 pl-4 py-2">
       {% icon group_key is_active=group_current %}
       <span>{{ group_label }}</span>
     </a>
     <button type="button"
-            class="mr-2 p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-dim)] cursor-pointer"
+            class="mr-2 p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-hover-dim)] cursor-pointer{% if not group_current %} pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:focus:opacity-100{% endif %}"
             :aria-expanded="open.toString()"
             aria-label="{% blocktrans with name=group_label %}Saved {{ name }} views{% endblocktrans %}"
             @click="toggle()">
