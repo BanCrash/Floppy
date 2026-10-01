@@ -33,6 +33,7 @@ from app.providers import (
     hardcover,
     igdb,
     mal,
+    mangabaka,
     mangaupdates,
     manual,
     musicbrainz,
@@ -413,6 +414,11 @@ session.mount(
 session.mount(
     "https://graphql.anilist.co",
     _build_host_limiter_adapter(per_minute=85),
+)
+session.mount(
+    "https://api.mangabaka.org/v1",
+    # MangaBaka allows 30 uncached searches a minute per IP.
+    _build_host_limiter_adapter(per_minute=30),
 )
 session.mount(
     "https://api.igdb.com/v4",
@@ -1175,6 +1181,8 @@ def get_media_metadata(
         MediaTypes.MANGA.value: lambda: (
             mangaupdates.manga(media_id)
             if source == Sources.MANGAUPDATES.value
+            else mangabaka.manga(media_id)
+            if source == Sources.MANGABAKA.value
             else mal.manga(media_id)
         ),
         MediaTypes.TV.value: lambda: (
@@ -1522,6 +1530,10 @@ def _lookup_by_numeric_id(media_type, query, source, user=None):
     if media_type == MediaTypes.MANGA.value:
         if source == Sources.MANGAUPDATES.value:
             return mangaupdates.manga(query)
+        if source == Sources.MANGABAKA.value:
+            # Direct ID lookups follow the same filters as search results.
+            metadata = mangabaka.manga(n)
+            return metadata if mangabaka.is_searchable(metadata) else None
         return mal.manga(n)
     if media_type == MediaTypes.GAME.value:
         return igdb.game(n)
@@ -1617,6 +1629,8 @@ def search(
         MediaTypes.MANGA.value: lambda: (
             mangaupdates.search(query, page)
             if source == Sources.MANGAUPDATES.value
+            else mangabaka.search(query, page)
+            if source == Sources.MANGABAKA.value
             else mal.search(media_type, query, page)
         ),
         MediaTypes.ANIME.value: lambda: (
