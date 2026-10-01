@@ -6,7 +6,7 @@ from unittest.mock import call, patch
 import redis
 import requests
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from requests import Response
 
 from app.models import (
@@ -3036,6 +3036,7 @@ class TraktDeviceFlow(TestCase):
             {
                 "access_token": "access",
                 "refresh_token": "refresh",
+                "redirect_uri": trakt.TRAKT_OOB_REDIRECT_URI,
                 "username": "floppy",
             },
         )
@@ -3088,6 +3089,7 @@ class TraktDeviceFlow(TestCase):
             {
                 "access_token": "access",
                 "refresh_token": "refresh",
+                "redirect_uri": trakt.TRAKT_OOB_REDIRECT_URI,
                 "username": "floppy",
             },
         )
@@ -3111,3 +3113,137 @@ class TraktRefreshRedirectUri(TestCase):
             trakt._refresh_redirect_uri(),
             "https://floppy.example.com/import/trakt/private",
         )
+
+
+class TraktRefreshUsesAuthorizedRedirectUri(TestCase):
+    """The refresh grant repeats the redirect URI the connection was made with (#1404)."""
+
+    CALLBACK_URI = "https://floppy.example.com/import/trakt/private"
+
+    @staticmethod
+    def _rejected(payload):
+        response = Response()
+        response.status_code = 400
+        response.headers["Content-Type"] = "application/json"
+        response._content = json.dumps(payload).encode()
+        return services.ProviderAPIError(
+            "TRAKT",
+            requests.HTTPError(response=response),
+        )
+
+    @override_settings(URLS=[], BASE_URL=None)
+    @patch("integrations.imports.trakt.update_refresh_token")
+    @patch("integrations.imports.trakt.helpers.decrypt_or_raise", return_value="old")
+    @patch("integrations.imports.trakt.services.api_request")
+    def test_stored_redirect_uri_is_sent_even_when_none_is_configured(
+        self,
+        mock_api_request,
+        _mock_decrypt,
+        _mock_update,
+    ):
+        # No URLS/BASE_URL in the worker would otherwise mean the out-of-band
+        # value, which a custom Trakt app that only lists its https callback
+        # rejects.
+        mock_api_request.return_value = {"access_token": "a", "refresh_token": "r"}
+
+        trakt.get_access_token("enc", self.CALLBACK_URI)
+
+        sent = mock_api_request.call_args.kwargs["params"]
+        self.assertEqual(sent["redirect_uri"], self.CALLBACK_URI)
+
+    @override_settings(URLS=[], BASE_URL=None)
+    @patch("integrations.imports.trakt.update_refresh_token")
+    @patch("integrations.imports.trakt.helpers.decrypt_or_raise", return_value="old")
+    @patch("integrations.imports.trakt.services.api_request")
+    def test_connections_without_a_stored_uri_keep_the_old_fallback(
+        self,
+        mock_api_request,
+        _mock_decrypt,
+        _mock_update,
+    ):
+        mock_api_request.return_value = {"access_token": "a", "refresh_token": "r"}
+
+        trakt.get_access_token("enc")
+
+        sent = mock_api_request.call_args.kwargs["params"]
+        self.assertEqual(sent["redirect_uri"], trakt.TRAKT_OOB_REDIRECT_URI)
+
+    @patch("integrations.imports.trakt.helpers.decrypt_or_raise", return_value="old")
+    @patch("integrations.imports.trakt.services.api_request")
+    def test_rejected_refresh_names_the_oauth_error(
+        self,
+        mock_api_request,
+        _mock_decrypt,
+    ):
+        mock_api_request.side_effect = self._rejected({"error": "invalid_grant"})
+
+        with (
+            self.assertLogs("integrations.imports.trakt", level="WARNING") as logs,
+            self.assertRaises(MediaImportError) as ctx,
+        ):
+            trakt.get_access_token("enc", self.CALLBACK_URI)
+
+        self.assertIn("invalid_grant", str(ctx.exception))
+        self.assertIn("Redirect URI", str(ctx.exception))
+        self.assertIn("invalid_grant", "\n".join(logs.output))
+
+    @patch("integrations.imports.trakt.helpers.decrypt_or_raise", return_value="old")
+    @patch("integrations.imports.trakt.services.api_request")
+    def test_rejected_refresh_without_a_json_body_still_explains(
+        self,
+        mock_api_request,
+        _mock_decrypt,
+    ):
+        response = Response()
+        response.status_code = 400
+        response._content = b"<html>Bad Request</html>"
+        mock_api_request.side_effect = services.ProviderAPIError(
+            "TRAKT",
+            requests.HTTPError(response=response),
+        )
+
+        with self.assertRaises(MediaImportError) as ctx:
+            trakt.get_access_token("enc", self.CALLBACK_URI)
+
+        self.assertIn("rejected the token refresh", str(ctx.exception))
+
+    @patch("integrations.imports.trakt.get_access_token", return_value="access")
+    @patch("integrations.imports.trakt.services.api_request", return_value={})
+    def test_importer_passes_the_stored_uri_to_the_refresh(
+        self,
+        _mock_api_request,
+        mock_get_access_token,
+    ):
+        user = get_user_model().objects.create_user(username="trakt-1404")
+        trakt_importer = TraktImporter(
+            "trakt-user",
+            user,
+            "new",
+            refresh_token="enc",
+            redirect_uri=self.CALLBACK_URI,
+        )
+
+        trakt_importer._make_api_request("https://api.trakt.tv/users/me")
+
+        mock_get_access_token.assert_called_once_with("enc", self.CALLBACK_URI)
+
+    @patch("integrations.imports.trakt.get_username_from_oauth", return_value="floppy")
+    @patch("integrations.imports.trakt.services.api_request")
+    def test_sign_in_result_carries_the_redirect_uri_it_used(
+        self,
+        mock_api_request,
+        _mock_username,
+    ):
+        mock_api_request.return_value = {"access_token": "a", "refresh_token": "r"}
+        request = RequestFactory().get("/import/trakt/private", {"code": "abc"})
+
+        result = trakt.handle_oauth_callback(
+            request,
+            redirect_uri=self.CALLBACK_URI,
+            client_id="client",
+            client_secret="secret",
+        )
+
+        self.assertEqual(result["redirect_uri"], self.CALLBACK_URI)
+        sent = mock_api_request.call_args.kwargs["params"]
+        self.assertEqual(sent["redirect_uri"], self.CALLBACK_URI)
