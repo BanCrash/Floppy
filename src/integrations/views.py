@@ -69,6 +69,7 @@ from integrations.imports.audiobookshelf import (
     AudiobookshelfClient,
 )
 from integrations.imports.kapowarr import KapowarrClient
+from integrations.imports.kavita import KavitaClient
 from integrations.imports.komga import KomgaClient
 from integrations.imports.koreader import (
     KoreaderAuthError,
@@ -111,6 +112,7 @@ from integrations.models import (
     GPodderAccount,
     JellyfinAccount,
     KapowarrInstance,
+    KavitaAccount,
     KoitoAccount,
     KomgaAccount,
     KoreaderAccount,
@@ -2461,35 +2463,36 @@ def import_audiobookshelf(request):
     return redirect("import_data")
 
 
-def _komga_interval(request, default=15):
-    """Return the sync interval chosen in the Komga form, or ``default``."""
+def _sync_interval(request, account_model, default=15):
+    """Return the sync interval chosen in a reading server form, or ``default``."""
     try:
         minutes = int(request.POST.get("sync_interval_minutes", default))
     except ValueError:
         return default
-    return minutes if minutes in KomgaAccount.SYNC_INTERVAL_CHOICES else default
+    return minutes if minutes in account_model.SYNC_INTERVAL_CHOICES else default
 
 
-@require_POST
-def komga_connect(request):
-    """Connect Komga using its server URL and an API key."""
+def _reading_server_connect(
+    request, service, account_model, client_class, import_task, related_name
+):
+    """Connect a reading server (Komga, Kavita) using its URL and an API key."""
     base_url = request.POST.get("base_url", "").strip()
     api_key = request.POST.get("api_key", "").strip()
 
     if not base_url or not api_key:
-        messages.error(request, "Komga server URL and API key are required.")
+        messages.error(request, f"{service} server URL and API key are required.")
         return _integration_redirect(request)
 
     try:
-        KomgaClient(base_url, api_key).healthcheck()
+        client_class(base_url, api_key).healthcheck()
     except Exception as exc:
-        messages.error(request, f"Failed to connect to Komga: {exc}")
+        messages.error(request, f"Failed to connect to {service}: {exc}")
         return _integration_redirect(request)
 
-    interval = _komga_interval(request)
+    interval = _sync_interval(request, account_model)
 
     def _connect():
-        KomgaAccount.objects.update_or_create(
+        account_model.objects.update_or_create(
             user=request.user,
             defaults={
                 "base_url": base_url,
@@ -2499,51 +2502,93 @@ def komga_connect(request):
                 "last_error_message": "",
             },
         )
-        _ensure_recurring_import_schedule(request.user, "Komga", interval)
+        _ensure_recurring_import_schedule(request.user, service, interval)
 
-    _run_with_lock_retry("connect Komga", _connect)
+    _run_with_lock_retry(f"connect {service}", _connect)
     if _queue_task_or_message(
-        request, tasks.import_komga, user_id=request.user.id, mode="new"
+        request, import_task, user_id=request.user.id, mode="new"
     ) is not False:
-        messages.success(request, "Connected Komga. Initial import queued.")
-    return _integration_redirect(request, connected_slug="komga")
+        messages.success(request, f"Connected {service}. Initial import queued.")
+    return _integration_redirect(request, connected_slug=related_name)
+
+
+def _reading_server_disconnect(request, service, account_model):
+    """Disconnect a reading server and remove its recurring schedule."""
+    from django_celery_beat.models import PeriodicTask
+
+    def _disconnect():
+        PeriodicTask.objects.filter(
+            task=f"Import from {service} (Recurring)",
+            **helpers.periodic_task_user_kwargs(request.user.id),
+        ).delete()
+        account_model.objects.filter(user=request.user).delete()
+
+    _run_with_lock_retry(f"disconnect {service}", _disconnect)
+    messages.info(request, f"Disconnected {service}.")
+    return redirect("import_data")
+
+
+def _reading_server_sync_now(request, service, account_attr, import_task):
+    """Queue a sync now and keep the recurring schedule in place."""
+    account = getattr(request.user, account_attr, None)
+    if not account:
+        messages.error(request, f"Connect {service} before importing.")
+        return redirect("import_data")
+
+    queued = _queue_task_or_message(
+        request, import_task, user_id=request.user.id, mode="new"
+    )
+    _ensure_recurring_import_schedule(
+        request.user, service, account.sync_interval_minutes
+    )
+
+    if queued is not False:
+        messages.info(request, f"{service} sync queued.")
+    return redirect("import_data")
+
+
+@require_POST
+def komga_connect(request):
+    """Connect Komga using its server URL and an API key."""
+    return _reading_server_connect(
+        request, "Komga", KomgaAccount, KomgaClient, tasks.import_komga, "komga"
+    )
 
 
 @require_POST
 def komga_disconnect(request):
     """Disconnect Komga."""
-    from django_celery_beat.models import PeriodicTask
-
-    def _disconnect():
-        PeriodicTask.objects.filter(
-            task="Import from Komga (Recurring)",
-            **helpers.periodic_task_user_kwargs(request.user.id),
-        ).delete()
-        KomgaAccount.objects.filter(user=request.user).delete()
-
-    _run_with_lock_retry("disconnect Komga", _disconnect)
-    messages.info(request, "Disconnected Komga.")
-    return redirect("import_data")
+    return _reading_server_disconnect(request, "Komga", KomgaAccount)
 
 
 @require_POST
 def import_komga(request):
-    """Queue a Komga sync now and keep the recurring schedule in place."""
-    account = getattr(request.user, "komga_account", None)
-    if not account:
-        messages.error(request, "Connect Komga before importing.")
-        return redirect("import_data")
-
-    queued = _queue_task_or_message(
-        request, tasks.import_komga, user_id=request.user.id, mode="new"
-    )
-    _ensure_recurring_import_schedule(
-        request.user, "Komga", account.sync_interval_minutes
+    """Queue a Komga sync now."""
+    return _reading_server_sync_now(
+        request, "Komga", "komga_account", tasks.import_komga
     )
 
-    if queued is not False:
-        messages.info(request, "Komga sync queued.")
-    return redirect("import_data")
+
+@require_POST
+def kavita_connect(request):
+    """Connect Kavita using its server URL and an API key."""
+    return _reading_server_connect(
+        request, "Kavita", KavitaAccount, KavitaClient, tasks.import_kavita, "kavita"
+    )
+
+
+@require_POST
+def kavita_disconnect(request):
+    """Disconnect Kavita."""
+    return _reading_server_disconnect(request, "Kavita", KavitaAccount)
+
+
+@require_POST
+def import_kavita(request):
+    """Queue a Kavita sync now."""
+    return _reading_server_sync_now(
+        request, "Kavita", "kavita_account", tasks.import_kavita
+    )
 
 
 AUDIOBOOKSHELF_COVER_TIMEOUT = 15
