@@ -85,6 +85,8 @@ def _preview_context(order, preview):
         pk__in=[row["item_id"] for row in preview["watches"]],
     ).values_list("pk", "title"))
     proposed = {row["watch_ids"][0]: row["episode_ids"] for row in preview["resolutions"]}
+    for watch_id, suggestion in preview["suggestions"].items():
+        proposed[watch_id] = proposed.get(watch_id) or [suggestion["episode_id"]]
     return {
         "order": order, "preview": preview,
         "watches": [{**row, "title": titles[row["item_id"]],
