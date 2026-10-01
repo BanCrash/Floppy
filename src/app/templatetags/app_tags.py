@@ -22,7 +22,7 @@ from app import card_surfaces, config, helpers, image_cache
 from app.models import Item, MediaTypes, Sources, Status
 from app.providers import tmdb
 from app.services import metadata_resolution
-from users.models import TimeFormatChoices
+from users.models import HISTORY_VIEW_TYPE, TimeFormatChoices
 from users.templatetags.user_tags import user_date_format, user_time_format
 
 register = template.Library()
@@ -995,6 +995,25 @@ def get_search_media_types(user):
     ]
 
 
+def _saved_views_by_type(user):
+    """Group the user's saved views by type, reading them once per request."""
+    if not user or not user.is_authenticated:
+        return {}
+    grouped = getattr(user, "_saved_views_by_type", None)
+    if grouped is None:
+        grouped = {}
+        for saved_view in user.saved_views.all():
+            grouped.setdefault(saved_view.media_type, []).append(saved_view)
+        user._saved_views_by_type = grouped
+    return grouped
+
+
+@register.simple_tag
+def get_history_saved_views(user):
+    """Return the user's saved History views for the sidebar."""
+    return _saved_views_by_type(user).get(HISTORY_VIEW_TYPE, [])
+
+
 @register.simple_tag
 def get_sidebar_media_types(user):
     """Return available media types for sidebar navigation based on user preferences."""
@@ -1008,12 +1027,7 @@ def get_sidebar_media_types(user):
     else:
         enabled_types = user.get_sidebar_media_types()
 
-    saved_views_by_type = {}
-    if user and user.is_authenticated:
-        for saved_view in user.saved_views.all():
-            saved_views_by_type.setdefault(saved_view.media_type, []).append(
-                saved_view,
-            )
+    saved_views_by_type = _saved_views_by_type(user)
 
     # Format the types for sidebar
     return [

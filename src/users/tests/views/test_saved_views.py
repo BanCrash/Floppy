@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from app.models import MediaTypes
-from users.models import SavedView
+from users.models import HISTORY_VIEW_TYPE, SavedView
 
 
 class SavedViewTests(TestCase):
@@ -185,3 +185,158 @@ class SavedViewTests(TestCase):
         self.assertEqual(second.position, 2)
         theirs.refresh_from_db()
         self.assertEqual(theirs.position, 5)
+
+
+class HistorySavedViewTests(TestCase):
+    """Saved views of the History page share the sidebar machinery."""
+
+    def setUp(self):
+        """Log in a user who owns the views."""
+        self.credentials = {"username": "historian", "password": "testpass123"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+    def _save(self, query, name="No music"):
+        return self.client.post(
+            reverse("saved_view_create"),
+            {"media_type": HISTORY_VIEW_TYPE, "name": name, "query": query},
+        )
+
+    def test_save_keeps_only_the_filter_window_fields(self):
+        """The saved link reopens History with its filters, minus paging noise."""
+        response = self._save(
+            "media_type=tv,movie&start-date=2026-01-01&genre=Drama&page=4&tv=12&empty=",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        saved_view = SavedView.objects.get(user=self.user)
+        self.assertEqual(saved_view.media_type, HISTORY_VIEW_TYPE)
+        parsed = urlparse(saved_view.get_absolute_url())
+        self.assertEqual(parsed.path, reverse("history"))
+        self.assertEqual(response.json()["url"], saved_view.get_absolute_url())
+        self.assertEqual(
+            parse_qs(parsed.query),
+            {
+                "start-date": ["2026-01-01"],
+                "media_type": ["tv,movie"],
+                "genre": ["Drama"],
+            },
+        )
+
+    def test_save_with_no_filters_opens_plain_history(self):
+        """A view saved with nothing chosen links to History without a query."""
+        self._save("")
+
+        self.assertEqual(
+            SavedView.objects.get().get_absolute_url(),
+            reverse("history"),
+        )
+
+    def test_save_rejects_blank_name(self):
+        """A History view needs a name like any other saved view."""
+        response = self._save("media_type=tv", name=" ")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(SavedView.objects.exists())
+
+    def test_sidebar_shows_views_under_history_for_their_owner_only(self):
+        """History gets its own group with only the user's views."""
+        other = get_user_model().objects.create_user(
+            username="other",
+            password="testpass123",
+        )
+        mine = SavedView.objects.create(
+            user=self.user,
+            media_type=HISTORY_VIEW_TYPE,
+            name="No music",
+            query="media_type=tv",
+        )
+        SavedView.objects.create(
+            user=other,
+            media_type=HISTORY_VIEW_TYPE,
+            name="Someone else's",
+        )
+        # A movie view must not leak into the History group.
+        SavedView.objects.create(
+            user=self.user,
+            media_type=MediaTypes.MOVIE.value,
+            name="Finished movies",
+            query="status=Completed",
+        )
+
+        response = self.client.get(mine.get_absolute_url())
+
+        self.assertContains(response, 'aria-current="page"')
+        self.assertContains(response, f'href="{mine.get_absolute_url()}"')
+        self.assertContains(response, reverse("saved_view_delete", args=[mine.id]))
+        self.assertNotContains(response, "Someone else&#x27;s")
+
+    def test_history_without_views_keeps_the_plain_link(self):
+        """No saved views means no extra group in the sidebar."""
+        response = self.client.get(reverse("history"))
+
+        self.assertNotContains(response, reverse("saved_view_reorder"))
+
+    def test_saved_view_filters_the_history_page(self):
+        """Opening the saved link applies its media type filter."""
+        saved_view = SavedView.objects.create(
+            user=self.user,
+            media_type=HISTORY_VIEW_TYPE,
+            name="Movies",
+            query="media_type=movie",
+        )
+
+        response = self.client.get(saved_view.get_absolute_url())
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_delete_returns_to_history(self):
+        """Deleting a History view without a safe next URL lands on History."""
+        saved_view = SavedView.objects.create(
+            user=self.user,
+            media_type=HISTORY_VIEW_TYPE,
+            name="Gone",
+        )
+
+        response = self.client.post(reverse("saved_view_delete", args=[saved_view.id]))
+
+        self.assertRedirects(
+            response,
+            reverse("history"),
+            fetch_redirect_response=False,
+        )
+        self.assertFalse(SavedView.objects.exists())
+
+    def test_reorder_works_for_history_views(self):
+        """History views reorder like any other group."""
+        first = SavedView.objects.create(
+            user=self.user,
+            media_type=HISTORY_VIEW_TYPE,
+            name="First",
+            position=0,
+        )
+        second = SavedView.objects.create(
+            user=self.user,
+            media_type=HISTORY_VIEW_TYPE,
+            name="Second",
+            position=1,
+        )
+
+        response = self.client.post(
+            reverse("saved_view_reorder"),
+            {"media_type": HISTORY_VIEW_TYPE, "ids": [second.id, first.id]},
+        )
+
+        self.assertEqual(response.status_code, 204)
+        second.refresh_from_db()
+        self.assertEqual(second.position, 0)
+
+    def test_demo_account_cannot_save_history_views(self):
+        """Demo accounts stay view-only."""
+        self.user.is_demo = True
+        self.user.save()
+
+        response = self._save("media_type=tv")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(SavedView.objects.exists())
