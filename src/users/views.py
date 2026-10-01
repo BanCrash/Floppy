@@ -7,7 +7,7 @@ from datetime import timedelta
 from io import BytesIO
 from itertools import batched
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 from allauth.account.views import SignupView
 from allauth.socialaccount.views import SignupView as SocialSignupView
@@ -88,6 +88,7 @@ from users.home_screen import (
     toggle_home_row_direction,
 )
 from users.models import (
+    HISTORY_VIEW_TYPE,
     ActivityHistoryViewChoices,
     DateFormatChoices,
     DurationFormatChoices,
@@ -253,6 +254,7 @@ def _get_import_data_user(user):
     return user._meta.model.objects.select_related(
         "plex_account",
         "audiobookshelf_account",
+        "kavita_account",
         "komga_account",
         "pocketcasts_account",
         "lastfm_account",
@@ -1367,6 +1369,25 @@ def convert_anime_library(request):
     return redirect("preferences")
 
 
+@login_required
+@require_POST
+def convert_tv_library(request):
+    """Move this user's tracked TV shows to their default TV provider."""
+    from app.tasks_tv_provider_migration import move_user_tv_library_task
+
+    # Moving is also the user's go-ahead for the nightly job to keep new shows
+    # on their default provider.
+    request.user.tv_auto_move_to_default_provider = True
+    request.user.save(update_fields=["tv_auto_move_to_default_provider"])
+    move_user_tv_library_task.delay(request.user.id)
+    messages.success(
+        request,
+        "Moving your tracked TV shows. This runs in the background; shows that "
+        "cannot be moved safely are left as they are.",
+    )
+    return redirect("metadata_settings")
+
+
 @require_GET
 def integrations(request):
     """Render the integrations settings page."""
@@ -1570,6 +1591,7 @@ def import_data(request):
     audiobookshelf_account = getattr(user, "audiobookshelf_account", None)
 
     komga_account = getattr(user, "komga_account", None)
+    kavita_account = getattr(user, "kavita_account", None)
 
     # Get Storyteller account and any in-progress device login
     storyteller_account = getattr(user, "storyteller_account", None)
@@ -1677,6 +1699,7 @@ def import_data(request):
         "plex_sections_json": json.dumps(plex_sections),
         "audiobookshelf_account": audiobookshelf_account,
         "komga_account": komga_account,
+        "kavita_account": kavita_account,
         "audiobookshelf_poll_interval": audiobookshelf_poll_interval,
         "storyteller_account": storyteller_account,
         "storyteller_pending": storyteller_pending,
@@ -3284,6 +3307,34 @@ _SAVED_VIEW_SKIP_PARAMS = frozenset(
 )
 
 
+# The History filter window controls these; everything else in the address
+# (paging, one-off drill-downs such as an artist) is not part of a saved view.
+_HISTORY_VIEW_PARAMS = (
+    "start-date",
+    "end-date",
+    "media_type",
+    "history_mode",
+    "genre",
+    "implied_genre",
+)
+
+
+def _saved_history_query(params) -> str:
+    """Return the History query string a saved view should reopen.
+
+    The History filters arrive as one `query` string because the form's own
+    `media_type` field already names the kind of view being saved.
+    """
+    submitted = parse_qs(params.get("query", ""))
+    return urlencode(
+        [
+            (key, submitted[key][0].strip())
+            for key in _HISTORY_VIEW_PARAMS
+            if submitted.get(key) and submitted[key][0].strip()
+        ],
+    )
+
+
 def _saved_view_query(params) -> str:
     """Return the media list query string a saved view should reopen."""
     pairs = [
@@ -3311,7 +3362,8 @@ def saved_view_create(request):
         )
 
     media_type = request.POST.get("media_type", "")
-    if media_type not in request.user.get_sidebar_media_types():
+    is_history = media_type == HISTORY_VIEW_TYPE
+    if not is_history and media_type not in request.user.get_sidebar_media_types():
         return JsonResponse({"error": "Invalid media type."}, status=400)
 
     name = request.POST.get("name", "").strip()[:100]
@@ -3327,7 +3379,11 @@ def saved_view_create(request):
         user=request.user,
         media_type=media_type,
         name=name,
-        query=_saved_view_query(request.POST),
+        query=(
+            _saved_history_query(request.POST)
+            if is_history
+            else _saved_view_query(request.POST)
+        ),
         position=last.position + 1 if last else 0,
     )
     return JsonResponse({"url": saved_view.get_absolute_url()})
@@ -3347,7 +3403,7 @@ def saved_view_delete(request, view_id: int):
         allowed_hosts={request.get_host()},
         require_https=request.is_secure(),
     ):
-        next_url = reverse("medialist", args=[saved_view.media_type])
+        next_url = saved_view.get_absolute_url().split("?")[0]
     return redirect(next_url)
 
 

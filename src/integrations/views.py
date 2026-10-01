@@ -33,6 +33,7 @@ from django.templatetags.static import static
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.utils.translation import gettext
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -44,6 +45,7 @@ from app.log_safety import exception_summary
 from app.models import TV, Item, MediaTypes, Movie, Sources
 from app.providers import credentials, services
 from app.redis_diagnosis import queue_failure_message
+from app.services import metadata_resolution
 from integrations import (
     audiobookshelf_cover as abs_cover_proxy,
 )
@@ -69,6 +71,7 @@ from integrations.imports.audiobookshelf import (
     AudiobookshelfClient,
 )
 from integrations.imports.kapowarr import KapowarrClient
+from integrations.imports.kavita import KavitaClient
 from integrations.imports.komga import KomgaClient
 from integrations.imports.koreader import (
     KoreaderAuthError,
@@ -101,7 +104,9 @@ from integrations.match_corrections import (
     MissingEpisodeMappingError,
     StaleCorrectionPreviewError,
     apply_match_correction,
+    destination_episodes,
     preview_match_correction,
+    suggest_mapping,
 )
 from integrations.models import (
     AudiobookshelfAccount,
@@ -111,6 +116,7 @@ from integrations.models import (
     GPodderAccount,
     JellyfinAccount,
     KapowarrInstance,
+    KavitaAccount,
     KoitoAccount,
     KomgaAccount,
     KoreaderAccount,
@@ -2461,35 +2467,36 @@ def import_audiobookshelf(request):
     return redirect("import_data")
 
 
-def _komga_interval(request, default=15):
-    """Return the sync interval chosen in the Komga form, or ``default``."""
+def _sync_interval(request, account_model, default=15):
+    """Return the sync interval chosen in a reading server form, or ``default``."""
     try:
         minutes = int(request.POST.get("sync_interval_minutes", default))
     except ValueError:
         return default
-    return minutes if minutes in KomgaAccount.SYNC_INTERVAL_CHOICES else default
+    return minutes if minutes in account_model.SYNC_INTERVAL_CHOICES else default
 
 
-@require_POST
-def komga_connect(request):
-    """Connect Komga using its server URL and an API key."""
+def _reading_server_connect(
+    request, service, account_model, client_class, import_task, related_name
+):
+    """Connect a reading server (Komga, Kavita) using its URL and an API key."""
     base_url = request.POST.get("base_url", "").strip()
     api_key = request.POST.get("api_key", "").strip()
 
     if not base_url or not api_key:
-        messages.error(request, "Komga server URL and API key are required.")
+        messages.error(request, f"{service} server URL and API key are required.")
         return _integration_redirect(request)
 
     try:
-        KomgaClient(base_url, api_key).healthcheck()
+        client_class(base_url, api_key).healthcheck()
     except Exception as exc:
-        messages.error(request, f"Failed to connect to Komga: {exc}")
+        messages.error(request, f"Failed to connect to {service}: {exc}")
         return _integration_redirect(request)
 
-    interval = _komga_interval(request)
+    interval = _sync_interval(request, account_model)
 
     def _connect():
-        KomgaAccount.objects.update_or_create(
+        account_model.objects.update_or_create(
             user=request.user,
             defaults={
                 "base_url": base_url,
@@ -2499,51 +2506,93 @@ def komga_connect(request):
                 "last_error_message": "",
             },
         )
-        _ensure_recurring_import_schedule(request.user, "Komga", interval)
+        _ensure_recurring_import_schedule(request.user, service, interval)
 
-    _run_with_lock_retry("connect Komga", _connect)
+    _run_with_lock_retry(f"connect {service}", _connect)
     if _queue_task_or_message(
-        request, tasks.import_komga, user_id=request.user.id, mode="new"
+        request, import_task, user_id=request.user.id, mode="new"
     ) is not False:
-        messages.success(request, "Connected Komga. Initial import queued.")
-    return _integration_redirect(request, connected_slug="komga")
+        messages.success(request, f"Connected {service}. Initial import queued.")
+    return _integration_redirect(request, connected_slug=related_name)
+
+
+def _reading_server_disconnect(request, service, account_model):
+    """Disconnect a reading server and remove its recurring schedule."""
+    from django_celery_beat.models import PeriodicTask
+
+    def _disconnect():
+        PeriodicTask.objects.filter(
+            task=f"Import from {service} (Recurring)",
+            **helpers.periodic_task_user_kwargs(request.user.id),
+        ).delete()
+        account_model.objects.filter(user=request.user).delete()
+
+    _run_with_lock_retry(f"disconnect {service}", _disconnect)
+    messages.info(request, f"Disconnected {service}.")
+    return redirect("import_data")
+
+
+def _reading_server_sync_now(request, service, account_attr, import_task):
+    """Queue a sync now and keep the recurring schedule in place."""
+    account = getattr(request.user, account_attr, None)
+    if not account:
+        messages.error(request, f"Connect {service} before importing.")
+        return redirect("import_data")
+
+    queued = _queue_task_or_message(
+        request, import_task, user_id=request.user.id, mode="new"
+    )
+    _ensure_recurring_import_schedule(
+        request.user, service, account.sync_interval_minutes
+    )
+
+    if queued is not False:
+        messages.info(request, f"{service} sync queued.")
+    return redirect("import_data")
+
+
+@require_POST
+def komga_connect(request):
+    """Connect Komga using its server URL and an API key."""
+    return _reading_server_connect(
+        request, "Komga", KomgaAccount, KomgaClient, tasks.import_komga, "komga"
+    )
 
 
 @require_POST
 def komga_disconnect(request):
     """Disconnect Komga."""
-    from django_celery_beat.models import PeriodicTask
-
-    def _disconnect():
-        PeriodicTask.objects.filter(
-            task="Import from Komga (Recurring)",
-            **helpers.periodic_task_user_kwargs(request.user.id),
-        ).delete()
-        KomgaAccount.objects.filter(user=request.user).delete()
-
-    _run_with_lock_retry("disconnect Komga", _disconnect)
-    messages.info(request, "Disconnected Komga.")
-    return redirect("import_data")
+    return _reading_server_disconnect(request, "Komga", KomgaAccount)
 
 
 @require_POST
 def import_komga(request):
-    """Queue a Komga sync now and keep the recurring schedule in place."""
-    account = getattr(request.user, "komga_account", None)
-    if not account:
-        messages.error(request, "Connect Komga before importing.")
-        return redirect("import_data")
-
-    queued = _queue_task_or_message(
-        request, tasks.import_komga, user_id=request.user.id, mode="new"
-    )
-    _ensure_recurring_import_schedule(
-        request.user, "Komga", account.sync_interval_minutes
+    """Queue a Komga sync now."""
+    return _reading_server_sync_now(
+        request, "Komga", "komga_account", tasks.import_komga
     )
 
-    if queued is not False:
-        messages.info(request, "Komga sync queued.")
-    return redirect("import_data")
+
+@require_POST
+def kavita_connect(request):
+    """Connect Kavita using its server URL and an API key."""
+    return _reading_server_connect(
+        request, "Kavita", KavitaAccount, KavitaClient, tasks.import_kavita, "kavita"
+    )
+
+
+@require_POST
+def kavita_disconnect(request):
+    """Disconnect Kavita."""
+    return _reading_server_disconnect(request, "Kavita", KavitaAccount)
+
+
+@require_POST
+def import_kavita(request):
+    """Queue a Kavita sync now."""
+    return _reading_server_sync_now(
+        request, "Kavita", "kavita_account", tasks.import_kavita
+    )
 
 
 AUDIOBOOKSHELF_COVER_TIMEOUT = 15
@@ -4572,6 +4621,36 @@ def import_hardcover(request):
 
 
 @require_POST
+def hardcover_sync(request):
+    """Sync the user's Hardcover library now, or on the chosen import schedule."""
+    if not credentials.has_user_value("hardcover", request.user):
+        messages.error(request, "Save your Hardcover API key before syncing.")
+        return _integration_redirect(request)
+
+    mode = request.POST["mode"]
+    frequency = request.POST["frequency"]
+    if frequency == "once":
+        if _queue_task_or_message(
+            request,
+            tasks.import_hardcover_account,
+            user_id=request.user.id,
+            mode=mode,
+        ) is not False:
+            messages.info(request, "Hardcover sync queued.")
+    else:
+        helpers.create_import_schedule(
+            username=request.user.username,
+            request=request,
+            mode=mode,
+            frequency=frequency,
+            import_time=request.POST["time"],
+            source="Hardcover Account",
+            extra_kwargs={"user_id": request.user.id},
+        )
+    return _integration_redirect(request, connected_slug="hardcover")
+
+
+@require_POST
 def import_storygraph(request):
     """View for importing books data from StoryGraph CSV."""
     file = request.FILES.get("storygraph_csv")
@@ -5324,8 +5403,8 @@ def _match_source_for_user(request, item_id):
     return item
 
 
-def _match_destination_from_result(result, media_type):
-    """Materialize a same-type TMDB search result for preview/apply."""
+def _match_destination_from_result(result, media_type, source):
+    """Materialize a same-type search result for preview/apply."""
     media_id = result.get("media_id") or result.get("id")
     title = result.get("title") or result.get("name")
     if not media_id or not title:
@@ -5338,11 +5417,21 @@ def _match_destination_from_result(result, media_type):
     }
     destination, _created = Item.objects.get_or_create(
         media_id=str(media_id),
-        source=Sources.TMDB.value,
+        source=source,
         media_type=media_type,
         defaults=defaults,
     )
     return destination
+
+
+def _match_providers(user, source_item):
+    """Return the providers this show can be matched on, TMDB first."""
+    providers = [Sources.TMDB.value]
+    if source_item.media_type == MediaTypes.TV.value and (
+        metadata_resolution.provider_is_enabled(Sources.TVDB.value, user)
+    ):
+        providers.append(Sources.TVDB.value)
+    return providers
 
 
 def _match_candidate_rows(results):
@@ -5381,10 +5470,62 @@ def _match_reference_ids(user, source_item):
     )
 
 
+def _match_review(source_item, preview):
+    """Return the numbering rows and destination episodes for a TV correction."""
+    catalogue = destination_episodes(preview["destination"])
+    if not catalogue:
+        raise InvalidMatchCorrectionError(
+            gettext("The destination has no episodes to map your viewings onto."),
+        )
+    seen = {}
+    for row in preview["episodes"]:
+        seen.setdefault(row["key"], row)
+    source_rows = sorted(seen.values(), key=lambda row: (row["season"], row["episode"]))
+    proposals = suggest_mapping(source_rows, catalogue)
+    rows = {}
+    for row in source_rows:
+        selected, kind = proposals.get(row["key"], ("", ""))
+        row_id = f"{row['season']}_{row['episode']}"
+        rows[row_id] = {
+            "id": row_id,
+            "key": row["key"],
+            "season": row["season"],
+            "code": f"S{row['season']}E{row['episode']}",
+            "title": row["title"],
+            "selected": selected,
+            "kind": kind,
+        }
+    return {"rows": rows, "episodes": catalogue}
+
+
+def _match_posted_mapping(post, catalogue_ids):
+    """Read the numbering the user chose; every value must be a destination episode."""
+    mapping = {}
+    for name, value in post.items():
+        if not name.startswith("map_"):
+            continue
+        season, _, episode = name.removeprefix("map_").partition("_")
+        if value not in catalogue_ids:
+            raise InvalidMatchCorrectionError(
+                gettext("Choose an episode for every viewing."),
+            )
+        destination_season, _, destination_episode = value.partition(":")
+        mapping[f"{season}:{episode}"] = {
+            "season": int(destination_season),
+            "episode": int(destination_episode),
+        }
+    return mapping
+
+
 @login_required
 def match_fix(request, item_id):
     """Search, preview, and apply a same-type match correction."""
     source_item = _match_source_for_user(request, item_id)
+    providers = _match_providers(request.user, source_item)
+    provider = request.POST.get("provider") or request.GET.get("provider")
+    if provider not in providers:
+        provider = Sources.TMDB.value
+    provider_label = metadata_resolution.metadata_provider_label(provider)
     query = request.GET.get("q", "").strip()
     candidates = []
     if query:
@@ -5393,15 +5534,21 @@ def match_fix(request, item_id):
                 source_item.media_type,
                 query,
                 1,
-                source=Sources.TMDB.value,
+                source=provider,
                 user=request.user,
             ).get("results", [])
         except services.ProviderAPIError as error:
-            messages.error(request, f"Could not search TMDB: {error}")
+            messages.error(
+                request,
+                gettext("Could not search %(provider)s: %(error)s")
+                % {"provider": provider_label, "error": error},
+            )
 
     candidate_rows = _match_candidate_rows(candidates)
 
-    preview = None
+    destination = None
+    apply_requested = False
+    stored = {}
     if request.method == "POST":
         action = request.POST.get("action")
         if action == "preview":
@@ -5414,83 +5561,115 @@ def match_fix(request, item_id):
                 None,
             )
             destination = (
-                _match_destination_from_result(chosen["result"], source_item.media_type)
+                _match_destination_from_result(
+                    chosen["result"],
+                    source_item.media_type,
+                    provider,
+                )
                 if chosen
                 else None
             )
             if destination is None:
-                messages.error(request, "Choose a valid same-type destination.")
-            else:
-                try:
-                    mapping = json.loads(request.POST.get("mapping_json") or "{}")
-                    preview = preview_match_correction(
-                        request.user,
-                        source_item,
-                        destination,
-                        episode_mapping=mapping or None,
-                    )
-                    request.session["match_correction_preview"] = {
-                        "source_item_id": source_item.pk,
-                        "destination_item_id": destination.pk,
-                        "token": preview["token"],
-                        "reference_ids": _match_reference_ids(
-                            request.user,
-                            source_item,
-                        ),
-                    }
-                except (ValueError, json.JSONDecodeError) as error:
-                    messages.error(request, str(error))
+                messages.error(
+                    request,
+                    gettext("Choose a valid same-type destination."),
+                )
         elif action == "apply":
             stored = request.session.get("match_correction_preview") or {}
             if stored.get("source_item_id") != source_item.pk:
-                messages.error(request, "Refresh the correction preview before applying.")
+                messages.error(
+                    request,
+                    gettext("Refresh the correction preview before applying."),
+                )
             else:
-                try:
-                    mapping = json.loads(request.POST.get("mapping_json") or "{}")
-                    decisions = {
-                        key.removeprefix("decision_"): value
-                        for key, value in request.POST.items()
-                        if key.startswith("decision_") and value
-                    }
-                    destination_item = apply_match_correction(
-                        request.user,
-                        stored["source_item_id"],
-                        stored["destination_item_id"],
-                        stored["token"],
-                        episode_mapping=mapping or None,
-                        decisions=decisions,
-                        reference_ids=stored.get("reference_ids", []),
-                        note=request.POST.get("note", ""),
+                apply_requested = True
+                destination = Item.objects.filter(
+                    pk=stored["destination_item_id"],
+                ).first()
+
+    preview = None
+    review = None
+    if destination is not None:
+        try:
+            preview = preview_match_correction(request.user, source_item, destination)
+            if source_item.media_type == MediaTypes.TV.value:
+                review = _match_review(source_item, preview)
+            if apply_requested:
+                mapping = (
+                    _match_posted_mapping(
+                        request.POST,
+                        {row["id"] for row in review["episodes"]},
                     )
-                except (
-                    InvalidMatchCorrectionError,
-                    MissingEpisodeMappingError,
-                    StaleCorrectionPreviewError,
-                ) as error:
-                    messages.error(request, str(error))
-                else:
-                    request.session.pop("match_correction_preview", None)
-                    messages.success(
-                        request,
-                        "Match corrected and future imports mapped.",
-                    )
-                    return redirect(
-                        "media_details",
-                        source=Sources.TMDB.value,
-                        media_type=source_item.media_type,
-                        media_id=destination_item.media_id,
-                        title=destination_item.title,
-                    )
+                    if review
+                    else None
+                )
+                decisions = {
+                    key.removeprefix("decision_"): value
+                    for key, value in request.POST.items()
+                    if key.startswith("decision_") and value
+                }
+                destination_item = apply_match_correction(
+                    request.user,
+                    source_item.pk,
+                    destination.pk,
+                    request.session["match_correction_preview"]["token"],
+                    episode_mapping=mapping,
+                    decisions=decisions,
+                    reference_ids=stored.get("reference_ids", []),
+                    note=request.POST.get("note", ""),
+                )
+            else:
+                request.session["match_correction_preview"] = {
+                    "source_item_id": source_item.pk,
+                    "destination_item_id": destination.pk,
+                    "token": preview["token"],
+                    "reference_ids": _match_reference_ids(request.user, source_item),
+                }
+        except (
+            InvalidMatchCorrectionError,
+            MissingEpisodeMappingError,
+            StaleCorrectionPreviewError,
+            services.ProviderAPIError,
+        ) as error:
+            messages.error(request, str(error))
+            if apply_requested and preview is not None and review is not None:
+                # Keep the review on screen with the user's choices, and let the
+                # next apply use the state the refreshed review now shows.
+                for row_id, row in review["rows"].items():
+                    row["selected"] = request.POST.get(f"map_{row_id}", row["selected"])
+                request.session["match_correction_preview"] = {
+                    **stored,
+                    "token": preview["token"],
+                }
+            else:
+                preview = review = None
+        else:
+            if apply_requested:
+                request.session.pop("match_correction_preview", None)
+                messages.success(
+                    request,
+                    gettext("Match corrected and future imports mapped."),
+                )
+                return redirect(
+                    "media_details",
+                    source=destination_item.source,
+                    media_type=source_item.media_type,
+                    media_id=destination_item.media_id,
+                    title=destination_item.title,
+                )
 
     context = {
         "source_item": source_item,
         "candidates": candidate_rows,
+        "providers": [
+            (key, metadata_resolution.metadata_provider_label(key))
+            for key in providers
+        ],
+        "provider": provider,
+        "provider_label": provider_label,
         "preview": preview,
-        "preview_mapping_json": (
-            json.dumps(preview["episode_mapping"], sort_keys=True)
-            if preview
-            else ""
-        ),
+        "review": review,
+        "review_rows": list(review["rows"].values()) if review else [],
         "reference_count": len(_match_reference_ids(request.user, source_item)),
     }
     return render(request, "integrations/match_fix.html", context)

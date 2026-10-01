@@ -15,7 +15,11 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import gettext
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import (
+    require_GET,
+    require_http_methods,
+    require_POST,
+)
 
 from app import (
     custom_metadata,
@@ -346,6 +350,63 @@ def move_library_item(request, item_id):
         response["HX-Redirect"] = destination_url
         return response
     return redirect(destination_url)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def switch_tv_provider(request, item_id):
+    """Preview, then apply, moving one tracked show between TMDB and TVDB."""
+    item = get_object_or_404(Item, id=item_id)
+    try:
+        switch = library_migration.preview_tv_provider_switch(request.user, item)
+    except library_migration.LibraryMigrationError as error:
+        return render(
+            request,
+            "app/tv_provider_switch.html",
+            {"item": item, "error": str(error)},
+        )
+
+    if request.method == "POST" and switch.plan is not None:
+        try:
+            target_item = run_retryable_db_operation(
+                lambda: library_migration.switch_tv_provider(request.user, item),
+                operation_name="TV provider switch",
+            ).value
+        except OperationalError as error:
+            if not is_retryable_error(error):
+                raise
+            messages.error(
+                request,
+                gettext(
+                    "The database is busy with another operation. "
+                    "Nothing was changed; please try again."
+                ),
+            )
+        except library_migration.LibraryMigrationError as error:
+            messages.error(request, str(error))
+        else:
+            messages.success(
+                request,
+                gettext("Moved tracking to %(value_1)s.")
+                % {"value_1": switch.target_label},
+            )
+            return redirect(
+                "media_details",
+                source=target_item.source,
+                media_type=MediaTypes.TV.value,
+                media_id=target_item.media_id,
+                title=target_item.get_display_title(request.user) or "item",
+            )
+
+    return render(
+        request,
+        "app/tv_provider_switch.html",
+        {
+            "item": item,
+            "switch": switch,
+            "source_label": metadata_resolution.metadata_provider_label(item.source),
+        },
+    )
 
 
 @login_required

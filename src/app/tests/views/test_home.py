@@ -18,6 +18,7 @@ from app.models import (
     Podcast,
     PodcastEpisode,
     PodcastShow,
+    PodcastShowTracker,
     ProviderMetadataStatus,
     Season,
     Sources,
@@ -352,6 +353,11 @@ class HomeViewTests(TestCase):
             episode=podcast_episode,
             status=Status.IN_PROGRESS.value,
             progress=300,
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user,
+            show=podcast_show,
+            status=Status.IN_PROGRESS.value,
         )
 
         response = self._get_hydrated_home()

@@ -21,6 +21,7 @@ from integrations.imports import (
     imdb,
     jellyfin_playback_reporting,
     kapowarr,
+    kavita,
     kitsu,
     komga,
     mal,
@@ -395,6 +396,13 @@ def import_hardcover(file, user_id, mode):
     return _run_file_import(hardcover.importer, file, user_id, mode)
 
 
+@shared_task(name="Import from Hardcover Account")
+def import_hardcover_account(user_id, mode="new", username=None):
+    """Sync the user's Hardcover library through its official API."""
+    del username
+    return import_media(hardcover.sync_importer, None, user_id, mode)
+
+
 @shared_task(name="Import from StoryGraph")
 def import_storygraph(file, user_id, mode):
     """Celery task for importing media data from StoryGraph."""
@@ -612,6 +620,18 @@ def import_audiobookshelf(user_id, mode="new"):
 def import_audiobookshelf_recurring(user_id):
     """Recurring import task for Audiobookshelf."""
     return import_media(audiobookshelf.importer, None, user_id, "new")
+
+
+@shared_task(name="Import from Kavita")
+def import_kavita(user_id, mode="new"):
+    """Celery task for importing manga, comic and book progress from Kavita."""
+    return import_media(kavita.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Kavita (Recurring)")
+def import_kavita_recurring(user_id):
+    """Recurring import task for Kavita."""
+    return import_media(kavita.importer, None, user_id, "new")
 
 
 @shared_task(name="Import from Komga")
