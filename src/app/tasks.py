@@ -288,6 +288,7 @@ from app.tasks_trakt import (  # noqa: E402
 )
 from app.tasks_tv_provider_migration import (  # noqa: E402
     migrate_tv_shows_to_preferred_provider_task,
+    move_user_tv_library_task,
 )
 from app.tasks_watch_state import (  # noqa: E402
     backfill_user_watch_state,
@@ -1373,6 +1374,7 @@ __all__ = [
     "is_genre_backfill_reconcile_complete",
     "is_provider_backfill_reconcile_complete",
     "migrate_tv_shows_to_preferred_provider_task",
+    "move_user_tv_library_task",
     "populate_album_tracks_batch",
     "populate_credits_backfill_queue",
     "populate_credits_data_for_items",

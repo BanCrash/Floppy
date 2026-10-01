@@ -836,3 +836,20 @@ def switch_tv_provider(user, source_item: Item) -> Item:
         target_item = _move_grouped(user, source_item, switch.plan)
         _schedule_cache_reconcile(user, target_item)
         return target_item
+
+
+def tv_items_to_move(user, target_source: str):
+    """Return this user's tracked TV shows that sit on the other TMDB/TVDB provider."""
+    other_source = (
+        Sources.TMDB.value if target_source == Sources.TVDB.value else Sources.TVDB.value
+    )
+    return (
+        Item.objects.filter(
+            media_type=MediaTypes.TV.value,
+            source=other_source,
+            tv__user=user,
+        )
+        .exclude(library_media_type=MediaTypes.ANIME.value)
+        .distinct()
+        .order_by("id")
+    )
