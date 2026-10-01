@@ -15,7 +15,7 @@ from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Case, F, IntegerField, Q, Subquery, Value, When
+from django.db.models import Case, F, IntegerField, Min, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
 from django.urls import reverse
 from django.utils import timezone
@@ -1798,6 +1798,18 @@ def _podcast_show_shell_items_bulk(shows: list[object]) -> dict[tuple[str, str],
             media_id__in=[item.media_id for item in missing],
         ):
             existing[(item.source, item.media_id)] = item
+    # Keep the shell in step with the show when its metadata changes (as the
+    # Podcasts list page does), so the card and Title sort never go stale.
+    stale = []
+    for show in shows:
+        item = existing.get((show.source, show.podcast_uuid))
+        image = show.image or settings.IMG_NONE
+        if item and (item.title != show.title or item.image != image):
+            item.title = show.title
+            item.image = image
+            stale.append(item)
+    if stale:
+        Item.objects.bulk_update(stale, ["title", "image"])
     return existing
 
 
@@ -1819,9 +1831,11 @@ def _build_podcast_show_home_entries(
     )
     if status_filter:
         trackers = trackers.filter(status__in=status_filter)
-    trackers = list(
-        _apply_music_tracker_rating_filter(trackers, filters.get("rating", "all"))
-    )
+    trackers = _apply_music_tracker_rating_filter(trackers, filters.get("rating", "all"))
+    if sort_by == MediaSortChoices.RELEASE_DATE:
+        # A show's release date is its first episode's publication date.
+        trackers = trackers.annotate(first_published=Min("show__episodes__published"))
+    trackers = list(trackers)
     genre = (filters.get("genre") or "").strip().lower()
     if genre:
         trackers = [
@@ -1844,6 +1858,8 @@ def _build_podcast_show_home_entries(
         item = items.get((show.source, show.podcast_uuid))
         if not item:
             continue
+        if sort_by == MediaSortChoices.RELEASE_DATE:
+            item.release_datetime = tracker.first_published
         entries.append(
             HomeRowEntry(
                 item=item,
