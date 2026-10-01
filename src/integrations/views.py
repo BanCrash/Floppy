@@ -777,6 +777,7 @@ def _finish_trakt_connection(request, oauth_result, state_data):
             "Trakt",
             token=enc_token,
             extra_kwargs={"redirect_uri": oauth_result.get("redirect_uri")},
+            replace_existing=True,
         )
 
 
