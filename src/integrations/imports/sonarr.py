@@ -2,6 +2,7 @@
 
 import logging
 from collections import defaultdict
+from functools import partial
 
 import requests
 from django.conf import settings
@@ -37,14 +38,15 @@ class SonarrClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
 
-    def _request(self, path: str, params=None):
+    def _request(self, path: str, params=None, *, method="GET", json=None, timeout=20):
         try:
             response = send_to_self_hosted(
-                requests.get,
+                partial(requests.request, method) if method != "GET" else requests.get,
                 f"{self.base_url}{path}",
                 headers={"X-Api-Key": self.api_key},
                 params=params,
-                timeout=20,
+                timeout=timeout,
+                **({"json": json} if json is not None else {}),
             )
         except requests.RequestException as error:
             msg = f"Could not reach Sonarr: {error}"
@@ -65,9 +67,33 @@ class SonarrClient:
         """Fetch tracked series rows."""
         return self._request("/api/v3/series")
 
-    def episodes(self, series_id):
-        """Fetch all episodes for a Sonarr series."""
-        return self._request("/api/v3/episode", params={"seriesId": series_id})
+    def episodes(self, series_id, timeout=20):
+        """Fetch all episodes for a Sonarr series, with their file details."""
+        # Sonarr only embeds `episodeFile` (quality, path, size) on request.
+        return self._request(
+            "/api/v3/episode",
+            params={"seriesId": series_id, "includeEpisodeFile": "true"},
+            timeout=timeout,
+        )
+
+    def queue(self, series_id, timeout=8):
+        """Return the queue rows for one series."""
+        return self._request(
+            "/api/v3/queue/details", {"seriesId": series_id}, timeout=timeout
+        )
+
+    def history(self, series_id, season_number=None, timeout=8):
+        """Return the history rows for a series, or one season of it."""
+        params = {"seriesId": series_id, "includeEpisode": "true"}
+        if season_number is not None:
+            params["seasonNumber"] = season_number
+        return self._request("/api/v3/history/series", params, timeout=timeout)
+
+    def search(self, command, timeout=8):
+        """Ask Sonarr to run a search command (EpisodeSearch, SeasonSearch...)."""
+        return self._request(
+            "/api/v3/command", method="POST", json=command, timeout=timeout
+        )
 
 
 def importer(identifier, user, mode, instance_id=None):

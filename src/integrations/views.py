@@ -51,9 +51,7 @@ from app.providers import credentials, services
 from app.redis_diagnosis import queue_failure_message
 from app.services import metadata_resolution
 from integrations import (
-    audiobookshelf_cover as abs_cover_proxy,
-)
-from integrations import (
+    arr_library,
     exports,
     gpodder_api,
     koito_api,
@@ -65,6 +63,9 @@ from integrations import (
     stremio_queue,
     tasks,
     xbox_api,
+)
+from integrations import (
+    audiobookshelf_cover as abs_cover_proxy,
 )
 from integrations import plex as plex_api
 from integrations import plex_cover as plex_cover_proxy
@@ -5754,5 +5755,77 @@ def seerr_request(request, media_type, media_id):
             "summary": summary,
             "error": error,
             "seerr_page_url": f"{user.seerr_url}/{media_type}/{media_id}",
+        },
+    )
+
+
+def _int_or_none(value):
+    """Return `value` as an int, or None when it is blank or not a number."""
+    return int(value) if str(value or "").isdigit() else None
+
+
+@require_http_methods(["GET", "POST"])
+def library_panel(request, source, media_type, media_id):
+    """Show Radarr/Sonarr details and Seerr requests for a title; POST searches."""
+    user = request.user
+    params = request.POST if request.method == "POST" else request.GET
+    season = _int_or_none(params.get("season_number"))
+    episode = _int_or_none(params.get("episode_number"))
+
+    message = error = ""
+    if request.method == "POST":
+        error = arr_library.start_search(
+            user,
+            params.get("app"),
+            _int_or_none(params.get("instance_id")),
+            params.get("kind"),
+            _int_or_none(params.get("arr_id")),
+            _int_or_none(params.get("season")),
+        )
+        message = "" if error else f"Search started in {params.get('app')}."
+
+    panels = arr_library.library_panels(
+        user, source, media_type, media_id, season, episode
+    )
+
+    seerr_requests = None
+    seerr_error = ""
+    if (
+        user.seerr_url
+        and user.seerr_api_key
+        and source == Sources.TMDB.value
+        and media_type
+        in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+            MediaTypes.EPISODE.value,
+        )
+    ):
+        seerr_type = (
+            MediaTypes.MOVIE.value
+            if media_type == MediaTypes.MOVIE.value
+            else MediaTypes.TV.value
+        )
+        try:
+            seerr_requests = seerr_api.requests_for(
+                seerr_api.SeerrClient.for_user(user).media(seerr_type, media_id),
+                season_number=season if media_type == MediaTypes.SEASON.value else None,
+            )
+        except (seerr_api.SeerrError, helpers.MediaImportError) as exc:
+            seerr_error = str(exc)
+
+    return render(
+        request,
+        "integrations/library_panel.html",
+        {
+            "panels": panels,
+            "message": message,
+            "error": error,
+            "seerr_requests": seerr_requests,
+            "seerr_error": seerr_error,
+            "panel_url": request.path,
+            "season_number": season,
+            "episode_number": episode,
         },
     )

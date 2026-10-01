@@ -1,6 +1,7 @@
 import logging
 from contextlib import suppress
 from datetime import UTC, date
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from django.apps import apps
@@ -241,6 +242,22 @@ def _track_modal_date_suggestion(label, iso_date, runtime_minutes=""):
         "date": iso_date or "",
         "runtime_minutes": runtime_minutes or "",
     }
+
+
+def _library_panel_url(source, media_type, media_id, season_number, episode_number):
+    """Return the URL that lazy-loads Radarr/Sonarr/Seerr details for a title."""
+    query = urlencode(
+        {
+            key: value
+            for key, value in (
+                ("season_number", season_number),
+                ("episode_number", episode_number),
+            )
+            if value is not None
+        },
+    )
+    url = reverse("library_panel", args=[source, media_type, media_id])
+    return f"{url}?{query}" if query else url
 
 
 def _rewatch_action(media, media_type):
@@ -912,8 +929,16 @@ def _render_standard_track_modal(
             request.user,
             metadata_item,
         )
-    if media_type == MediaTypes.EPISODE.value and episode_number is not None:
+    if (
+        (media_type == MediaTypes.EPISODE.value and episode_number is not None)
+        or (media_type == MediaTypes.SEASON.value and season_number is not None)
+        or media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+    ):
         context["collection_tab_available"] = True
+        if source in (Sources.TMDB.value, Sources.TVDB.value):
+            context["library_panel_url"] = _library_panel_url(
+                source, media_type, media_id, season_number, episode_number
+            )
         context["collection_context"] = build_collection_modal_context(
             request,
             source,

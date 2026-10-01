@@ -13,6 +13,7 @@ the request panel instead.
 from functools import partial
 
 import requests
+from django.utils.dateparse import parse_datetime
 
 from app.log_safety import exception_summary
 from app.models import MediaTypes
@@ -148,3 +149,33 @@ def summarize(media_type, data):
         "seasons": seasons,
         "requestable": any(season["requestable"] for season in seasons),
     }
+
+
+REQUEST_STATUSES = {1: "Pending approval", 2: "Approved", 3: "Declined"}
+REQUESTER_FIELDS = ("displayName", "username", "plexUsername", "jellyfinUsername")
+
+
+def requests_for(data, season_number=None):
+    """Return who requested a title, newest first, for the track modal.
+
+    `season_number` keeps only requests that cover that season (a show request
+    for "all" seasons lists no season numbers, so it always matches).
+    """
+    rows = []
+    for request in (data.get("mediaInfo") or {}).get("requests") or []:
+        seasons = [s.get("seasonNumber") for s in request.get("seasons") or []]
+        if season_number is not None and seasons and season_number not in seasons:
+            continue
+        requester = request.get("requestedBy") or {}
+        created = request.get("createdAt") or ""
+        rows.append(
+            {
+                "by": next(
+                    (requester[f] for f in REQUESTER_FIELDS if requester.get(f)), ""
+                ),
+                "created": created,
+                "when": parse_datetime(created),
+                "status": REQUEST_STATUSES.get(request.get("status"), "Requested"),
+            },
+        )
+    return sorted(rows, key=lambda row: row["created"], reverse=True)

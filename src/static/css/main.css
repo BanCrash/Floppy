@@ -1315,6 +1315,9 @@
   .grid-cols-7 {
     grid-template-columns: repeat(7, minmax(0, 1fr));
   }
+  .grid-cols-\[7rem_1fr\] {
+    grid-template-columns: 7rem 1fr;
+  }
   .grid-cols-\[repeat\(auto-fill\,minmax\(150px\,1fr\)\)\] {
     grid-template-columns: repeat(auto-fill,minmax(150px,1fr));
   }
@@ -1532,6 +1535,9 @@
       margin-inline-end: calc(calc(var(--spacing) * 4) * calc(1 - var(--tw-space-x-reverse)));
     }
   }
+  .gap-y-0\.5 {
+    row-gap: calc(var(--spacing) * 0.5);
+  }
   .gap-y-1 {
     row-gap: calc(var(--spacing) * 1);
   }
@@ -1559,6 +1565,11 @@
   .divide-\[var\(--color-border\)\] {
     :where(& > :not(:last-child)) {
       border-color: var(--color-border);
+    }
+  }
+  .divide-\[var\(--color-surface-border\)\] {
+    :where(& > :not(:last-child)) {
+      border-color: var(--color-surface-border);
     }
   }
   .divide-gray-700 {
@@ -3278,6 +3289,9 @@
   }
   .text-\[var\(--color-link\)\] {
     color: var(--color-link);
+  }
+  .text-\[var\(--color-success-text\)\] {
+    color: var(--color-success-text);
   }
   .text-\[var\(--color-text\)\] {
     color: var(--color-text);
