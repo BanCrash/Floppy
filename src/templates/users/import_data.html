@@ -3359,10 +3359,12 @@
             <p class="text-sm font-medium text-[var(--color-text)] mb-1">{% translate "Sync from your account" %}</p>
             <p class="text-sm text-[var(--color-text-muted)] mb-3">{% translate "Pull your shelves, ratings and progress using your API key." %}</p>
             {% if hardcover_personal_key %}
-              <form method="post" action="{% url 'hardcover_sync' %}">
+              <form method="post"
+                    action="{% url 'hardcover_sync' %}"
+                    class="space-y-3"
+                    x-data="{ scheduleFrequency: 'once', scheduleTime: importTime }">
                 {% csrf_token %}
-                <input type="hidden" name="frequency" x-model="importFrequency">
-                <input type="hidden" name="time" x-model="importTime">
+                {% include "users/components/import_schedule_fields.html" %}
                 <input type="hidden" name="mode" x-model="importMode">
                 <button type="submit"
                         class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"

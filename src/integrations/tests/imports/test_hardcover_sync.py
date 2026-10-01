@@ -342,3 +342,9 @@ class HardcoverSyncViewTests(TestCase):
                 "mode": "overwrite",
             },
         )
+
+    def test_modal_has_its_own_frequency_and_time(self):
+        credentials.set_user("hardcover", self.user, {"api_key": "token"})
+        response = self.client.get(reverse("import_data"))
+        self.assertContains(response, 'x-model="scheduleFrequency"')
+        self.assertContains(response, 'x-model="scheduleTime"')
