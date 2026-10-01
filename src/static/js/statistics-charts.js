@@ -1,4 +1,59 @@
 (function () {
+// Keep a floating chart popup inside the viewport. A popup centered on a bar near
+// the screen edge otherwise hangs off the page and makes it scroll sideways.
+function placeChartTooltip(tooltipEl, context) {
+  const margin = 8;
+  const rect = context.chart.canvas.getBoundingClientRect();
+  const viewportWidth = document.documentElement.clientWidth;
+  // Fixed width first, so measuring does not depend on where the popup sits.
+  tooltipEl.style.width = "max-content";
+  tooltipEl.style.maxWidth = viewportWidth - margin * 2 + "px";
+  const half = tooltipEl.offsetWidth / 2;
+  const centerX = Math.min(
+    Math.max(rect.left + context.tooltip.caretX, margin + half),
+    viewportWidth - margin - half
+  );
+  tooltipEl.style.opacity = 1;
+  tooltipEl.style.position = "absolute";
+  tooltipEl.style.left = centerX + window.scrollX + "px";
+  tooltipEl.style.top = rect.top + window.scrollY + context.tooltip.caretY + "px";
+  tooltipEl.style.transform = "translate(-50%, -100%)";
+  tooltipEl.style.pointerEvents = "none";
+}
+
+// Nudge an info popup (centered on or right-aligned to its button) back inside the
+// viewport, and keep its arrow pointing at the button.
+window.floppyKeepInViewport = function (el) {
+  const margin = 8;
+  // Measure from far off-screen left: overflow on the right would make a phone
+  // browser zoom the page out, and it does not shrink back afterwards.
+  const parked = 10000;
+  // No sliding while we move it: the enter animation has its own transition.
+  el.style.transition = "none";
+  el.style.transform = "translateX(" + -parked + "px)";
+  const rect = el.getBoundingClientRect();
+  const viewportWidth = document.documentElement.clientWidth;
+  // The enter animation scales the popup, so use its center and unscaled width.
+  const center = (rect.left + rect.right) / 2 + parked;
+  const half = el.offsetWidth / 2;
+  let shift = 0;
+  if (center - half < margin) {
+    shift = margin - (center - half);
+  } else if (center + half > viewportWidth - margin) {
+    shift = viewportWidth - margin - (center + half);
+  }
+  el.style.transform = shift ? "translateX(" + shift + "px)" : "";
+  el.getBoundingClientRect(); // apply the move before the transition comes back
+  el.style.transition = "";
+  const arrow = el.querySelector(".stats-tooltip-arrow");
+  if (arrow) {
+    const anchor = el.parentElement.getBoundingClientRect();
+    const arrowLeft = (anchor.left + anchor.right) / 2 - (center - half + shift);
+    arrow.style.left = shift ? arrowLeft + "px" : "";
+    arrow.style.right = shift ? "auto" : "";
+    arrow.style.translate = shift ? "-50% 0" : "";
+  }
+};
 function initStatisticsCharts() {
   if (typeof Chart === "undefined") {
     return;
@@ -144,18 +199,7 @@ function initStatisticsCharts() {
       tooltipEl.innerHTML = html;
     }
 
-    // Position and style the tooltip
-    const position = context.chart.canvas.getBoundingClientRect();
-
-    // Set tooltip styles
-    tooltipEl.style.opacity = 1;
-    tooltipEl.style.position = "absolute";
-    tooltipEl.style.left =
-      position.left + window.scrollX + tooltipModel.caretX + "px";
-    tooltipEl.style.top =
-      position.top + window.scrollY + tooltipModel.caretY + "px";
-    tooltipEl.style.transform = "translate(-50%, -100%)";
-    tooltipEl.style.pointerEvents = "none";
+    placeChartTooltip(tooltipEl, context);
   }
 
   // Common configuration for bar charts
@@ -712,15 +756,7 @@ function initStatisticsCharts() {
         tooltipEl.innerHTML = html;
       }
 
-      const position = context.chart.canvas.getBoundingClientRect();
-      tooltipEl.style.opacity = 1;
-      tooltipEl.style.position = "absolute";
-      tooltipEl.style.left =
-        position.left + window.scrollX + tooltipModel.caretX + "px";
-      tooltipEl.style.top =
-        position.top + window.scrollY + tooltipModel.caretY + "px";
-      tooltipEl.style.transform = "translate(-50%, -100%)";
-      tooltipEl.style.pointerEvents = "none";
+      placeChartTooltip(tooltipEl, context);
     }
 
     const chartOptions = JSON.parse(JSON.stringify(barChartConfig));
@@ -1005,13 +1041,7 @@ function initStatisticsCharts() {
           tooltipEl.innerHTML = html;
         }
 
-        const position = context.chart.canvas.getBoundingClientRect();
-        tooltipEl.style.opacity = 1;
-        tooltipEl.style.left =
-          position.left + window.scrollX + tooltipModel.caretX + "px";
-        tooltipEl.style.top =
-          position.top + window.scrollY + tooltipModel.caretY + "px";
-        tooltipEl.style.transform = "translate(-50%, -100%)";
+        placeChartTooltip(tooltipEl, context);
       };
     }
 
@@ -1682,11 +1712,7 @@ function initStatisticsCharts() {
               '<div style="font-weight:600;color:' + CHART_TOOLTIP_TEXT + '">' + chartEscapeHtml(interpolate(gettext("Rating %(rating)s"), { rating: built.labels[dataIndex] }, true)) + "</div>" +
               '<div style="margin-top:4px">' + chartEscapeHtml(interpolate(ngettext("%(count)s item", "%(count)s items", value), { count: value.toLocaleString(document.documentElement.lang || undefined) }, true)) + "</div>";
           }
-          const position = context.chart.canvas.getBoundingClientRect();
-          tooltipEl.style.opacity = 1;
-          tooltipEl.style.left = position.left + window.scrollX + tooltipModel.caretX + "px";
-          tooltipEl.style.top = position.top + window.scrollY + tooltipModel.caretY + "px";
-          tooltipEl.style.transform = "translate(-50%, -100%)";
+          placeChartTooltip(tooltipEl, context);
         },
       };
 
