@@ -1,9 +1,21 @@
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 
 from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
-from app.services.episode_ordering import apply_change, persist_order, preview_change
+from app.models.episode_order import EpisodeOrderChange
+from app.services.episode_ordering import (
+    apply_change,
+    can_revert,
+    latest_reversible_change,
+    persist_order,
+    preview_change,
+    revert_change,
+)
+from app.services.order_resolution import resolve_incoming_episode
 
 
 class EpisodeOrderingTests(TestCase):
@@ -80,3 +92,233 @@ class EpisodeOrderingTests(TestCase):
                 item__season_number=1,
             ).exists(),
         )
+
+
+def _voyager(test):
+    """Seed a show whose legacy numbering merges a two-part episode."""
+    test.user = get_user_model().objects.create_user(username="voyager-user")
+    test.show = Item.objects.create(
+        media_id="1855", source=Sources.TMDB.value,
+        media_type=MediaTypes.TV.value, title="Star Trek: Voyager",
+    )
+    test.tv = TV.objects.create(
+        item=test.show, user=test.user, status=Status.IN_PROGRESS.value,
+    )
+    test.season_item = Item.objects.create(
+        media_id="1855", source=Sources.TMDB.value,
+        media_type=MediaTypes.SEASON.value, season_number=5, title="Voyager",
+    )
+    test.season = Season.objects.create(
+        item=test.season_item, related_tv=test.tv, user=test.user,
+        status=Status.IN_PROGRESS.value,
+    )
+    test.watches = {}
+    base = timezone.now()
+    # Watched out of order, as a Trakt import would leave them.
+    for offset, (number, title) in zip(
+        (3, 1, 2), ((16, "Survival Instinct"), (15, "Equinox"), (17, "Barge of the Dead")),
+        strict=True,
+    ):
+        item = Item.objects.create(
+            media_id="1855", source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value, season_number=5,
+            episode_number=number, title=title, provider_episode_id=f"legacy-{number}",
+        )
+        test.watches[number] = Episode.objects.create(
+            item=item, related_season=test.season, end_date=base + timedelta(days=offset),
+        )
+    rows = [
+        ("t15", 15, "Equinox", "1999-05-26"),
+        ("t16", 16, "Equinox, Part II", "1999-09-22"),
+        ("t17", 17, "Survival Instinct", "1999-10-06"),
+        ("t18", 18, "Barge of the Dead", "1999-11-03"),
+    ]
+    test.order = persist_order(
+        test.show, Sources.TVDB.value, "74205", "default", "TVDB (Aired order)",
+        {"episodes": [
+            {"provider_episode_id": pid, "season_number": 5, "episode_number": number,
+             "title": title, "image": "", "air_date": aired}
+            for pid, number, title, aired in rows
+        ]},
+    )
+
+
+class EpisodeOrderSuggestionTests(TestCase):
+    """Verify the review screen pre-selects only evidence-backed destinations."""
+
+    def setUp(self):
+        """Create a show whose old numbering merged a two-part episode."""
+        _voyager(self)
+
+    def test_title_beats_equal_coordinates_for_a_split_two_parter(self):
+        """Survival Instinct is old S5E16 but S5E17 after the split."""
+        suggestions = preview_change(self.tv, self.order)["suggestions"]
+
+        self.assertEqual(
+            suggestions[self.watches[16].pk], {"episode_id": "t17", "basis": "title"},
+        )
+        self.assertEqual(
+            suggestions[self.watches[15].pk], {"episode_id": "t15", "basis": "title"},
+        )
+
+    def test_air_date_beats_title_and_coordinate(self):
+        """A unique air date wins over a title that matches another episode."""
+        item = self.watches[17].item
+        item.title = "Survival Instinct"  # would match t17 by title
+        item.release_datetime = datetime(1999, 11, 3, tzinfo=UTC)
+        item.save()
+
+        suggestion = preview_change(self.tv, self.order)["suggestions"][self.watches[17].pk]
+
+        self.assertEqual(suggestion, {"episode_id": "t18", "basis": "air_date"})
+
+    def test_coordinate_is_the_last_resort_and_stays_unproven(self):
+        """With no date or title evidence, equal coordinates are only suggested."""
+        item = self.watches[17].item
+        item.title = "Different name"
+        item.save()
+
+        preview = preview_change(self.tv, self.order)
+
+        self.assertEqual(
+            preview["suggestions"][self.watches[17].pk],
+            {"episode_id": "t17", "basis": "coordinate"},
+        )
+        self.assertTrue(all(not row["episode_ids"] for row in preview["resolutions"]))
+
+    def test_watches_are_listed_by_old_episode_with_old_coordinates(self):
+        """Rows follow season and episode number, not viewing order."""
+        rows = preview_change(self.tv, self.order)["watches"]
+
+        self.assertEqual([row["episode_number"] for row in rows], [15, 16, 17])
+        self.assertEqual({row["season_number"] for row in rows}, {5})
+
+    def test_proven_identity_is_not_repeated_as_a_suggestion(self):
+        """A stable-ID match stays in resolutions only."""
+        self.watches[15].item.__class__.objects.filter(pk=self.watches[15].item.pk).update(
+            source=Sources.TVDB.value, provider_episode_id="t15",
+        )
+
+        preview = preview_change(self.tv, self.order)
+
+        self.assertNotIn(self.watches[15].pk, preview["suggestions"])
+        proven = [row for row in preview["resolutions"] if row["episode_ids"]]
+        self.assertEqual([row["episode_ids"] for row in proven], [["t15"]])
+
+
+class EpisodeOrderRevertTests(TestCase):
+    """Verify an order change can be undone while nothing depends on it."""
+
+    def setUp(self):
+        """Create a show and apply an order with one split viewing."""
+        _voyager(self)
+        preview = preview_change(self.tv, self.order)
+        resolutions = [
+            {"watch_ids": [self.watches[15].pk], "episode_ids": ["t15", "t16"], "archive": False},
+            {"watch_ids": [self.watches[16].pk], "episode_ids": ["t17"], "archive": False},
+            {"watch_ids": [self.watches[17].pk], "episode_ids": [], "archive": True},
+        ]
+        apply_change(self.tv, self.order, token=preview["token"], resolutions=resolutions)
+        self.tv.refresh_from_db()
+
+    def test_revert_restores_watches_seasons_and_active_order(self):
+        """Undo puts every viewing back on its original episode."""
+        self.assertEqual(Episode.objects.filter(related_season__related_tv=self.tv).count(), 3)
+
+        revert_change(self.tv)
+
+        self.tv.refresh_from_db()
+        self.assertIsNone(self.tv.active_episode_order_id)
+        rows = Episode.objects.filter(related_season__related_tv=self.tv).order_by("item__episode_number")
+        self.assertEqual(
+            [(row.item.episode_number, row.item.title) for row in rows],
+            [(15, "Equinox"), (16, "Survival Instinct"), (17, "Barge of the Dead")],
+        )
+        self.assertEqual(
+            list(Season.objects.filter(related_tv=self.tv).values_list("pk", flat=True)),
+            [self.season.pk],
+        )
+        self.assertIsNone(latest_reversible_change(self.tv))
+
+    def test_revert_refuses_once_a_newer_viewing_exists(self):
+        """A viewing added under the new order cannot be mapped back."""
+        item = Item.objects.create(
+            media_id=self.order.media_id, source=Sources.TVDB.value,
+            media_type=MediaTypes.EPISODE.value, season_number=5, episode_number=18,
+            provider_episode_id="t18", title="Barge of the Dead", episode_order=self.order,
+        )
+        season = Season.objects.get(related_tv=self.tv, order_archived=False)
+        Episode.objects.create(item=item, related_season=season, end_date=timezone.now())
+
+        with self.assertRaises(ValueError):
+            revert_change(self.tv)
+
+        self.tv.refresh_from_db()
+        self.assertEqual(self.tv.active_episode_order_id, self.order.pk)
+
+    def test_revert_refuses_after_a_viewing_was_edited(self):
+        """Edited notes, scores or dates on a moved viewing are never overwritten."""
+        row = Episode.objects.filter(related_season__related_tv=self.tv).first()
+        Episode.objects.filter(pk=row.pk).update(notes="rewatched with friends")
+
+        self.assertFalse(can_revert(self.tv))
+        with self.assertRaises(ValueError):
+            revert_change(self.tv)
+
+        row.refresh_from_db()
+        self.assertEqual(row.notes, "rewatched with friends")
+
+    def test_can_revert_follows_the_same_rules_as_revert(self):
+        """The flag clients read is false as soon as a newer viewing exists."""
+        self.assertTrue(can_revert(self.tv))
+        item = Item.objects.create(
+            media_id=self.order.media_id, source=Sources.TVDB.value,
+            media_type=MediaTypes.EPISODE.value, season_number=5, episode_number=18,
+            provider_episode_id="t18", title="Barge of the Dead", episode_order=self.order,
+        )
+        season = Season.objects.get(related_tv=self.tv, order_archived=False)
+        Episode.objects.create(item=item, related_season=season, end_date=timezone.now())
+
+        self.assertFalse(can_revert(self.tv))
+
+    def test_the_active_change_is_found_behind_many_undone_ones(self):
+        """Undone journals never hide the change that is still active."""
+        change = latest_reversible_change(self.tv)
+        for _ in range(25):
+            EpisodeOrderChange.objects.create(
+                user=self.user, tv=self.tv, order=self.order,
+                before_state={"reverted": True},
+            )
+
+        self.assertEqual(latest_reversible_change(self.tv), change)
+
+    def test_revert_needs_a_change_to_undo(self):
+        """A show still on its original numbering has nothing to undo."""
+        revert_change(self.tv)
+
+        with self.assertRaises(ValueError):
+            revert_change(self.tv)
+
+
+class EpisodeOrderWebhookTests(TestCase):
+    """Verify incoming plays land on the episode the active order names."""
+
+    def setUp(self):
+        """Activate the TVDB order for a show."""
+        _voyager(self)
+        preview = preview_change(self.tv, self.order)
+        apply_change(self.tv, self.order, token=preview["token"], resolutions=[
+            {"watch_ids": [self.watches[15].pk], "episode_ids": ["t15"], "archive": False},
+            {"watch_ids": [self.watches[16].pk], "episode_ids": ["t17"], "archive": False},
+            {"watch_ids": [self.watches[17].pk], "episode_ids": ["t18"], "archive": False},
+        ])
+
+    def test_plex_tvdb_episode_17_resolves_to_survival_instinct(self):
+        """A play numbered S5E17 lands on the same-titled episode, not the next one."""
+        catalogue = {"episodes": self.order.catalogue["episodes"]}
+        with patch("app.providers.episode_orders.fetch_order", return_value=catalogue):
+            targets = resolve_incoming_episode(
+                self.user, "74205", Sources.TVDB.value, 5, 17,
+            )
+
+        self.assertEqual([item.title for item in targets], ["Survival Instinct"])
