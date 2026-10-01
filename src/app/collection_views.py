@@ -131,6 +131,9 @@ def collection_list(request, media_type=None):
     hdr_filter = request.GET.get("hdr", "")
     if hdr_filter == "all":
         hdr_filter = ""
+    location_filter = request.GET.get("location", "")
+    if location_filter == "all":
+        location_filter = ""
     rating_filter = request.GET.get("rating", "all")
     if rating_filter not in COLLECTION_RATING_CHOICES:
         rating_filter = "all"
@@ -147,6 +150,8 @@ def collection_list(request, media_type=None):
         collection = collection.filter(resolution=resolution_filter)
     if hdr_filter:
         collection = collection.filter(hdr=hdr_filter)
+    if location_filter:
+        collection = collection.filter(purchase_location=location_filter)
 
     if rating_filter != "all":
         item_ids_by_media_type = defaultdict(list)
@@ -269,6 +274,14 @@ def collection_list(request, media_type=None):
         .distinct()
         if value
     )
+    available_locations = sorted(
+        value
+        for value in base_collection.exclude(purchase_location="")
+        .order_by()
+        .values_list("purchase_location", flat=True)
+        .distinct()
+        if value
+    )
 
     is_fragment = helpers.is_htmx_fragment(request)
     context = {
@@ -278,6 +291,7 @@ def collection_list(request, media_type=None):
         "available_formats": available_formats,
         "available_resolutions": available_resolutions,
         "available_hdr": available_hdr,
+        "available_locations": available_locations,
         "sort_choices": COLLECTION_SORT_CHOICES,
         "sort_by": sort_by,
         "direction": direction,
@@ -285,6 +299,7 @@ def collection_list(request, media_type=None):
         "format_filter": format_filter,
         "resolution_filter": resolution_filter,
         "hdr_filter": hdr_filter,
+        "location_filter": location_filter,
         "rating_filter": rating_filter,
         "completeness_filter": completeness_filter,
         "has_tv_family_collection": bool(

@@ -279,7 +279,7 @@ COLLECTION_FIELD_CONFIG = {
             "media_type": "Format",
             "is_3d": "3D",
             "purchase_price": "Purchase Price",
-            "purchase_location": "Purchased From",
+            "purchase_location": "Location",
             "collected_at": "Collected At",
         },
         "choices": {
@@ -322,7 +322,7 @@ COLLECTION_FIELD_CONFIG = {
         "labels": {
             "media_type": "Format",
             "purchase_price": "Purchase Price",
-            "purchase_location": "Purchased From",
+            "purchase_location": "Location",
             "collected_at": "Collected At",
         },
         "choices": {
@@ -337,7 +337,7 @@ COLLECTION_FIELD_CONFIG = {
         "labels": {
             "media_type": "Format",
             "purchase_price": "Purchase Price",
-            "purchase_location": "Purchased From",
+            "purchase_location": "Location",
             "collected_at": "Collected At",
         },
         "choices": {
@@ -364,7 +364,7 @@ COLLECTION_FIELD_CONFIG = {
             "resolution": "Platform",
             "hdr": "Edition",
             "purchase_price": "Purchase Price",
-            "purchase_location": "Purchased From",
+            "purchase_location": "Location",
             "collected_at": "Collected At",
         },
         "choices": {
@@ -401,7 +401,7 @@ COLLECTION_FIELD_CONFIG = {
         "labels": {
             "media_type": "Format",
             "purchase_price": "Purchase Price",
-            "purchase_location": "Purchased From",
+            "purchase_location": "Location",
             "collected_at": "Collected At",
         },
         "choices": {

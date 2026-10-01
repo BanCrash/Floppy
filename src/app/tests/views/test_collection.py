@@ -48,6 +48,43 @@ class CollectionListViewTest(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login", response.url)
 
+    def test_collection_list_filtered_by_location(self):
+        """Filtering by location keeps only entries stored there, per user."""
+        self.client.login(**self.credentials)
+        other_user = get_user_model().objects.create_user(
+            username="other",
+            password="12345",
+        )
+        items = {}
+        for key, location in (("nas", "NAS"), ("home", "Home"), ("none", "")):
+            items[key] = Item.objects.create(
+                media_id=f"loc-{key}",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                title=f"Movie {key}",
+                image="http://example.com/movie.jpg",
+            )
+            CollectionEntry.objects.create(
+                user=self.user,
+                item=items[key],
+                purchase_location=location,
+            )
+        CollectionEntry.objects.create(
+            user=other_user,
+            item=items["nas"],
+            purchase_location="Garage",
+        )
+
+        response = self.client.get(reverse("collection_list"), {"location": "NAS"})
+
+        entries = list(response.context["collection_entries"])
+        self.assertEqual([entry.item_id for entry in entries], [items["nas"].id])
+        self.assertEqual(response.context["location_filter"], "NAS")
+        self.assertEqual(response.context["available_locations"], ["Home", "NAS"])
+
+        response = self.client.get(reverse("collection_list"), {"location": "all"})
+        self.assertEqual(len(response.context["collection_entries"]), 3)
+
     def test_collection_list_filtered_by_media_type(self):
         """Test filtering by media_type parameter."""
         self.client.login(**self.credentials)
