@@ -559,7 +559,8 @@ class StatisticsViewTests(TestCase):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()
         self.client.login(**self.credentials)
-        today = timezone.localdate()
+        # Fixed mid-month day: on the 1st a month-to-date range is just "Today".
+        today = date(2026, 3, 15)
         month_start = today.replace(day=1)
         last_year_today = today - relativedelta(years=1)
 
@@ -568,14 +569,21 @@ class StatisticsViewTests(TestCase):
             "movie-last-year-mtd", "Last Year Movie", last_year_today, 60
         )
 
-        response = self.client.get(
-            reverse("statistics")
-            + (
-                f"?start-date={month_start.isoformat()}"
-                f"&end-date={today.isoformat()}"
-                "&compare=last_year"
+        real_localdate = timezone.localdate
+        with patch(
+            "django.utils.timezone.localdate",
+            side_effect=lambda value=None: (
+                today if value is None else real_localdate(value)
             ),
-        )
+        ):
+            response = self.client.get(
+                reverse("statistics")
+                + (
+                    f"?start-date={month_start.isoformat()}"
+                    f"&end-date={today.isoformat()}"
+                    "&compare=last_year"
+                ),
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_range_name"], "This Month")
