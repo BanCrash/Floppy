@@ -555,8 +555,13 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.context["selected_range_name"], "This Year")
         self.assertEqual(response.context["selected_range_dates_label"], "This Year")
 
-    def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
+    @patch("django.utils.timezone.now")
+    def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(
+        self, mock_now
+    ):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
+        # On the 1st, month-to-date is a single day and correctly reads "Today".
+        mock_now.return_value = timezone.make_aware(datetime(2026, 3, 15, 12, 0))
         cache.clear()
         self.client.login(**self.credentials)
         today = timezone.localdate()
