@@ -341,7 +341,7 @@ def list_detail(request, list_reference):
                 tag_url=reverse("tag_bulk_toggle"),
             )
             if can_edit
-            else {},
+            else {}
         ),
         "list_ordering_enabled": can_edit
         and params["sort_by"] == ListDetailSortChoices.CUSTOM,
