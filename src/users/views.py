@@ -3184,7 +3184,7 @@ def update_jellyseerr_settings(request):
         parsed = urlparse(seerr_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             messages.error(request, "Seerr URL must be an http(s) address.")
-            return redirect(request.META.get("HTTP_REFERER", "/settings/integrations"))
+            return redirect("integrations")
     raw_api_key = (request.POST.get("seerr_api_key") or "").strip()
     seerr_username = (request.POST.get("seerr_username") or "").strip()
     seerr_user_id = None
@@ -3203,7 +3203,7 @@ def update_jellyseerr_settings(request):
     elif seerr_url:
         if not seerr_username:
             messages.error(request, "A Seerr username is required to request from Seerr.")
-            return redirect(request.META.get("HTTP_REFERER", "/settings/integrations"))
+            return redirect("integrations")
         try:
             api_key = raw_api_key or decrypt_or_raise(user.seerr_api_key)
             seerr_user_id = seerr_api.SeerrClient(seerr_url, api_key).find_user_id(
@@ -3211,7 +3211,7 @@ def update_jellyseerr_settings(request):
             )
         except (seerr_api.SeerrError, MediaImportError) as error:
             messages.error(request, f"Seerr settings not saved: {error}")
-            return redirect(request.META.get("HTTP_REFERER", "/settings/integrations"))
+            return redirect("integrations")
 
     # Save
     user.jellyseerr_enabled = enabled
