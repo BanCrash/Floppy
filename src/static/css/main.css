@@ -3275,6 +3275,9 @@
       color: color-mix(in oklab, var(--color-text-secondary) 90%, transparent);
     }
   }
+  .text-\[var\(--color-success-text\)\] {
+    color: var(--color-success-text);
+  }
   .text-\[var\(--color-warning-text\)\] {
     color: var(--color-warning-text);
   }
@@ -5991,6 +5994,7 @@
   --color-text: #f3f4f6;
   --color-text-secondary: #d1d5db;
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
@@ -6029,6 +6033,7 @@
     --color-text: #1f2937;
     --color-text-secondary: #374151;
     --color-text-muted: #4b5563;
+    --color-success-text: #047857;
     --color-warning-text: #92400e;
     --color-info-text: #3730a3;
     --color-error-text: #b91c1c;
@@ -6065,6 +6070,7 @@ html.light {
   --color-text: #1f2937;
   --color-text-secondary: #374151;
   --color-text-muted: #4b5563;
+  --color-success-text: #047857;
   --color-warning-text: #92400e;
   --color-info-text: #3730a3;
   --color-error-text: #b91c1c;
@@ -6100,6 +6106,7 @@ html.dark {
   --color-text: #f3f4f6;
   --color-text-secondary: #d1d5db;
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
