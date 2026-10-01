@@ -54,7 +54,7 @@ APPROVED_IMAGE_HOSTS = frozenset(
         "s4.anilist.co",
     },
 )
-APPROVED_IMAGE_HOST_SUFFIXES = (".mzstatic.com", ".comics.org")
+APPROVED_IMAGE_HOST_SUFFIXES = (".mzstatic.com", ".comics.org", ".mangabaka.org")
 
 
 def cache_root():
