@@ -182,5 +182,5 @@ def episode_ordering_settings(request, tv_id):
             active and active.provider == choice["provider"] and active.key == choice["key"],
         )
     context["order_groups"] = _order_groups(orders)
-    context["can_revert"] = episode_ordering.latest_reversible_change(tv) is not None
+    context["can_revert"] = episode_ordering.can_revert(tv)
     return render(request, "app/episode_ordering.html", context, status=status)
