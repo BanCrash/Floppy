@@ -479,10 +479,12 @@ def _get_history_day_payload(user, day_value):
     if cached_payload:
         return history_cache._deserialize_history_day(cached_payload)
 
-    return history_cache.build_history_day(
+    # Keep the day it had to build. Every range of a Statistics sync picks its
+    # own random day, and an uncached day cost ~80 ms each time it came up.
+    return history_cache._build_and_cache_history_day(
         user,
         day_key,
-        logging_style_override=logging_style,
+        logging_style,
     )
 
 

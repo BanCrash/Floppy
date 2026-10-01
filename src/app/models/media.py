@@ -22,6 +22,33 @@ from app.models.manager import MediaManager
 
 logger = logging.getLogger(__name__)
 
+
+class ScoreMonitorField(MonitorField):
+    """When ``score`` was last set, changed or cleared (issue #1280).
+
+    Unlike a plain MonitorField it stays null until the entry has a score, and
+    a row inserted with a score (``save()`` or ``bulk_create``) is stamped.
+    ``queryset.update(score=...)`` bypasses it, so those callers set
+    ``scored_at`` themselves.
+    """
+
+    def pre_save(self, model_instance, add):
+        """Stamp a scored insert or a score change; keep a timestamp already set."""
+        if add:
+            # An insert keeps a caller-supplied timestamp (a copied rating).
+            if (
+                model_instance.score is not None
+                and getattr(model_instance, self.attname) is None
+            ):
+                setattr(model_instance, self.attname, timezone.now())
+            self._save_initial(model_instance.__class__, model_instance)
+            return models.DateTimeField.pre_save(self, model_instance, add)
+        if not hasattr(model_instance, self.monitor_attname):
+            # The score was deferred when the row was loaded, so there is no
+            # initial value to compare against: leave the timestamp alone.
+            return models.DateTimeField.pre_save(self, model_instance, add)
+        return super().pre_save(model_instance, add)
+
 # Sentinel values on Item.runtime_minutes: 999998 means "aired but runtime
 # unknown", 999999 means "runtime completely unknown / failed lookup"
 # (see app.models.episode_runtimes.EXCLUDED_RUNTIME_SENTINELS).
@@ -38,6 +65,7 @@ class Media(models.Model):
         excluded_fields=[
             "item",
             "progressed_at",
+            "scored_at",
             "user",
             "related_tv",
             "created_at",
@@ -66,6 +94,7 @@ class Media(models.Model):
             MaxValueValidator(10),
         ],
     )
+    scored_at = ScoreMonitorField(monitor="score", null=True, blank=True)
     progress = models.PositiveIntegerField(default=0)
     progressed_at = MonitorField(monitor="progress")
     status = models.CharField(
@@ -118,6 +147,10 @@ class Media(models.Model):
 
         if self.tracker.has_changed("status"):
             self.process_status()
+
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "score" in update_fields:
+            kwargs["update_fields"] = (*update_fields, "scored_at")
 
         planning_entries, merged_fields = prepare_completed_entry(self)
         if merged_fields and kwargs.get("update_fields") is not None:

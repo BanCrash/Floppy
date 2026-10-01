@@ -47,7 +47,7 @@
           · {{ entry.runtime_display }}
         {% endif %}
         {% if entry.entry_source %}
-          · {% blocktranslate trimmed with source=entry.entry_source|capfirst %}via {{ source }}{% endblocktranslate %}
+          · {% blocktranslate trimmed with source=entry.entry_source|entry_source_label %}via {{ source }}{% endblocktranslate %}
         {% endif %}
       </span>
 

@@ -6,16 +6,16 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import tag
 from django.urls import reverse
 from playwright.sync_api import expect, sync_playwright
 
+from app.tests.live_server import SerialStaticLiveServerTestCase
 from users.home_screen import save_home_screen_configuration
 
 
 @tag("slow", "playwright")
-class HomeScreenMenuTests(StaticLiveServerTestCase):
+class HomeScreenMenuTests(SerialStaticLiveServerTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()

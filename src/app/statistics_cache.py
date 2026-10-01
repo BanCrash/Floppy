@@ -79,7 +79,7 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_VERSION = 15
+STATISTICS_CACHE_VERSION = 16
 STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 # Retain page snapshots between visits; freshness is checked independently.
@@ -608,7 +608,11 @@ def range_needs_top_talent_upgrade(user_id: int, range_name: str) -> bool:
     if range_name not in PREDEFINED_RANGES:
         return False
 
-    cache_entry = cache.get(_cache_key(user_id, range_name))
+    return entry_needs_top_talent_upgrade(cache.get(_cache_key(user_id, range_name)))
+
+
+def entry_needs_top_talent_upgrade(cache_entry) -> bool:
+    """Return True when a loaded range entry's top_talent lacks the current shape."""
     if not isinstance(cache_entry, dict):
         return False
 
@@ -658,7 +662,7 @@ def get_top_talent_data(user, start_date, end_date, range_name=None):
             if (
                 isinstance(top_talent, dict)
                 and isinstance(top_talent.get("by_sort"), dict)
-                and not range_needs_top_talent_upgrade(user.id, range_name)
+                and not entry_needs_top_talent_upgrade(cache_entry)
             ):
                 return top_talent
 

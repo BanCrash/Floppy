@@ -113,6 +113,13 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         ),
         r"\1[REDACTED]\2",
     ),
+    (
+        # urllib3 names the host in its error text, which reaches Celery's
+        # failure line and the traceback: "HTTPSConnectionPool(host=
+        # 'myserver.duckdns.org', port=443): Read timed out." (#1307).
+        re.compile(r"(?i)(\bHTTPS?ConnectionPool\(host=)(['\"])[^'\"]*\2"),
+        r"\1\2[REDACTED]\2",
+    ),
 ]
 
 

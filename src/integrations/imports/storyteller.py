@@ -30,6 +30,7 @@ from app import helpers as app_helpers
 from app.log_safety import exception_summary
 from app.models import MediaTypes, Sources, Status
 from app.providers import services
+from app.services.synced_status import keep_held_status
 from integrations import connection_health, import_progress
 from integrations.imports.helpers import MediaImportError, decrypt_or_raise
 from integrations.models import StorytellerAccount
@@ -299,7 +300,7 @@ class StorytellerImporter:
         position_time = self._position_timestamp(position)
         existing = (
             app.models.Book.objects.filter(user=self.user, item=item)
-            .only("start_date", "end_date", "notes")
+            .only("progress", "status", "start_date", "end_date", "notes")
             .first()
         )
         existing_start = existing.start_date if existing else None
@@ -318,13 +319,17 @@ class StorytellerImporter:
         media, _ = app.models.Book.objects.update_or_create(
             user=self.user,
             item=item,
-            defaults={
-                "progress": progress_value,
-                "status": status,
-                "start_date": start_date,
-                "end_date": end_date,
-                "notes": notes,
-            },
+            defaults=keep_held_status(
+                existing,
+                {
+                    "progress": progress_value,
+                    "status": status,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "notes": notes,
+                },
+                position_time,
+            ),
         )
         return media
 

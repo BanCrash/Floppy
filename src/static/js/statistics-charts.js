@@ -756,11 +756,15 @@ function initStatisticsCharts() {
     "podcast_plays_by_year"
   );
 
-  function getCurrentMediaType() {
+  // The selected media types from the URL, in dropdown order. Empty = "All media".
+  function getCurrentMediaTypes() {
     try {
-      return new URL(window.location.href).searchParams.get("media-type") || "all";
+      return StatsMediaMerge.parseMediaTypeParam(
+        new URL(window.location.href).searchParams.get("media-type"),
+        Object.keys(MEDIA_SLUG_TO_LABEL),
+      );
     } catch (_) {
-      return "all";
+      return [];
     }
   }
 
@@ -805,9 +809,8 @@ function initStatisticsCharts() {
       return `rgba(99,102,241,${opacity.toFixed(2)})`;
     }
 
-    function drawRhythmChart(mediaType) {
-      const key = mediaType && mediaType !== "all" ? mediaType : "all";
-      const matrix = rhythmData[key] || (key !== "all" ? rhythmData["all"] : null);
+    function drawRhythmChart(mediaTypes) {
+      const matrix = StatsMediaMerge.sumMatrices(rhythmData, mediaTypes);
       if (!matrix) {
         rhythmContainer.innerHTML =
           '<p class="text-sm text-[var(--color-text-muted)] text-center py-6">' + chartEscapeHtml(gettext("No activity data for this range.")) + '</p>';
@@ -893,9 +896,9 @@ function initStatisticsCharts() {
         hourLabels + cells + `</svg>`;
     }
 
-    drawRhythmChart(getCurrentMediaType());
+    drawRhythmChart(getCurrentMediaTypes());
     window.addEventListener("stats-media-type-changed", function () {
-      drawRhythmChart(getCurrentMediaType());
+      drawRhythmChart(getCurrentMediaTypes());
     });
   }
 
@@ -961,7 +964,7 @@ function initStatisticsCharts() {
           const dataIndex = tooltipModel.dataPoints[0].dataIndex;
           const title = tooltipModel.title[0] || "";
           const byKey = (combinedPlaysData && combinedPlaysData[spec.key]) || {};
-          const currentMediaType = getCurrentMediaType();
+          const currentMediaType = getCurrentMediaTypes();
           const relevantTypes =
             currentMediaType === "all" ? COMBINED_PLAYS_MEDIA_TYPES : [currentMediaType];
 
@@ -1012,10 +1015,10 @@ function initStatisticsCharts() {
       };
     }
 
-    function drawCombinedChart(spec, mediaType) {
+    function drawCombinedChart(spec, mediaTypes) {
       const container = document.getElementById(spec.containerId);
       const byKey = (combinedPlaysData && combinedPlaysData[spec.key]) || {};
-      const chartData = byKey[mediaType] || byKey.all;
+      const chartData = StatsMediaMerge.mergeSeriesChart(byKey, mediaTypes);
 
       if (!chartData || !chartData.labels || chartData.labels.length === 0) {
         if (combinedChartInstances[spec.key]) {
@@ -1062,16 +1065,16 @@ function initStatisticsCharts() {
       }
     }
 
-    function drawAllCombinedCharts(mediaType) {
+    function drawAllCombinedCharts(mediaTypes) {
       COMBINED_CHART_SPECS.forEach(function (spec) {
-        drawCombinedChart(spec, mediaType);
+        drawCombinedChart(spec, mediaTypes);
       });
     }
 
     if (combinedPlaysData && typeof combinedPlaysData === "object") {
-      drawAllCombinedCharts(getCurrentMediaType());
+      drawAllCombinedCharts(getCurrentMediaTypes());
       window.addEventListener("stats-media-type-changed", function () {
-        drawAllCombinedCharts(getCurrentMediaType());
+        drawAllCombinedCharts(getCurrentMediaTypes());
       });
     }
   }
@@ -1134,7 +1137,9 @@ function initStatisticsCharts() {
     function loadGenreData(slug) {
       try {
         const el = document.getElementById(slug + "_top_genres");
-        return el ? JSON.parse(el.textContent || "[]") : [];
+        // An empty list is emitted as the string "[]" (template default), so check the type.
+        const genres = el ? JSON.parse(el.textContent || "[]") : [];
+        return Array.isArray(genres) ? genres : [];
       } catch (_) { return []; }
     }
 
@@ -1266,10 +1271,12 @@ function initStatisticsCharts() {
       });
     }
 
-    function drawTimeWorldsChart(mediaType) {
+    function drawTimeWorldsChart(mediaTypes) {
       const container = document.getElementById("timeWorldsContainer");
-      const isFiltered = mediaType && mediaType !== "all";
-      const hasGenres = isFiltered && GENRE_TYPES[mediaType];
+      const isFiltered = mediaTypes.length > 0;
+      // Genres are per type and overlap between types, so they only show for one type.
+      const mediaType = mediaTypes.length === 1 ? mediaTypes[0] : null;
+      const hasGenres = mediaType && GENRE_TYPES[mediaType];
       const genres = hasGenres ? loadGenreData(mediaType) : [];
 
       if (isFiltered && hasGenres && genres.length > 0) {
@@ -1308,17 +1315,17 @@ function initStatisticsCharts() {
         data = ds.data || [];
         colors = ds.backgroundColor || [];
       } else {
-        // Single-type filter for a type with no genre breakdown.
-        const targetLabel = MEDIA_SLUG_TO_LABEL[mediaType];
-        const idx = targetLabel ? (fullDistData.labels || []).indexOf(targetLabel) : -1;
-        if (idx >= 0) {
-          const ds = fullDistData.datasets[0];
-          labels = [fullDistData.labels[idx]];
-          data = [ds.data[idx]];
-          colors = [ds.backgroundColor[idx]];
-        } else {
-          labels = []; data = []; colors = [];
-        }
+        // Keep only the selected types' slices (also used for one type with no genre breakdown).
+        const ds = fullDistData.datasets[0];
+        labels = []; data = []; colors = [];
+        mediaTypes.forEach(function (type) {
+          const idx = MEDIA_SLUG_TO_LABEL[type] ? fullDistData.labels.indexOf(MEDIA_SLUG_TO_LABEL[type]) : -1;
+          if (idx >= 0) {
+            labels.push(fullDistData.labels[idx]);
+            data.push(ds.data[idx]);
+            colors.push(ds.backgroundColor[idx]);
+          }
+        });
       }
 
       if (!labels.length) {
@@ -1344,9 +1351,9 @@ function initStatisticsCharts() {
     }
 
     if (fullDistData.labels && fullDistData.labels.length > 0) {
-      drawTimeWorldsChart(getCurrentMediaType());
+      drawTimeWorldsChart(getCurrentMediaTypes());
       window.addEventListener("stats-media-type-changed", function () {
-        drawTimeWorldsChart(getCurrentMediaType());
+        drawTimeWorldsChart(getCurrentMediaTypes());
       });
     } else {
       const container = document.getElementById("timeWorldsContainer");
@@ -1472,10 +1479,10 @@ function initStatisticsCharts() {
       }
     }
 
-    function drawStatusComposition(mediaType) {
+    function drawStatusComposition(mediaTypes) {
       const container = document.getElementById("statusCompositionContainer");
       const subtitleEl = document.getElementById("statusCompositionSubtitle");
-      const isFiltered = mediaType && mediaType !== "all";
+      const isFiltered = mediaTypes.length > 0;
       const statusLabels = (statusCompositionData.datasets || []).map(function (ds) { return ds.label; });
       const statusColors = (statusCompositionData.datasets || []).map(function (ds) { return ds.background_color; });
 
@@ -1494,18 +1501,19 @@ function initStatisticsCharts() {
           }
         });
       } else {
-        targetLabel = MEDIA_SLUG_TO_LABEL[mediaType];
-        const idx = targetLabel ? (statusCompositionData.labels || []).indexOf(targetLabel) : -1;
-        if (idx >= 0) {
-          (statusCompositionData.datasets || []).forEach(function (ds, i) {
-            const value = Number((ds.data || [])[idx]) || 0;
-            if (value > 0) {
-              labels.push(statusLabels[i]);
-              data.push(value);
-              colors.push(statusColors[i]);
-            }
-          });
-        }
+        // Sum each status over the selected types' columns.
+        if (mediaTypes.length === 1) targetLabel = MEDIA_SLUG_TO_LABEL[mediaTypes[0]];
+        const idxs = mediaTypes
+          .map(function (type) { return (statusCompositionData.labels || []).indexOf(MEDIA_SLUG_TO_LABEL[type]); })
+          .filter(function (idx) { return idx >= 0; });
+        (statusCompositionData.datasets || []).forEach(function (ds, i) {
+          const value = idxs.reduce(function (sum, idx) { return sum + (Number((ds.data || [])[idx]) || 0); }, 0);
+          if (value > 0) {
+            labels.push(statusLabels[i]);
+            data.push(value);
+            colors.push(statusColors[i]);
+          }
+        });
       }
 
       if (subtitleEl) {
@@ -1542,9 +1550,9 @@ function initStatisticsCharts() {
     }
 
     if (statusCompositionData.labels && statusCompositionData.labels.length > 0) {
-      drawStatusComposition(getCurrentMediaType());
+      drawStatusComposition(getCurrentMediaTypes());
       window.addEventListener("stats-media-type-changed", function () {
-        drawStatusComposition(getCurrentMediaType());
+        drawStatusComposition(getCurrentMediaTypes());
       });
     } else {
       const container = document.getElementById("statusCompositionContainer");
@@ -1561,8 +1569,8 @@ function initStatisticsCharts() {
     const ratingDistributionData = JSON.parse(ratingDistributionDataEl.textContent || "{}");
     let ratingDistributionChartInstance = null;
 
-    function buildRatingDistribution(mediaType) {
-      const isFiltered = mediaType && mediaType !== "all";
+    function buildRatingDistribution(mediaTypes) {
+      const isFiltered = mediaTypes.length > 0;
       const labels = ratingDistributionData.labels || [];
       const datasets = ratingDistributionData.datasets || [];
       const data = labels.map(function () { return 0; });
@@ -1580,18 +1588,18 @@ function initStatisticsCharts() {
       if (!isFiltered) {
         datasets.forEach(addDataset);
       } else {
-        targetLabel = MEDIA_SLUG_TO_LABEL[mediaType];
-        const match = datasets.find(function (ds) { return ds.label === targetLabel; });
-        if (match) addDataset(match);
+        if (mediaTypes.length === 1) targetLabel = MEDIA_SLUG_TO_LABEL[mediaTypes[0]];
+        const wanted = mediaTypes.map(function (type) { return MEDIA_SLUG_TO_LABEL[type]; });
+        datasets.filter(function (ds) { return wanted.indexOf(ds.label) >= 0; }).forEach(addDataset);
       }
 
       return { labels: labels, data: data, totalScored: totalScored, targetLabel: targetLabel };
     }
 
-    function drawRatingDistribution(mediaType) {
+    function drawRatingDistribution(mediaTypes) {
       const container = document.getElementById("ratingDistributionContainer");
       const subtitleEl = document.getElementById("ratingDistributionSubtitle");
-      const built = buildRatingDistribution(mediaType);
+      const built = buildRatingDistribution(mediaTypes);
 
       if (subtitleEl) {
         const summary = built.targetLabel
@@ -1709,9 +1717,9 @@ function initStatisticsCharts() {
     }
 
     if (ratingDistributionData.labels && ratingDistributionData.labels.length > 0) {
-      drawRatingDistribution(getCurrentMediaType());
+      drawRatingDistribution(getCurrentMediaTypes());
       window.addEventListener("stats-media-type-changed", function () {
-        drawRatingDistribution(getCurrentMediaType());
+        drawRatingDistribution(getCurrentMediaTypes());
       });
     } else {
       const container = document.getElementById("ratingDistributionContainer");
@@ -1740,10 +1748,11 @@ function initStatisticsCharts() {
       });
     }
 
-    function drawStatusBreakdown(mediaType) {
+    function drawStatusBreakdown(mediaTypes) {
       const container = document.getElementById("statusBreakdownContainer");
-      const isFiltered = mediaType && mediaType !== "all";
-      const targetLabel = isFiltered ? MEDIA_SLUG_TO_LABEL[mediaType] : null;
+      const isFiltered = mediaTypes.length > 0;
+      const targetLabel = mediaTypes.length === 1 ? MEDIA_SLUG_TO_LABEL[mediaTypes[0]] : null;
+      const selectedLabels = mediaTypes.map(function (type) { return MEDIA_SLUG_TO_LABEL[type]; });
       const subtitleText = targetLabel
         ? interpolate(gettext("%(type)s status counts."), { type: chartDisplayLabel(targetLabel) }, true)
         : gettext("Breakdown by type across all status states.");
@@ -1751,7 +1760,7 @@ function initStatisticsCharts() {
       const typeLabels = statusBreakdownData.labels || [];
       let rowIndices = [];
       typeLabels.forEach(function (label, i) {
-        if (!isFiltered || label === targetLabel) rowIndices.push(i);
+        if (!isFiltered || selectedLabels.indexOf(label) >= 0) rowIndices.push(i);
       });
 
       // Only show status columns that actually have items, mirroring the
@@ -1838,9 +1847,9 @@ function initStatisticsCharts() {
     }
 
     if (statusBreakdownData.labels && statusBreakdownData.labels.length > 0) {
-      drawStatusBreakdown(getCurrentMediaType());
+      drawStatusBreakdown(getCurrentMediaTypes());
       window.addEventListener("stats-media-type-changed", function () {
-        drawStatusBreakdown(getCurrentMediaType());
+        drawStatusBreakdown(getCurrentMediaTypes());
       });
     } else {
       const container = document.getElementById("statusBreakdownContainer");

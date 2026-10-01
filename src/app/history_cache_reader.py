@@ -3,7 +3,7 @@
 import logging
 import time
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -22,6 +22,8 @@ from app.history_cache_index import (
 )
 from app.history_cache_lifecycle import (
     _clean_refresh_lock,
+    classify_missing_history_days,
+    record_history_repair_complete,
     schedule_history_day_cache_coverage,
     schedule_history_refresh,
 )
@@ -48,6 +50,7 @@ from app.history_cache_utils import (
     apply_history_entry_cap,
     expand_history_media_types,
 )
+from app.task_cooperation import CooperativeRun
 
 logger = logging.getLogger(__name__)
 
@@ -916,7 +919,11 @@ def repair_history_day_cache_coverage(
 
     missing_day_keys = _missing_history_day_keys(user_id, logging_style, index_day_keys)
     if not missing_day_keys:
+        record_history_repair_complete(user_id, logging_style, len(index_day_keys))
         return {"rebuilt": 0, "remaining": 0, "days": len(index_day_keys)}
+    missing_reason, missing_detail = classify_missing_history_days(
+        user_id, logging_style, timedelta(seconds=HISTORY_DAY_CACHE_TIMEOUT)
+    )
 
     target_day_keys = (
         missing_day_keys[:batch_size]
@@ -925,21 +932,30 @@ def repair_history_day_cache_coverage(
     )
     rebuilt = 0
     populated = 0
-    for day_key in target_day_keys:
+    # A batch runs for tens of seconds on a large history; stop between days
+    # when someone is browsing so the rebuild does not compete with their
+    # page loads. The unbuilt days stay missing and are picked up next run.
+    run = CooperativeRun("history_day_coverage_repair")
+    for day_key in run.iter(target_day_keys):
         day_payload = _build_and_cache_history_day(user, day_key, logging_style)
         rebuilt += 1
         if day_payload and day_payload.get("entries"):
             populated += 1
 
-    remaining = max(len(missing_day_keys) - len(target_day_keys), 0)
+    remaining = max(len(missing_day_keys) - rebuilt, 0)
+    if not remaining:
+        record_history_repair_complete(user_id, logging_style, len(index_day_keys))
     logger.info(
-        "history_day_coverage_repair user_id=%s logging_style=%s rebuilt=%s populated=%s remaining=%s days=%s",
+        "history_day_coverage_repair user_id=%s logging_style=%s rebuilt=%s populated=%s remaining=%s days=%s missing=%s missing_reason=%s missing_detail=%s",
         user_id,
         logging_style,
         rebuilt,
         populated,
         remaining,
         len(index_day_keys),
+        len(missing_day_keys),
+        missing_reason,
+        missing_detail or "-",
     )
     return {
         "rebuilt": rebuilt,

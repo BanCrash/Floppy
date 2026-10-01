@@ -54,6 +54,46 @@ def _values(raw) -> tuple[str, ...]:
     return (str(raw).strip(),)
 
 
+def filter_values_from_media_list_filters(filters: MediaListFilters) -> FilterValues:
+    """Build filter values from a parsed media-list query string.
+
+    Status compares against the item's latest row, as the media list shows it.
+    """
+    return FilterValues(
+        statuses=tuple(filters.statuses),
+        include_no_status=filters.include_no_status,
+        status_match=STATUS_MATCH_LATEST,
+        search=filters.search,
+        rating=filters.rating,
+        rating_min=filters.rating_min,
+        rating_max=filters.rating_max,
+        collection=filters.collection,
+        progress=filters.progress,
+        genre=filters.genre,
+        implied_genre=filters.implied_genre,
+        year=filters.year,
+        completed_date_from=filters.completed_date_from,
+        completed_date_to=filters.completed_date_to,
+        date_added_from=filters.date_added_from,
+        date_added_to=filters.date_added_to,
+        release=filters.release,
+        release_date_from=filters.release_date_from,
+        release_date_to=filters.release_date_to,
+        source=filters.source,
+        media_status=filters.media_status,
+        language=filters.language,
+        country=filters.country,
+        origin=filters.origin,
+        platforms=tuple(filters.platforms),
+        platform_mode=filters.platform_mode,
+        format=filters.format,
+        author=filters.author,
+        provider=filters.provider,
+        tags=tuple(filters.tags),
+        tag_mode=filters.tag_mode,
+    )
+
+
 def from_media_list_filters(
     filters: MediaListFilters,
     media_types: tuple[str, ...],
@@ -63,33 +103,7 @@ def from_media_list_filters(
     """Build the query for a media-list or API request."""
     return LibraryQuery(
         media_types=media_types,
-        filters=FilterValues(
-            statuses=tuple(filters.statuses),
-            include_no_status=filters.include_no_status,
-            status_match=STATUS_MATCH_LATEST,
-            search=filters.search,
-            rating=filters.rating,
-            collection=filters.collection,
-            progress=filters.progress,
-            genre=filters.genre,
-            implied_genre=filters.implied_genre,
-            year=filters.year,
-            completed_date_from=filters.completed_date_from,
-            completed_date_to=filters.completed_date_to,
-            release=filters.release,
-            source=filters.source,
-            media_status=filters.media_status,
-            language=filters.language,
-            country=filters.country,
-            origin=filters.origin,
-            platforms=tuple(filters.platforms),
-            platform_mode=filters.platform_mode,
-            format=filters.format,
-            author=filters.author,
-            provider=filters.provider,
-            tags=tuple(filters.tags),
-            tag_mode=filters.tag_mode,
-        ),
+        filters=filter_values_from_media_list_filters(filters),
         sort=SortSpec(key=filters.sort or "title", direction=filters.direction, seed=seed),
         include_collection_only=filters.include_no_status,
         provider_region=filters.provider_region,

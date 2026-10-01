@@ -16,6 +16,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 import requests
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from simple_history.utils import bulk_update_with_history
 
@@ -982,7 +983,10 @@ class MDBListImporter(TraktMetadataResolverMixin):
                 item__episode_number=episode_number,
             )
             if episodes.exists():
-                episodes.update(score=scaled_score)
+                episodes.exclude(score=scaled_score).update(
+                    score=scaled_score,
+                    scored_at=timezone.now(),
+                )
                 return
 
         ep_key = f"{tmdb_id}:{season_number}:{episode_number}"

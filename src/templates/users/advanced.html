@@ -493,7 +493,7 @@
             <h3 class="text-base font-medium">{% translate "TMDB Proxy" %}</h3>
           </div>
           {% if tmdb_proxy_configured %}
-            <span class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">{% translate "Configured" %}</span>
+            <span class="px-2 py-1 text-xs rounded bg-emerald-500/10 border border-emerald-500/30" style="color: var(--color-status-clean)">{% translate "Configured" %}</span>
           {% else %}
             <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-[var(--color-text-secondary)] border border-gray-600/50">{% translate "Not configured" %}</span>
           {% endif %}

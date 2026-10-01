@@ -35,6 +35,15 @@ lookup, which aggregates repeat viewings. It costs one query per media type on t
 #1271 was a surface that passed `media=None` for items the user tracks. Collection and
 the list recommendations queue now use the shared lookup.
 
+## Rating from the card
+
+A tracked card's rating is a button (`media_card_rate_button.html`): the filled star and score,
+or, when unrated, an empty star that shows while the card is hovered. It opens the same picker
+as the details pages, `rating_picker.html`, which is the one copy of the star row. The popup is
+teleported to `<body>` because the card clips its overflow. Public pages, modal search cards
+and untracked items keep the plain read-only rating. `update_media_score` returns
+`media_card_rating_oob.html`, which swaps the card's rating after a change.
+
 ## Surfaces
 
 | Surface | Differs from the default | Why |

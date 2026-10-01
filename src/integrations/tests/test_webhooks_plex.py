@@ -2161,6 +2161,43 @@ class PlexWebhookTests(TestCase):
         )
         self.assertEqual(episode.related_season.related_tv.item, tv_item)
 
+    def _track_episode_play(self, tv_instance, *, score=None):
+        """Give a tracked show a play of S1E1 in the show's library bucket."""
+        show = tv_instance.item
+        season = Season.objects.create(
+            item=Item.objects.create(
+                media_id=show.media_id,
+                source=show.source,
+                media_type=MediaTypes.SEASON.value,
+                library_media_type=show.library_media_type,
+                title=show.title,
+                image="",
+                season_number=1,
+            ),
+            user=self.user,
+            related_tv=tv_instance,
+            status=Status.IN_PROGRESS.value,
+        )
+        with patch(
+            "app.providers.services.get_media_metadata",
+            return_value={"season/1": {"episodes": [{}, {}]}},
+        ):
+            return Episode.objects.create(
+                item=Item.objects.create(
+                    media_id=show.media_id,
+                    source=show.source,
+                    media_type=MediaTypes.EPISODE.value,
+                    library_media_type=show.library_media_type,
+                    title=f"{show.title} S1E1",
+                    image="",
+                    season_number=1,
+                    episode_number=1,
+                ),
+                related_season=season,
+                end_date=timezone.now(),
+                score=score,
+            )
+
     @patch("app.providers.tmdb.find")
     @patch("app.providers.tmdb.tv")
     def test_tv_rating_resolves_episode_ids_and_reuses_tracked_item(
@@ -2168,7 +2205,7 @@ class PlexWebhookTests(TestCase):
         mock_tv,
         mock_find,
     ):
-        """TV ratings resolve episode IDs before updating the tracked show."""
+        """An episode rating resolves the show, then rates only the episode."""
         mock_find.return_value = {
             "tv_episode_results": [
                 {
@@ -2197,6 +2234,7 @@ class PlexWebhookTests(TestCase):
             status=Status.IN_PROGRESS.value,
             score=2,
         )
+        episode = self._track_episode_play(tv_instance)
 
         payload = {
             "event": "media.rate",
@@ -2204,6 +2242,8 @@ class PlexWebhookTests(TestCase):
             "Metadata": {
                 "type": "episode",
                 "grandparentTitle": "Frieren: Beyond Journey's End",
+                "parentIndex": 1,
+                "index": 1,
                 "userRating": 8,
                 "Guid": [
                     {"id": "imdb://tt23861604"},
@@ -2217,7 +2257,9 @@ class PlexWebhookTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         tv_instance.refresh_from_db()
-        self.assertEqual(tv_instance.score, 8)
+        episode.refresh_from_db()
+        self.assertEqual(episode.score, 8)
+        self.assertEqual(tv_instance.score, 2)
         self.assertEqual(
             Item.objects.filter(
                 media_id="3946240",
@@ -2235,7 +2277,7 @@ class PlexWebhookTests(TestCase):
         mock_tv,
         mock_find,
     ):
-        """Rating removal uses the same show-level resolution as rating apply."""
+        """An episode rating removal clears the episode, not the show."""
         mock_find.return_value = {
             "tv_episode_results": [
                 {
@@ -2264,6 +2306,7 @@ class PlexWebhookTests(TestCase):
             status=Status.IN_PROGRESS.value,
             score=8,
         )
+        episode = self._track_episode_play(tv_instance, score=7)
 
         payload = {
             "event": "media.rate",
@@ -2271,6 +2314,8 @@ class PlexWebhookTests(TestCase):
             "Metadata": {
                 "type": "episode",
                 "grandparentTitle": "Frieren: Beyond Journey's End",
+                "parentIndex": 1,
+                "index": 1,
                 "userRating": -1.0,
                 "Guid": [
                     {"id": "imdb://tt23861604"},
@@ -2284,7 +2329,9 @@ class PlexWebhookTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         tv_instance.refresh_from_db()
-        self.assertIsNone(tv_instance.score)
+        episode.refresh_from_db()
+        self.assertIsNone(episode.score)
+        self.assertEqual(tv_instance.score, 8)
         mock_find.assert_called_once_with("6725919", "tvdb_id")
 
     @patch("app.providers.tmdb.tv")
@@ -2306,6 +2353,7 @@ class PlexWebhookTests(TestCase):
             user=self.user,
             status=Status.IN_PROGRESS.value,
         )
+        episode = self._track_episode_play(tv_instance)
 
         payload = {
             "event": "media.rate",
@@ -2313,6 +2361,8 @@ class PlexWebhookTests(TestCase):
             "Metadata": {
                 "type": "episode",
                 "grandparentTitle": "Breaking Bad",
+                "parentIndex": 1,
+                "index": 1,
                 "userRating": 9,
                 "Guid": [{"id": "tmdb://1396"}],
             },
@@ -2321,9 +2371,46 @@ class PlexWebhookTests(TestCase):
         response = self._post_payload(payload)
 
         self.assertEqual(response.status_code, 200)
-        tv_instance.refresh_from_db()
-        self.assertEqual(tv_instance.score, 9)
+        episode.refresh_from_db()
+        self.assertEqual(episode.score, 9)
         mock_tv.assert_called_with("1396")
+
+    @patch("app.providers.tmdb.tv")
+    def test_rating_for_unwatched_episode_is_ignored(self, mock_tv):
+        """Rating an episode with no play neither creates one nor rates the show."""
+        mock_tv.return_value = {"title": "Breaking Bad", "image": ""}
+        tv_instance = TV.objects.create(
+            item=Item.objects.create(
+                media_id="1396",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.TV.value,
+                title="Breaking Bad",
+                image="",
+            ),
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            score=6,
+        )
+
+        response = self._post_payload(
+            {
+                "event": "media.rate",
+                "Account": {"title": "testuser"},
+                "Metadata": {
+                    "type": "episode",
+                    "grandparentTitle": "Breaking Bad",
+                    "parentIndex": 1,
+                    "index": 1,
+                    "userRating": 9,
+                    "Guid": [{"id": "tmdb://1396"}],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        tv_instance.refresh_from_db()
+        self.assertEqual(tv_instance.score, 6)
+        self.assertFalse(Episode.objects.exists())
 
     @patch("app.providers.tmdb.search")
     @patch("app.providers.tmdb.tv")
@@ -2362,6 +2449,7 @@ class PlexWebhookTests(TestCase):
             user=self.user,
             status=Status.IN_PROGRESS.value,
         )
+        episode = self._track_episode_play(tv_instance)
 
         payload = {
             "event": "media.rate",
@@ -2369,6 +2457,8 @@ class PlexWebhookTests(TestCase):
             "Metadata": {
                 "type": "episode",
                 "grandparentTitle": "Frieren: Beyond Journey's End",
+                "parentIndex": 1,
+                "index": 1,
                 "userRating": 7,
                 "Guid": [{"id": "tmdb://1515183"}],
             },
@@ -2377,8 +2467,8 @@ class PlexWebhookTests(TestCase):
         response = self._post_payload(payload)
 
         self.assertEqual(response.status_code, 200)
-        tv_instance.refresh_from_db()
-        self.assertEqual(tv_instance.score, 7)
+        episode.refresh_from_db()
+        self.assertEqual(episode.score, 7)
         mock_search.assert_called_once_with(
             MediaTypes.TV.value,
             "Frieren: Beyond Journey's End",

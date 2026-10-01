@@ -660,7 +660,7 @@ msgstr "Abgeschlossen"
 #: app/models/choices.py:59 users/models.py:137 users/models.py:303
 #: users/models.py:401
 msgid "In Progress"
-msgstr "In Bearbeitung"
+msgstr "Laufend"
 
 #: app/models/choices.py:60 templates/users/integrations.html:1264
 #: users/models.py:138 users/models.py:400
@@ -3291,7 +3291,7 @@ msgstr "Laufende Wiedergabe"
 #: templates/app/components/fill_track_song.html:106
 #: templates/users/integrations.html:1269
 msgid "In progress"
-msgstr "In Bearbeitung"
+msgstr "Laufend"
 
 #: templates/app/components/fill_track_song.html:126
 msgid "Previous Plays"
@@ -10645,7 +10645,7 @@ msgid ""
 "the"
 msgstr ""
 "Installiere das Floppy Scrobbler-Add-on in Stremio, um Filme und Folgen beim"
-" Wiedergabestart als „In Bearbeitung“ zu markieren. Kombiniere es mit dem "
+" Wiedergabestart als „Laufend“ zu markieren. Kombiniere es mit dem "
 "Stremio-Import auf der"
 
 #: templates/users/integrations.html:1077
@@ -10691,7 +10691,7 @@ msgid ""
 "Playback start marks the item in progress; the recurring library import "
 "marks items watched."
 msgstr ""
-"Der Wiedergabestart markiert den Eintrag als „In Bearbeitung“. Der "
+"Der Wiedergabestart markiert den Eintrag als „Laufend“. Der "
 "regelmäßige Bibliotheksimport markiert Einträge als gesehen."
 
 #: templates/users/integrations.html:1102

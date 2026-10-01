@@ -1,11 +1,12 @@
 import json
 import logging
 import time
+from http import HTTPStatus
 from uuid import uuid4
 
 from django.apps import apps
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponseBadRequest, JsonResponse
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
@@ -22,6 +23,7 @@ from app.models import (
     Season,
     Status,
 )
+from app.providers import services
 from app.services import metadata_resolution
 from app.signals import suppress_media_cache_change_signals
 from app.templatetags import app_tags
@@ -469,6 +471,35 @@ def refresh_discover(request):
     )
 
 
+def _discover_provider_error_response(error, title, active_media_type):
+    """Report a provider failure as a toast, leaving the rows as they are.
+
+    htmx does not swap 4xx/5xx bodies, so the card stays put while HX-Trigger
+    still fires the page's existing toast.
+    """
+    label = title or "this title"
+    if error.status_code == HTTPStatus.NOT_FOUND:
+        message = f'Couldn\'t add "{label}": {error.provider_label} no longer has it.'
+        status = HTTPStatus.NOT_FOUND
+    else:
+        message = (
+            f'Couldn\'t add "{label}": {error.provider_label} did not respond. '
+            "Please try again."
+        )
+        status = HTTPStatus.BAD_GATEWAY
+    response = HttpResponse(status=status)
+    response["HX-Trigger"] = json.dumps(
+        {
+            "discoverActionComplete": {
+                "action": "planning",
+                "message": message,
+                "active_media_type": active_media_type,
+            },
+        },
+    )
+    return response
+
+
 @login_required
 @require_POST
 def discover_action(request):
@@ -647,16 +678,36 @@ def discover_action(request):
             )
             metadata_strategy = "local_seed"
         else:
-            hydrated = view_barrel.ensure_item_metadata(
-                request.user,
-                candidate_media_type,
-                media_id,
-                source,
-                season_number,
-                identity_media_type=identity_media_type,
-                library_media_type=library_media_type,
-                **candidate_seed,
-            )
+            try:
+                hydrated = view_barrel.ensure_item_metadata(
+                    request.user,
+                    candidate_media_type,
+                    media_id,
+                    source,
+                    season_number,
+                    identity_media_type=identity_media_type,
+                    library_media_type=library_media_type,
+                    **candidate_seed,
+                )
+            except services.ProviderNotConfiguredError:
+                # Setup guidance is rendered by the provider-error middleware.
+                raise
+            except services.ProviderAPIError as error:
+                logger.warning(
+                    "discover_action_provider_error request_id=%s user_id=%s "
+                    "candidate_media_type=%s source=%s media_id=%s status=%s",
+                    request_id,
+                    request.user.id,
+                    candidate_media_type,
+                    source,
+                    media_id,
+                    error.status_code,
+                )
+                return _discover_provider_error_response(
+                    error,
+                    candidate_seed.get("fallback_title"),
+                    active_media_type,
+                )
             metadata_strategy = "provider_fetch"
         existing_instance = _discover_planning_instance(
             request.user,

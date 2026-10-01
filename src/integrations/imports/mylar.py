@@ -89,6 +89,41 @@ class MylarClient:
         return self._request("getComic", id=comic_id) or {}
 
 
+def comic_issue_item(issue_id, title, image):
+    """Return the Comic Vine issue Item, creating it from the server's data.
+
+    The issue id is the Comic Vine issue id, so no provider lookup is
+    needed; the details page fills in the rest the first time it is opened.
+    """
+    issue_id = str(issue_id or "").strip()
+    if not issue_id.isdigit():
+        return None
+
+    identity = {
+        "media_id": issue_id,
+        "source": Sources.COMICVINE.value,
+        "media_type": MediaTypes.COMIC_ISSUE.value,
+    }
+    existing = find_item_across_buckets(**identity)
+    if existing:
+        return existing
+
+    image = str(image or "")
+    item, _ = Item.objects.get_or_create(
+        **identity,
+        library_media_type=MediaTypes.COMIC_ISSUE.value,
+        season_number=None,
+        episode_number=None,
+        defaults={
+            "title": title,
+            "original_title": title,
+            "localized_title": title,
+            "image": image if image.startswith("https://") else settings.IMG_NONE,
+        },
+    )
+    return item
+
+
 def importer(identifier, user, mode, instance_id=None):
     """Import Mylar3 collection ownership."""
     instance = (
@@ -98,17 +133,26 @@ def importer(identifier, user, mode, instance_id=None):
 
 
 class MylarImporter:
-    """Mark the comic issues a Mylar3 library has on disk as owned."""
+    """Mark the comic issues a Mylar3 library has on disk as owned.
+
+    Kapowarr's importer subclasses this: both key comics by Comic Vine id, so
+    only the client and how owned issues are read differ.
+    """
+
+    source = "mylar"
+    label = "Mylar3"
+    instances_attr = "mylar_instances"
+    client_class = MylarClient
 
     def __init__(self, user, instance=None):
-        """Bind the importer to a user with a connected Mylar3 instance."""
+        """Bind the importer to a user with a connected instance."""
         self.user = user
         if instance is not None:
             self.instance = instance
         else:
-            self.instance = user.mylar_instances.first()
+            self.instance = getattr(user, self.instances_attr).first()
         if self.instance is None:
-            msg = "Connect Mylar3 before importing"
+            msg = f"Connect {self.label} before importing"
             raise MediaImportError(msg)
 
         try:
@@ -118,7 +162,7 @@ class MylarImporter:
             connection_health.record_failure(self.instance, error, auth=True)
             raise
 
-        self.client = MylarClient(self.instance.base_url, api_key)
+        self.client = self.client_class(self.instance.base_url, api_key)
         self.warnings = []
 
     def import_data(self):
@@ -127,19 +171,20 @@ class MylarImporter:
         owned_item_ids = set()
 
         try:
-            series_rows = self.client.series()
-            total = len(series_rows)
-            for i, series in enumerate(series_rows, start=1):
-                import_progress.report(i, total, "Mylar3")
-                comic_id = series.get("id")
-                if not comic_id:
+            for issue_id, title, image in self._owned_issues():
+                item = self._resolve_issue_item(issue_id, title, image)
+                if item is None:
+                    imported_counts["skipped_missing_ids"] += 1
                     continue
-                self._import_series(
-                    series,
-                    self.client.comic(comic_id),
-                    imported_counts,
-                    owned_item_ids,
+                owned_item_ids.add(item.id)
+                upsert_collection_source_state(
+                    user=self.user,
+                    item=item,
+                    source=self.source,
+                    source_instance_id=self.instance.pk,
                 )
+                imported_counts[item.media_type] += 1
+                imported_counts["updated"] += 1
         except MediaImportError as error:
             connection_health.record_failure(
                 self.instance,
@@ -156,78 +201,46 @@ class MylarImporter:
         return dict(imported_counts), "\n".join(dict.fromkeys(self.warnings))
 
     def _remove_no_longer_owned(self, owned_item_ids, imported_counts):
-        """Drop this instance's copies Mylar3 no longer has on disk."""
+        """Drop this instance's copies the server no longer has on disk."""
         stale = CollectionSourceState.objects.filter(
             user=self.user,
-            source="mylar",
+            source=self.source,
             source_instance_id=self.instance.pk,
         ).exclude(item_id__in=owned_item_ids)
         for state in stale.select_related("item"):
             remove_collection_source_state(
                 user=self.user,
                 item=state.item,
-                source="mylar",
+                source=self.source,
                 source_instance_id=self.instance.pk,
             )
             imported_counts["removed"] += 1
 
-    def _import_series(self, series, detail, imported_counts, owned_item_ids):
-        series_name = series.get("name") or ""
-        annual_name = f"{series_name} Annual"
-        issues = [
-            *((issue, series_name) for issue in detail.get("issues") or []),
-            *((issue, annual_name) for issue in detail.get("annuals") or []),
-        ]
-        for issue, name in issues:
-            if str(issue.get("status") or "").strip().lower() not in OWNED_STATUSES:
+    def _owned_issues(self):
+        """Yield (Comic Vine issue id, title, image) for each issue on disk."""
+        series_rows = self.client.series()
+        total = len(series_rows)
+        for i, series in enumerate(series_rows, start=1):
+            import_progress.report(i, total, self.label)
+            comic_id = series.get("id")
+            if not comic_id:
                 continue
-            item = self._resolve_issue_item(issue, name)
-            if item is None:
-                imported_counts["skipped_missing_ids"] += 1
-                continue
-            owned_item_ids.add(item.id)
-            upsert_collection_source_state(
-                user=self.user,
-                item=item,
-                source="mylar",
-                source_instance_id=self.instance.pk,
+            detail = self.client.comic(comic_id)
+            series_name = series.get("name") or ""
+            groups = (
+                (detail.get("issues"), series_name),
+                (detail.get("annuals"), f"{series_name} Annual"),
             )
-            imported_counts[item.media_type] += 1
-            imported_counts["updated"] += 1
+            for issues, name in groups:
+                for issue in issues or []:
+                    status = str(issue.get("status") or "").strip().lower()
+                    if status not in OWNED_STATUSES:
+                        continue
+                    title = f"{name} #{issue.get('number') or '?'}"
+                    if issue.get("name"):
+                        title = f"{title}: {issue['name']}"
+                    yield issue.get("id"), title, issue.get("imageURL")
 
-    def _resolve_issue_item(self, issue, series_name):
-        """Return the Comic Vine issue Item, creating it from Mylar3's own data.
-
-        Mylar3's issue id is the Comic Vine issue id, so no provider lookup is
-        needed; the details page fills in the rest the first time it is opened.
-        """
-        issue_id = str(issue.get("id") or "").strip()
-        if not issue_id.isdigit():
-            return None
-
-        identity = {
-            "media_id": issue_id,
-            "source": Sources.COMICVINE.value,
-            "media_type": MediaTypes.COMIC_ISSUE.value,
-        }
-        existing = find_item_across_buckets(**identity)
-        if existing:
-            return existing
-
-        title = f"{series_name} #{issue.get('number') or '?'}"
-        if issue.get("name"):
-            title = f"{title}: {issue['name']}"
-        image = str(issue.get("imageURL") or "")
-        item, _ = Item.objects.get_or_create(
-            **identity,
-            library_media_type=MediaTypes.COMIC_ISSUE.value,
-            season_number=None,
-            episode_number=None,
-            defaults={
-                "title": title,
-                "original_title": title,
-                "localized_title": title,
-                "image": image if image.startswith("https://") else settings.IMG_NONE,
-            },
-        )
-        return item
+    def _resolve_issue_item(self, issue_id, title, image):
+        """Return the Comic Vine issue Item, creating it from the server's data."""
+        return comic_issue_item(issue_id, title, image)

@@ -13,10 +13,15 @@ logger = logging.getLogger(__name__)
 
 def get_items_to_process(user=None):
     """Get items to process for the calendar."""
+    # Music tracks never gain a calendar event (a MusicBrainz recording has no
+    # progress to schedule), so walking them spent one rate-limited MusicBrainz
+    # call each - a 606-second chunk in production - and every dead recording
+    # id was re-requested on every reload because a failed fetch is never
+    # stamped as checked.
     media_types = [
         choice.value
         for choice in MediaTypes
-        if choice not in [MediaTypes.SEASON, MediaTypes.EPISODE]
+        if choice not in [MediaTypes.SEASON, MediaTypes.EPISODE, MediaTypes.MUSIC]
     ]
 
     query = Q()

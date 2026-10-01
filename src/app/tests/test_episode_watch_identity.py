@@ -1,5 +1,6 @@
 import datetime
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from django.test import TestCase, TransactionTestCase
 
 from api.serializers import EpisodeSerializer
 from app import fork_services_episode
+from app.db_retry import run_retryable_db_operation
 from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
 from app.signals import suppress_media_change_side_effects
 from integrations.exports import get_track_fields
@@ -317,10 +319,24 @@ class EpisodeWatchIdentityConcurrencyTests(TransactionTestCase):
             finally:
                 close_old_connections()
 
+        # The two threads share one in-memory SQLite database, which answers
+        # "table is locked" at once instead of waiting. On a loaded CI runner
+        # the default 3 seconds of retries sometimes ran out, so give the
+        # retry loop more room; the outcome being tested is unchanged.
+        patient_retry = partial(
+            run_retryable_db_operation,
+            max_retries=10,
+            base_delay=0.1,
+            backoff=1.5,
+        )
         with (
             patch(
                 "app.models.providers.services.get_media_metadata",
                 side_effect=_episode_metadata,
+            ),
+            patch(
+                "app.fork_services_episode.run_retryable_db_operation",
+                patient_retry,
             ),
             ThreadPoolExecutor(max_workers=2) as executor,
         ):

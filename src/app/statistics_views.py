@@ -15,9 +15,14 @@ from django.views.decorators.http import require_GET, require_POST
 
 from app import config, statistics_cache, stats_cast_crew
 from app import statistics as stats
+from app.log_safety import exception_summary
 from app.models import MediaTypes
 from app.providers import tvdb
-from app.statistics_talent import _aggregate_top_talent
+from app.statistics_talent import (
+    TALENT_MEDIA_TYPES,
+    _aggregate_top_talent,
+    _normalize_talent_media_types,
+)
 from app.templatetags import app_tags
 from users.models import (
     ActivityHistoryViewChoices,
@@ -480,7 +485,7 @@ def statistics(request):
         if selected_range_name in statistics_cache.PREDEFINED_RANGES:
             from app import statistics_sync
 
-            snapshot = statistics_sync.load_snapshot(
+            snapshot = statistics_sync.load_snapshot_meta(
                 request.user.id, selected_range_name
             )
             statistics_built_at = snapshot.get("built_at") if snapshot else None
@@ -826,6 +831,17 @@ def statistics(request):
 
 
 TALENT_FRAGMENT_CACHE_TTL = 300
+# The last rendered section per range and sort, kept across data changes so a
+# view after a play can show it at once while a rebuild runs in the background.
+TALENT_FRAGMENT_LAST_GOOD_TTL = 7 * 24 * 60 * 60
+TALENT_FRAGMENT_REFRESH_LOCK_TTL = 5 * 60
+
+
+def _talent_fragment_key_suffix(user, range_token, compare_mode):
+    top_talent_sort = getattr(user, "top_talent_sort_by", "plays")
+    genre_sort = getattr(user, "genre_sort_by", "time")
+    studio_sort = getattr(user, "studio_sort_by", "plays")
+    return f"{range_token}_{top_talent_sort}_{studio_sort}_{genre_sort}_{compare_mode}"
 
 
 def _talent_fragment_cache_key(user, range_token, compare_mode):
@@ -836,16 +852,88 @@ def _talent_fragment_cache_key(user, range_token, compare_mode):
     if range_token in statistics_cache.PREDEFINED_RANGES:
         from app import statistics_sync
 
-        entry = statistics_sync.load_snapshot(user.id, range_token)
-        if entry and entry.get("built_at"):
-            history_version = f"{history_version}:{entry['built_at'].isoformat()}"
-    top_talent_sort = getattr(user, "top_talent_sort_by", "plays")
-    genre_sort = getattr(user, "genre_sort_by", "time")
-    studio_sort = getattr(user, "studio_sort_by", "plays")
-    return (
-        f"stats_talent_frag_v1_{user.id}_{history_version}_{range_token}_"
-        f"{top_talent_sort}_{studio_sort}_{genre_sort}_{compare_mode}"
+        meta = statistics_sync.load_snapshot_meta(user.id, range_token)
+        if meta and meta.get("built_at"):
+            history_version = f"{history_version}:{meta['built_at'].isoformat()}"
+    suffix = _talent_fragment_key_suffix(user, range_token, compare_mode)
+    return f"stats_talent_frag_v1_{user.id}_{history_version}_{suffix}"
+
+
+def _talent_fragment_last_good_key(user, range_token, compare_mode):
+    suffix = _talent_fragment_key_suffix(user, range_token, compare_mode)
+    return f"stats_talent_frag_last_v1_{user.id}_{suffix}"
+
+
+def _talent_fragment_request(
+    user, range_name, start_date_str, end_date_str, compare_mode_param
+):
+    """Resolve a talent fragment request to its dates and cache keys."""
+    start_date, end_date = _resolve_statistics_range_inputs(
+        range_name,
+        start_date_str,
+        end_date_str,
     )
+
+    has_finite_range = start_date is not None and end_date is not None
+    compare_source = (
+        compare_mode_param
+        if compare_mode_param is not None
+        else getattr(
+            user,
+            "statistics_compare_mode",
+            StatisticsCompareChoices.PREVIOUS_PERIOD,
+        )
+    )
+    selected_compare_mode = _normalize_statistics_compare_mode(
+        compare_source,
+        finite_range=has_finite_range,
+    )
+    comparison_start_date, comparison_end_date = _resolve_statistics_comparison_range(
+        start_date,
+        end_date,
+        selected_compare_mode,
+    )
+
+    range_token = range_name or f"{start_date_str or 'all'}:{end_date_str or 'all'}"
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "comparison_start_date": comparison_start_date,
+        "comparison_end_date": comparison_end_date,
+        "cache_key": _talent_fragment_cache_key(
+            user, range_token, selected_compare_mode
+        ),
+        "last_good_key": _talent_fragment_last_good_key(
+            user, range_token, selected_compare_mode
+        ),
+    }
+
+
+def build_talent_fragment(
+    user, range_name, start_date_str, end_date_str, compare_mode_param
+):
+    """Build the talent section context and store it under both keys."""
+    from django.core.cache import cache
+
+    fragment = _talent_fragment_request(
+        user, range_name, start_date_str, end_date_str, compare_mode_param
+    )
+    context = _build_talent_fragment_context(
+        user,
+        range_name,
+        fragment["start_date"],
+        fragment["end_date"],
+        start_date_str,
+        end_date_str,
+        fragment["comparison_start_date"],
+        fragment["comparison_end_date"],
+    )
+    cache.set(fragment["cache_key"], context, TALENT_FRAGMENT_CACHE_TTL)
+    cache.set(fragment["last_good_key"], context, TALENT_FRAGMENT_LAST_GOOD_TTL)
+    # The section now reflects every change so far; a later change may queue
+    # the next rebuild.
+    cache.delete(_talent_fragment_refresh_lock_key(fragment["last_good_key"]))
+    return context
 
 
 def _build_talent_fragment_context(
@@ -942,6 +1030,11 @@ def statistics_talent_fragment(request):
     page's first paint. The built context is cached; the key embeds the
     user's history version so any tracked-media change (or the refresh
     button) invalidates it automatically.
+
+    Every play changes that version, and a rebuild can take many seconds on a
+    large library, so after a change the last rendered section is shown at
+    once and the rebuild runs on the interactive worker. Only a section never
+    built for this range and sort is built while the viewer waits.
     """
     from django.core.cache import cache
 
@@ -950,57 +1043,70 @@ def statistics_talent_fragment(request):
     end_date_str = request.GET.get("end-date") or None
     compare_mode_param = request.GET.get("compare") or None
 
-    start_date, end_date = _resolve_statistics_range_inputs(
-        range_name,
-        start_date_str,
-        end_date_str,
+    fragment = _talent_fragment_request(
+        request.user, range_name, start_date_str, end_date_str, compare_mode_param
     )
-
-    has_finite_range = start_date is not None and end_date is not None
-    compare_source = (
-        compare_mode_param
-        if compare_mode_param is not None
-        else getattr(
-            request.user,
-            "statistics_compare_mode",
-            StatisticsCompareChoices.PREVIOUS_PERIOD,
-        )
-    )
-    selected_compare_mode = _normalize_statistics_compare_mode(
-        compare_source,
-        finite_range=has_finite_range,
-    )
-    comparison_start_date, comparison_end_date = _resolve_statistics_comparison_range(
-        start_date,
-        end_date,
-        selected_compare_mode,
-    )
-
-    range_token = range_name or f"{start_date_str or 'all'}:{end_date_str or 'all'}"
-    cache_key = _talent_fragment_cache_key(
-        request.user,
-        range_token,
-        selected_compare_mode,
-    )
-    context = cache.get(cache_key)
+    context = cache.get(fragment["cache_key"])
     if context is None:
-        context = _build_talent_fragment_context(
+        last_good = cache.get(fragment["last_good_key"])
+        if last_good is not None:
+            _queue_talent_fragment_refresh(
+                request.user,
+                fragment["last_good_key"],
+                range_name,
+                start_date_str,
+                end_date_str,
+                compare_mode_param,
+            )
+            # A worker that finished first (or an eager test run) left the
+            # fresh section; otherwise the last one is shown meanwhile.
+            context = cache.get(fragment["cache_key"]) or last_good
+    if context is None:
+        context = build_talent_fragment(
             request.user,
             range_name,
-            start_date,
-            end_date,
             start_date_str,
             end_date_str,
-            comparison_start_date,
-            comparison_end_date,
+            compare_mode_param,
         )
-        cache.set(cache_key, context, TALENT_FRAGMENT_CACHE_TTL)
 
     return render(
         request,
         "app/components/statistics/talent_section.html",
         context,
     )
+
+
+def _talent_fragment_refresh_lock_key(last_good_key):
+    # Keyed like the last-good copy, not the per-change key: plays arriving
+    # while a rebuild is queued must not queue more rebuilds of the same
+    # section on the single-concurrency interactive worker.
+    return f"{last_good_key}_refreshing"
+
+
+def _queue_talent_fragment_refresh(
+    user, last_good_key, range_name, start_date_str, end_date_str, compare_mode_param
+):
+    from django.core.cache import cache
+
+    if not cache.add(
+        _talent_fragment_refresh_lock_key(last_good_key),
+        True,
+        TALENT_FRAGMENT_REFRESH_LOCK_TTL,
+    ):
+        return
+    from app.tasks_interactive import refresh_statistics_talent_fragment_task
+
+    try:
+        refresh_statistics_talent_fragment_task.delay(
+            user.id, range_name, start_date_str, end_date_str, compare_mode_param
+        )
+    except Exception as error:  # the last good section is already on screen
+        logger.warning(
+            "talent_fragment_refresh_enqueue_failed user_id=%s error=%s",
+            user.id,
+            exception_summary(error),
+        )
 
 
 @require_POST
@@ -1120,14 +1226,7 @@ def update_top_talent_sort(request):
     start_date_str = request.POST.get("start_date")
     end_date_str = request.POST.get("end_date")
     total_library_titles = request.POST.get("total_library_titles")
-    media_type = request.POST.get("media_type")
-    if media_type not in {
-        MediaTypes.MOVIE.value,
-        MediaTypes.TV.value,
-        MediaTypes.ANIME.value,
-        MediaTypes.GAME.value,
-    }:
-        media_type = None
+    media_type = _normalize_talent_media_types(request.POST.get("media_type")) or None
 
     valid_sort_values = list(TopTalentSortChoices.values)
     if sort_by not in valid_sort_values:
@@ -1189,7 +1288,7 @@ def update_top_talent_sort(request):
         )
         total_library_titles = media_count.get("total", 0)
 
-    if media_type:
+    if media_type is not None:
         # Filtered variants aren't cached — only the unfiltered per-range payload is.
         top_talent = _aggregate_top_talent(
             request.user, start_date, end_date, media_type=media_type
@@ -1295,14 +1394,13 @@ def update_genre_sort(request):
     range_name = request.POST.get("range_name")
     start_date_str = request.POST.get("start_date")
     end_date_str = request.POST.get("end_date")
-    media_type = request.POST.get("media_type")
-    if media_type not in {
-        MediaTypes.MOVIE.value,
-        MediaTypes.TV.value,
-        MediaTypes.ANIME.value,
-        MediaTypes.GAME.value,
-    }:
-        media_type = None
+    media_type = (
+        _normalize_talent_media_types(
+            request.POST.get("media_type"),
+            allowed=TALENT_MEDIA_TYPES | {MediaTypes.MUSIC.value},
+        )
+        or None
+    )
 
     valid_sort_values = list(GenreSortChoices.values)
     if sort_by not in valid_sort_values:
@@ -1335,10 +1433,10 @@ def update_genre_sort(request):
         MediaTypes.GAME.value: statistics_data.get("game_consumption", {}),
         MediaTypes.MUSIC.value: statistics_data.get("music_consumption", {}),
     }
-    if media_type:
-        # Filtered view: only the selected media type contributes rows.
+    if media_type is not None:
+        # Filtered view: only the selected media types contribute rows.
         for key in consumption_by_type:
-            if key != media_type:
+            if key not in media_type:
                 consumption_by_type[key] = empty_consumption
 
     top_genres_combined = stats_cast_crew.get_top_genres_combined(
@@ -1391,14 +1489,7 @@ def update_studio_sort(request):
     range_name = request.POST.get("range_name")
     start_date_str = request.POST.get("start_date")
     end_date_str = request.POST.get("end_date")
-    media_type = request.POST.get("media_type")
-    if media_type not in {
-        MediaTypes.MOVIE.value,
-        MediaTypes.TV.value,
-        MediaTypes.ANIME.value,
-        MediaTypes.GAME.value,
-    }:
-        media_type = None
+    media_type = _normalize_talent_media_types(request.POST.get("media_type")) or None
 
     valid_sort_values = list(GenreSortChoices.values)
     if sort_by not in valid_sort_values:
@@ -1418,7 +1509,7 @@ def update_studio_sort(request):
         end_date_str,
     )
 
-    if media_type:
+    if media_type is not None:
         # Filtered variants aren't cached — only the unfiltered per-range payload is.
         top_talent = _aggregate_top_talent(
             request.user, start_date, end_date, media_type=media_type

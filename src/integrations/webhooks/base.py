@@ -60,6 +60,9 @@ class BaseWebhookProcessor:
         "Episode": MediaTypes.TV.value,
         "Movie": MediaTypes.MOVIE.value,
     }
+    # True when an episode payload's TVDB/IMDb ids name the episode itself
+    # (Jellyfin, Emby). See `_find_tv_media_id(episode_ids=...)`.
+    TV_IDS_ARE_EPISODE_LEVEL = False
 
     def process_payload(self, payload, user):
         """Process webhook payload."""
@@ -271,6 +274,7 @@ class BaseWebhookProcessor:
             series_title=series_title,
             allow_title_fallback=True,
             season_number=payload_season,
+            episode_ids=self.TV_IDS_ARE_EPISODE_LEVEL,
         )
         if not media_id:
             logger.warning("No matching TMDB ID found for TV show")
@@ -323,6 +327,7 @@ class BaseWebhookProcessor:
                 alt_ids["tmdb_id"] = None
                 fallback_media_id, alt_season, alt_episode = self._find_tv_media_id(
                     alt_ids,
+                    episode_ids=self.TV_IDS_ARE_EPISODE_LEVEL,
                 )
 
                 if fallback_media_id:
@@ -385,6 +390,7 @@ class BaseWebhookProcessor:
                 series_title=series_title,
                 allow_title_fallback=True,
                 season_number=season_number,
+                episode_ids=self.TV_IDS_ARE_EPISODE_LEVEL,
             )
             if fallback_media_id:
                 media_id = fallback_media_id
@@ -409,6 +415,7 @@ class BaseWebhookProcessor:
                     return None
         elif (
             ids.get("tvdb_id")
+            and not self.TV_IDS_ARE_EPISODE_LEVEL
             and not self._extract_payload_tmdb_id(payload)
             and str(tv_metadata.get("tvdb_id") or "") != str(ids["tvdb_id"])
         ):
@@ -955,7 +962,7 @@ class BaseWebhookProcessor:
     def _remember_tvdb_override(self, media_id, ids):
         """Persist a preferred TVDB ID for a resolved TMDB show when available."""
         tvdb_id = ids.get("tvdb_id")
-        if not media_id or not tvdb_id:
+        if not media_id or not tvdb_id or self.TV_IDS_ARE_EPISODE_LEVEL:
             return
 
         app.providers.tmdb.set_tvdb_id_override(media_id, tvdb_id)
@@ -1124,6 +1131,7 @@ class BaseWebhookProcessor:
         allow_title_fallback=False,
         year=None,
         season_number=None,
+        episode_ids=False,
     ):
         """Find TV media ID from external IDs, with optional title search fallback.
 
@@ -1134,6 +1142,11 @@ class BaseWebhookProcessor:
             allow_title_fallback: Enable title-search when all ID lookups fail.
             year: First-air year used to disambiguate title-search results.
             season_number: Played season, used only to break a title tie.
+            episode_ids: The TVDB/IMDb ids name one episode, not a show. TMDB's
+                find returns a bare show when an episode's TVDB id happens to
+                equal an unrelated series' TVDB id (#876, #1312), so that hit
+                is ignored and lookup moves on to the TVDB episode / title
+                fallbacks.
 
         Returns:
             tuple: (media_id, season_number, episode_number)
@@ -1169,7 +1182,9 @@ class BaseWebhookProcessor:
                         result.get("season_number"),
                         result.get("episode_number"),
                     )
-                if response.get("tv_results"):
+                if response.get("tv_results") and not (
+                    episode_ids and ext_type == "tvdb_id"
+                ):
                     result = response["tv_results"][0]
                     return result.get("id"), None, None
 
@@ -1607,7 +1622,10 @@ class BaseWebhookProcessor:
         seen_media_ids = {str(media_id)}
         alt_ids = dict(ids)
         alt_ids["tmdb_id"] = None
-        recovered_media_id, _alt_season, _alt_episode = self._find_tv_media_id(alt_ids)
+        recovered_media_id, _alt_season, _alt_episode = self._find_tv_media_id(
+            alt_ids,
+            episode_ids=self.TV_IDS_ARE_EPISODE_LEVEL,
+        )
         if recovered_media_id and str(recovered_media_id) not in seen_media_ids:
             recovered_tv_metadata = self._load_tv_metadata_with_required_season(
                 recovered_media_id,

@@ -52,7 +52,10 @@ class PodcastHistoryInvalidationTests(TestCase):
     def test_full_save_that_may_clear_the_end_date_still_wipes(
         self, mock_invalidate_all, _mock_invalidate_days
     ):
+        Podcast.objects.filter(pk=self.podcast.pk).update(end_date=timezone.now())
         self.podcast.end_date = None
         self.podcast.save()
 
-        mock_invalidate_all.assert_called_with(self.user.id)
+        mock_invalidate_all.assert_called_with(
+            self.user.id, reason="undated_media_change"
+        )

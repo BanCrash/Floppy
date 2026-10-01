@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 MIN_PLAUSIBLE_YEAR = 1900
 
+# How long a show whose season lookup failed is left to the database episode
+# count before the provider is asked again during page rendering.
+SEASON_MAX_PROGRESS_RETRY_SECONDS = 10 * 60
+
 # Sort keys whose value aggregates an item's rows the way
 # _aggregate_item_data does; ``_aggregated_sort_subquery`` expresses them in
 # SQL for the library-query engine's sort registry.
@@ -834,9 +838,11 @@ class MediaManager(models.Manager):
             episode_qs = Episode.objects.select_related("item")
             if list_mode:
                 # Load only the fields accessed in the list path:
-                # ep.item.episode_number, ep.end_date, and ep.status. Deferring
-                # the remaining ~30 Item columns cuts Django object
-                # instantiation time proportionally for large libraries.
+                # ep.item.episode_number, ep.item.release_datetime (the
+                # next-episode air date falls back to it), ep.end_date, and
+                # ep.status. Deferring the remaining ~30 Item columns cuts
+                # Django object instantiation time proportionally for large
+                # libraries.
                 episode_qs = episode_qs.only(
                     "id",
                     "end_date",
@@ -844,6 +850,7 @@ class MediaManager(models.Manager):
                     "related_season_id",
                     "item__id",
                     "item__episode_number",
+                    "item__release_datetime",
                 )
             return queryset.prefetch_related(
                 Prefetch(
@@ -899,6 +906,62 @@ class MediaManager(models.Manager):
             return self._sort_season_media_list(queryset, sort_filter, direction)
 
         return self._sort_generic_media_list(queryset, sort_filter, direction)
+
+    def _season_events_by_show(self, shows):
+        """Return ``{(media_id, source): [event, ...]}`` for shows' season events.
+
+        One query for all the shows, ordered by season then episode. Only what
+        the next-episode date reads is loaded from each event's item.
+        """
+        shows = set(shows)
+        events_by_show = defaultdict(list)
+        media_ids = sorted({media_id for media_id, _source in shows})
+        for start in range(0, len(media_ids), 500):
+            season_events = (
+                events.models.Event.objects.filter(
+                    item__media_id__in=media_ids[start : start + 500],
+                    item__source__in={source for _media_id, source in shows},
+                    item__media_type=MediaTypes.SEASON.value,
+                    item__season_number__gt=0,
+                    content_number__isnull=False,
+                )
+                .select_related("item")
+                .only(
+                    "content_number",
+                    "datetime",
+                    "item__media_id",
+                    "item__source",
+                    "item__season_number",
+                    "item__release_datetime",
+                )
+                .order_by("item__season_number", "content_number")
+            )
+            for event in season_events:
+                key = (event.item.media_id, event.item.source)
+                if key in shows:
+                    events_by_show[key].append(event)
+        return events_by_show
+
+    def attach_show_season_events(self, medias):
+        """Load the season events `_next_episode_air_date_value` may need, in bulk.
+
+        Without this, each show that has watched everything it has tracked so
+        far costs its own events query (and a query per event for its item).
+        """
+        tv_medias = [
+            media
+            for media in medias
+            if getattr(getattr(media, "item", None), "media_type", None)
+            == MediaTypes.TV.value
+        ]
+        events_by_show = self._season_events_by_show(
+            [(media.item.media_id, media.item.source) for media in tv_medias],
+        )
+        for media in tv_medias:
+            media.prefetched_show_season_events = events_by_show.get(
+                (media.item.media_id, media.item.source),
+                [],
+            )
 
     def _next_episode_air_date_value(self, media):
         """Return the air datetime for the next episode in watch order."""
@@ -987,18 +1050,16 @@ class MediaManager(models.Manager):
                     for season in seasons
                     if getattr(season, "item", None) is not None
                 }
-                untracked_events = (
-                    events.models.Event.objects.filter(
-                        item__media_id=item.media_id,
-                        item__source=item.source,
-                        item__media_type=MediaTypes.SEASON.value,
-                        item__season_number__gt=0,
-                        content_number__isnull=False,
-                    )
-                    .exclude(item__season_number__in=tracked_season_numbers)
-                    .order_by("item__season_number", "content_number")
+                show_events = getattr(media, "prefetched_show_season_events", None)
+                if show_events is None:
+                    show_events = self._season_events_by_show(
+                        [(item.media_id, item.source)],
+                    ).get((item.media_id, item.source), [])
+                candidates.extend(
+                    event
+                    for event in show_events
+                    if event.item.season_number not in tracked_season_numbers
                 )
-                candidates.extend(untracked_events)
 
             if progress_index >= len(candidates):
                 return None
@@ -1050,6 +1111,8 @@ class MediaManager(models.Manager):
         with_dates = []
         without_dates = []
 
+        media_items = list(media_items)
+        self.attach_show_season_events(media_items)
         for media in media_items:
             next_episode_air_date = self._next_episode_air_date_value(media)
             media.next_episode_air_date = next_episode_air_date
@@ -1750,28 +1813,7 @@ class MediaManager(models.Manager):
             # For seasons, use metadata max_progress instead of database annotation
             # The metadata value is more accurate as it reflects the actual total episodes
             # from the provider, not just episodes with release_datetime set
-            from app.providers import services
-
-            for season in media_list:
-                try:
-                    season_metadata = services.get_media_metadata(
-                        MediaTypes.SEASON.value,
-                        season.item.media_id,
-                        season.item.source,
-                        [season.item.season_number],
-                    )
-                    # Use metadata max_progress if available, otherwise fall back to annotation
-                    metadata_max_progress = season_metadata.get("max_progress")
-                    if metadata_max_progress is not None:
-                        season.max_progress = metadata_max_progress
-                    else:
-                        # Fall back to database annotation if metadata doesn't have max_progress
-                        self._annotate_season_released_episodes(
-                            [season], current_datetime
-                        )
-                except Exception:
-                    # If metadata fetch fails, fall back to database annotation
-                    self._annotate_season_released_episodes([season], current_datetime)
+            self._annotate_season_metadata_max_progress(media_list, current_datetime)
             return
 
         if media_type == MediaTypes.BOOK.value:
@@ -2019,6 +2061,83 @@ class MediaManager(models.Manager):
                         details,
                         fallback_max_progress=None,
                     )
+
+    def _annotate_season_metadata_max_progress(self, season_list, current_datetime):
+        """Annotate seasons with the provider's episode count.
+
+        The provider count is more accurate than the database annotation: it
+        reflects every episode, not only those with a release date stored. A
+        list renders many seasons of the same show, so provider-backed seasons
+        are read with one bundle call per show rather than one per season.
+        A show whose lookup failed is not retried for a while, so a slow or
+        unreachable provider costs one attempt, not one per season per render.
+        """
+        from django.core.cache import cache
+
+        from app.providers import services
+
+        batched_sources = {Sources.TMDB.value, Sources.TVDB.value}
+        seasons_by_show = defaultdict(list)
+        fallback = []
+
+        def annotate_from_season_lookup(season):
+            item = season.item
+            try:
+                season_metadata = services.get_media_metadata(
+                    MediaTypes.SEASON.value,
+                    item.media_id,
+                    item.source,
+                    [item.season_number],
+                )
+            except Exception:
+                fallback.append(season)
+                return
+            metadata_max_progress = season_metadata.get("max_progress")
+            if metadata_max_progress is None:
+                fallback.append(season)
+            else:
+                season.max_progress = metadata_max_progress
+
+        for season in season_list:
+            item = season.item
+            if item.source in batched_sources and item.season_number is not None:
+                seasons_by_show[(item.source, item.media_id)].append(season)
+            else:
+                annotate_from_season_lookup(season)
+
+        for (source, media_id), seasons in seasons_by_show.items():
+            failed_key = f"season_max_progress_failed:{source}:{media_id}"
+            if cache.get(failed_key):
+                fallback.extend(seasons)
+                continue
+            season_numbers = sorted({season.item.season_number for season in seasons})
+            try:
+                bundle = services.get_media_metadata(
+                    "tv_with_seasons",
+                    media_id,
+                    source,
+                    season_numbers,
+                )
+            except Exception:
+                cache.set(failed_key, True, SEASON_MAX_PROGRESS_RETRY_SECONDS)
+                fallback.extend(seasons)
+                continue
+            for season in seasons:
+                season_data = bundle.get(f"season/{season.item.season_number}")
+                metadata_max_progress = (
+                    season_data.get("max_progress")
+                    if isinstance(season_data, dict)
+                    else None
+                )
+                if metadata_max_progress is None:
+                    # Not answered by the bundle: ask for the season on its
+                    # own, as before, so the result never differs from a
+                    # direct read.
+                    annotate_from_season_lookup(season)
+                else:
+                    season.max_progress = metadata_max_progress
+
+        self._annotate_season_released_episodes(fallback, current_datetime)
 
     def _annotate_season_released_episodes(self, season_list, current_datetime):
         """Annotate seasons with the number of released episodes."""

@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import call, patch
 
 from dateutil.relativedelta import relativedelta
@@ -555,11 +555,19 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.context["selected_range_name"], "This Year")
         self.assertEqual(response.context["selected_range_dates_label"], "This Year")
 
+    # Pinned mid-month: on the 1st, month-to-date is a single day and is labelled "Today".
+    @patch(
+        "django.utils.timezone.now",
+        new=lambda: datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+    )
     def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()
         self.client.login(**self.credentials)
-        today = timezone.localdate()
+        # On the 1st the month-to-date range is one day and is correctly
+        # labelled "Today", so pin "today" to the 15th of last month.
+        real_localdate = timezone.localdate
+        today = (timezone.localdate().replace(day=1) - timedelta(days=1)).replace(day=15)
         month_start = today.replace(day=1)
         last_year_today = today - relativedelta(years=1)
 
@@ -568,14 +576,18 @@ class StatisticsViewTests(TestCase):
             "movie-last-year-mtd", "Last Year Movie", last_year_today, 60
         )
 
-        response = self.client.get(
-            reverse("statistics")
-            + (
-                f"?start-date={month_start.isoformat()}"
-                f"&end-date={today.isoformat()}"
-                "&compare=last_year"
-            ),
-        )
+        def pinned_localdate(value=None, timezone=None):
+            return today if value is None else real_localdate(value, timezone)
+
+        with patch("django.utils.timezone.localdate", side_effect=pinned_localdate):
+            response = self.client.get(
+                reverse("statistics")
+                + (
+                    f"?start-date={month_start.isoformat()}"
+                    f"&end-date={today.isoformat()}"
+                    "&compare=last_year"
+                ),
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_range_name"], "This Month")
@@ -3004,6 +3016,40 @@ class StatisticsViewTests(TestCase):
 
         self.assertEqual(day_stats["backfill"]["missing_credits"], 1)
         self.assertEqual(day_stats["backfill"]["scheduled_credits"], 0)
+
+    def test_day_summary_is_info_for_one_day_but_debug_during_a_sweep(self):
+        watched_at = timezone.now()
+        item = Item.objects.create(
+            media_id="9044",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Day Summary Movie",
+            image="http://example.com/summary.jpg",
+            runtime_minutes=100,
+            genres=["Drama"],
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=watched_at,
+            end_date=watched_at,
+        )
+
+        with self.assertLogs("app.statistics_day_builder", level="INFO") as single:
+            statistics_cache.build_stats_for_day(self.user.id, watched_at.date())
+        self.assertTrue(any("stats_day_summary" in line for line in single.output))
+
+        with self.assertLogs("app.statistics_day_builder", level="DEBUG") as sweep:
+            statistics_cache.build_stats_for_day(
+                self.user.id,
+                watched_at.date(),
+                defer_cache_write=True,
+            )
+        summaries = [line for line in sweep.output if "stats_day_summary" in line]
+        self.assertTrue(summaries)
+        self.assertTrue(all(line.startswith("DEBUG:") for line in summaries))
 
     @patch("app.statistics_cache.invalidate_all_statistics_days")
     def test_update_statistics_preferences_saves_tv_anime_split_and_invalidates_cache(

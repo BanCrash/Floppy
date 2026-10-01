@@ -435,6 +435,145 @@ class AudiobookshelfAccount(models.Model):
         return bool(self.base_url and self.api_token) and not self.connection_broken
 
 
+class ReadingServerAccount(models.Model):
+    """Connection settings and sync state shared by Komga and Kavita."""
+
+    SYNC_INTERVAL_CHOICES = (5, 15, 30, 60)
+
+    base_url = models.URLField(help_text="Server URL")
+    api_key = models.TextField(help_text="Encrypted API key")
+    create_missing = models.BooleanField(
+        default=True,
+        help_text="Create Floppy items when server items cannot be matched",
+    )
+    sync_interval_minutes = models.PositiveSmallIntegerField(
+        default=15,
+        help_text="How often reading progress is synced",
+    )
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    connection_broken = models.BooleanField(default=False)
+    last_error_message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        abstract = True
+
+    @property
+    def is_connected(self):
+        """Return True when the account appears connected."""
+        return bool(self.base_url and self.api_key) and not self.connection_broken
+
+
+class KomgaAccount(ReadingServerAccount):
+    """Store Komga connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="komga_account",
+    )
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Komga account"
+        verbose_name_plural = "Komga accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"KomgaAccount({self.user.username})"
+
+
+class KomgaBookLink(models.Model):
+    """Remember which Floppy item a Komga book was matched to for a user."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="komga_book_links",
+    )
+    komga_book_id = models.CharField(max_length=64)
+    item = models.ForeignKey(
+        "app.Item",
+        on_delete=models.CASCADE,
+        related_name="komga_book_links",
+    )
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Komga book link"
+        verbose_name_plural = "Komga book links"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "komga_book_id"],
+                name="integrations_komgabooklink_unique_user_book",
+            ),
+        ]
+
+    def __str__(self):
+        """Readable representation."""
+        return f"KomgaBookLink({self.user.username}, {self.komga_book_id})"
+
+
+class KavitaAccount(ReadingServerAccount):
+    """Store Kavita connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="kavita_account",
+    )
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Kavita account"
+        verbose_name_plural = "Kavita accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"KavitaAccount({self.user.username})"
+
+
+class KavitaLink(models.Model):
+    """Remember which Floppy item a Kavita series or chapter was matched to."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="kavita_links",
+    )
+    # "series:<id>" for manga and books, "chapter:<id>" for comic issues.
+    kavita_key = models.CharField(max_length=64)
+    item = models.ForeignKey(
+        "app.Item",
+        on_delete=models.CASCADE,
+        related_name="kavita_links",
+    )
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Kavita link"
+        verbose_name_plural = "Kavita links"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "kavita_key"],
+                name="integrations_kavitalink_unique_user_key",
+            ),
+        ]
+
+    def __str__(self):
+        """Readable representation."""
+        return f"KavitaLink({self.user.username}, {self.kavita_key})"
+
+
 class LastFMAccount(models.Model):
     """Store Last.fm username and sync state for a user."""
 
@@ -778,6 +917,58 @@ class MylarInstance(models.Model):
         return bool(self.base_url and self.api_key) and not self.connection_broken
 
 
+class KapowarrInstance(models.Model):
+    """Store connection settings and sync state for one Kapowarr instance.
+
+    Kapowarr keys its volumes and issues by Comic Vine id, like Mylar3, so a
+    sync can mark Floppy's Comic Vine comic issues as owned without matching.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="kapowarr_instances",
+    )
+    name = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Optional label to distinguish multiple instances",
+    )
+    base_url = models.URLField(help_text="Kapowarr server URL")
+    api_key = models.TextField(help_text="Encrypted Kapowarr API key")
+    connection_broken = models.BooleanField(default=False)
+    last_error_message = models.TextField(blank=True, default="")
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Kapowarr instance"
+        verbose_name_plural = "Kapowarr instances"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "base_url"],
+                name="integrations_kapowarrinstance_unique_user_base_url",
+            ),
+        ]
+
+    def __str__(self):
+        """Return a readable label for this Kapowarr instance."""
+        return f"{self.display_name} ({self.user})"
+
+    @property
+    def display_name(self):
+        """Return the instance's label, falling back to a generic name."""
+        return self.name or "Kapowarr"
+
+    def is_connected(self):
+        """Return True when the instance appears connected."""
+        return bool(self.base_url and self.api_key) and not self.connection_broken
+
+
 class MDBListAccount(models.Model):
     """Store MDBList connection settings and sync state for a user."""
 
@@ -907,6 +1098,7 @@ class CollectionSourceState(models.Model):
         ("radarr", "Radarr"),
         ("sonarr", "Sonarr"),
         ("mylar", "Mylar3"),
+        ("kapowarr", "Kapowarr"),
     ]
 
     user = models.ForeignKey(
@@ -924,7 +1116,7 @@ class CollectionSourceState(models.Model):
         null=True,
         blank=True,
         help_text=(
-            "PK of the Radarr/Sonarr/Mylar instance this row came from; "
+            "PK of the Radarr/Sonarr/Mylar/Kapowarr instance this row came from; "
             "unused for plex/jellyfin"
         ),
     )

@@ -59,6 +59,7 @@
   /* Lifted from #9ca3af: that value reached only 4.1:1 on --color-surface-strong,
      the raised surface settings cards use, so muted copy missed WCAG AA there. */
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
@@ -101,6 +102,7 @@
     --color-text: #1f2937;
     --color-text-secondary: #374151;
     --color-text-muted: #4b5563;
+    --color-success-text: #047857;
     --color-warning-text: #92400e;
     --color-info-text: #3730a3;
     --color-error-text: #b91c1c;
@@ -138,6 +140,7 @@ html.light {
   --color-text: #1f2937;
   --color-text-secondary: #374151;
   --color-text-muted: #4b5563;
+  --color-success-text: #047857;
   --color-warning-text: #92400e;
   --color-info-text: #3730a3;
   --color-error-text: #b91c1c;
@@ -174,6 +177,7 @@ html.dark {
   --color-text: #f3f4f6;
   --color-text-secondary: #d1d5db;
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
@@ -2266,4 +2270,34 @@ html.light .theme-toggle-icon-moon {
 [data-horizontal-drag="true"]:focus-visible {
   outline: 2px solid var(--color-link);
   outline-offset: 2px;
+}
+
+/*
+ * The rating button in a card's title row. When the item is unrated it shows an
+ * empty star, only while the card is hovered (or the button has focus); touch
+ * screens have no hover, so it stays faintly visible there.
+ */
+.media-card-rate-empty {
+  opacity: 0;
+  transition: opacity 150ms ease-in-out;
+}
+
+.media-card-rate-empty .media-card-rate-star svg {
+  fill: none;
+}
+
+.media-card-rate-empty:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .media-card-rate-empty {
+    opacity: 1;
+  }
+}
+
+@media (pointer: coarse) {
+  .media-card-rate-empty {
+    opacity: 0.6;
+  }
 }

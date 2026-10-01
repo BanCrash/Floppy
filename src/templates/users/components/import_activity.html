@@ -79,7 +79,17 @@
 
             {% source_display result.source %}
           </div>
-          <span class="text-xs text-[var(--color-text-muted)]">{{ result.date|user_datetime_format:user }}</span>
+          <div class="flex items-center gap-3">
+            {% if result.status == "PENDING" and result.task_id %}
+              <form action="{% url 'cancel_pending_import' result.task_id %}"
+                    method="post"
+                    onsubmit="return confirm(gettext('Cancel this import?'));">
+                {% csrf_token %}
+                <button class="text-xs text-red-400 hover:text-red-300 transition-colors cursor-pointer">{% translate "Cancel import" %}</button>
+              </form>
+            {% endif %}
+            <span class="text-xs text-[var(--color-text-muted)]">{{ result.date|user_datetime_format:user }}</span>
+          </div>
         </div>
 
         {% if result.status %}

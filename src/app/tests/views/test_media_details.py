@@ -6,6 +6,7 @@ from unittest.mock import patch
 from urllib.parse import urlparse
 
 import requests
+from bs4 import BeautifulSoup
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -542,7 +543,9 @@ class MediaDetailsViewTests(TestCase):
             for section in response.context["detail_link_sections"]
             if section["title"] in ("Source", "Tracking Source")
         ]
-        self.assertTrue(source_sections, "Expected a Source link section in the fallback")
+        self.assertTrue(
+            source_sections, "Expected a Source link section in the fallback"
+        )
         self.assertEqual(
             source_sections[0]["entries"][0]["url"],
             "https://www.igdb.com/games/zone-of-the-enders-the-2nd-runner",
@@ -1816,6 +1819,7 @@ class MediaDetailsViewTests(TestCase):
                         {
                             "label": "The Movie Database",
                             "url": "https://www.themoviedb.org/movie/238",
+                            "brand": "tmdb",
                             "chip_classes": "border-cyan-400/18 bg-cyan-500/[0.07]",
                             "badge_classes": "border-cyan-400/28 bg-cyan-500/14",
                             "accent_classes": "text-[var(--color-text)]",
@@ -1830,6 +1834,7 @@ class MediaDetailsViewTests(TestCase):
                         {
                             "label": "Letterboxd",
                             "url": "https://letterboxd.com/tmdb/238",
+                            "brand": "letterboxd",
                             "chip_classes": "border-emerald-400/18 bg-emerald-500/[0.07]",
                             "badge_classes": "border-emerald-400/28 bg-emerald-500/14",
                             "accent_classes": "text-[var(--color-text)]",
@@ -1839,6 +1844,7 @@ class MediaDetailsViewTests(TestCase):
                         {
                             "label": "IMDb",
                             "url": "https://www.imdb.com/title/tt0111161/",
+                            "brand": "imdb",
                             "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
                             "badge_classes": "border-amber-400/28 bg-amber-500/14",
                             "accent_classes": "text-[var(--color-text)]",
@@ -3496,6 +3502,100 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "987,654 ratings")
 
     @patch("app.providers.services.get_media_metadata")
+    def test_rating_chips_link_to_the_urls_in_the_links_dropdown(
+        self, mock_get_metadata
+    ):
+        """#1083: a rating chip opens the page the Links dropdown already lists."""
+        Item.objects.create(
+            media_id="242",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Linked Ratings Movie",
+            image="http://example.com/image.jpg",
+            imdb_rating=7.5,
+            imdb_rating_count=1000,
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "242",
+            "title": "Linked Ratings Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "score": 7.1,
+            "score_count": 42000,
+            "source_url": "https://www.themoviedb.org/movie/242",
+            "external_links": {"IMDb": "https://www.imdb.com/title/tt0000242/"},
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "242",
+                    "title": "linked-ratings-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        soup = BeautifulSoup(response.content, "html.parser")
+        for label, url in (
+            ("IMDb score", "https://www.imdb.com/title/tt0000242/"),
+            ("The Movie Database score", "https://www.themoviedb.org/movie/242"),
+        ):
+            chip = soup.find(
+                "span",
+                class_="sr-only",
+                string=lambda t, label=label: t and t.strip() == label,
+            ).parent
+            self.assertEqual(chip.name, "a", label)
+            self.assertEqual(chip["href"], url)
+            self.assertEqual(chip["target"], "_blank")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_rating_chip_stays_plain_without_a_link(self, mock_get_metadata):
+        """#1083: no URL in the Links dropdown means the chip is not a link."""
+        Item.objects.create(
+            media_id="243",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Unlinked Rating Movie",
+            image="http://example.com/image.jpg",
+            imdb_rating=6.0,
+            imdb_rating_count=500,
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "243",
+            "title": "Unlinked Rating Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "243",
+                    "title": "unlinked-rating-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        soup = BeautifulSoup(response.content, "html.parser")
+        chip = soup.find("span", class_="sr-only", string="IMDb score").parent
+        self.assertEqual(chip.name, "button")
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_hides_imdb_score_card_without_data(self, mock_get_metadata):
         Item.objects.create(
             media_id="241",
@@ -4067,6 +4167,59 @@ class MediaDetailsViewTests(TestCase):
                     "Progress: 120/320",
                     "2026-03-01 - 2026-03-12",
                 )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_audiobook_activity_subtitle_shows_total_as_listening_time(
+        self,
+        mock_get_metadata,
+    ):
+        """An audiobook's total is minutes, so it reads like its progress."""
+        self._use_iso_dates()
+        mock_get_metadata.return_value = {
+            "media_id": "abs-1",
+            "title": "Project Hail Mary",
+            "media_type": MediaTypes.BOOK.value,
+            "source": Sources.AUDIOBOOKSHELF.value,
+            "image": "http://example.com/cover.jpg",
+            "max_progress": 966,
+            "details": {"format": "audiobook"},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="abs-1",
+            source=Sources.AUDIOBOOKSHELF.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Project Hail Mary",
+            image="http://example.com/cover.jpg",
+            format="audiobook",
+            runtime_minutes=966,
+        )
+        Book.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=358,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.AUDIOBOOKSHELF.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "media_id": "abs-1",
+                    "title": "project-hail-mary",
+                },
+            ),
+        )
+
+        self._assert_activity_subtitle_without_stats_cards(
+            response,
+            "Progress: 5h 58min/16h 06min",
+            "2026-03-01 - 2026-03-12",
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_game_media_details_renders_activity_subtitle_without_stats_cards(
@@ -5685,7 +5838,9 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(
-            MetadataProviderPreference.objects.filter(user=self.user, item=item).exists(),
+            MetadataProviderPreference.objects.filter(
+                user=self.user, item=item
+            ).exists(),
         )
 
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
@@ -6189,7 +6344,7 @@ class MediaDetailsViewTests(TestCase):
     @patch("app.db_retry.time.sleep")
     @patch("app.services.metadata_resolution.ItemProviderLink.objects.update_or_create")
     @patch("app.providers.services.get_media_metadata")
-    def test_anime_media_details_renders_when_provider_link_upsert_locks(
+    def test_anime_media_details_does_not_upsert_provider_links(
         self,
         mock_get_metadata,
         mock_update_or_create,
@@ -6239,7 +6394,8 @@ class MediaDetailsViewTests(TestCase):
             response,
             "Some metadata updates were deferred because the database is busy.",
         )
-        self.assertTrue(response.context["detail_persistence_deferred"])
+        self.assertFalse(response.context["detail_persistence_deferred"])
+        mock_update_or_create.assert_not_called()
         _mock_sleep.assert_not_called()
 
     def test_game_media_details_renders_when_metadata_save_hits_retryable_lock(self):
@@ -10696,7 +10852,6 @@ class MediaDetailsViewTests(TestCase):
         item.refresh_from_db()
         self.assertEqual(item.image, existing_image)
 
-
     @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
     @patch("app.views.credits.sync_item_credits_from_metadata")
     @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
@@ -10783,6 +10938,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertIn('hx-swap-oob="outerHTML"', section)
         self.assertIn('<h2 class="text-xl font-bold">Your Notes</h2>', section)
         self.assertIn("First note ever", section)
+
     @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
     @patch("app.views.credits.sync_item_credits_from_metadata")
     @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
@@ -10844,6 +11000,7 @@ class MediaDetailsViewTests(TestCase):
         section = body[body.index('id="detail-notes-section"') :]
         self.assertIn('hx-swap-oob="outerHTML"', section)
         self.assertNotIn('<h2 class="text-xl font-bold">Your Notes</h2>', section)
+
     def test_editing_an_episode_note_swaps_the_section_back(self):
         """Episode saves push the notes section back like movie saves do.
 
@@ -10930,6 +11087,7 @@ class MediaDetailsViewTests(TestCase):
             f"episode-notes-modal-tmdb-1668-1-1-{episode.id}",
             section,
         )
+
     @patch("app.views.tmdb.episode", return_value={})
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")

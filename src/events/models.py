@@ -1,6 +1,7 @@
 import re
 from datetime import UTC, datetime
 
+from django.conf import settings
 from django.db import models
 from django.db.models import (
     Case,
@@ -49,6 +50,17 @@ class SentinelDatetime:
     MICROSECOND = 999999
 
 
+# Columns dedupe_cross_provider_items reads; every other Item column is skipped.
+_DEDUPE_ITEM_FIELDS = (
+    "id",
+    "media_id",
+    "media_type",
+    "season_number",
+    "source",
+    "provider_external_ids",
+)
+
+
 class EventManager(models.Manager):
     """Custom manager for the Event model."""
 
@@ -78,7 +90,12 @@ class EventManager(models.Manager):
                 **{f"item__{media_type}__status__in": INACTIVE_TRACKING_STATUSES},
             )
 
-        tv_query = self._build_tv_query(user, enabled_types)
+        tv_enabled = (
+            MediaTypes.TV.value in enabled_types
+            or MediaTypes.SEASON.value in enabled_types
+        )
+        active_tv_items = self._active_tv_items(user) if tv_enabled else []
+        tv_query = self._build_tv_query(user, enabled_types, active_tv_items)
         combined_query = (user_query & active_status_query) | tv_query
 
         queryset = self.filter(
@@ -87,13 +104,17 @@ class EventManager(models.Manager):
             datetime__lte=end_datetime,
         ).select_related("item")
 
-        hidden_item_ids = self.hidden_duplicate_item_ids(user, enabled_types)
+        hidden_item_ids = self.hidden_duplicate_item_ids(
+            user,
+            enabled_types,
+            active_tv_items,
+        )
         if hidden_item_ids:
             queryset = queryset.exclude(item_id__in=hidden_item_ids)
 
         return self.sort_with_sentinel_last(queryset)
 
-    def hidden_duplicate_item_ids(self, user, enabled_types):
+    def hidden_duplicate_item_ids(self, user, enabled_types, active_tv_items=None):
         """Return `Item` ids to exclude because a preferred duplicate exists.
 
         Combines the TMDB/TVDB cross-provider dedup (#639) with the
@@ -103,18 +124,32 @@ class EventManager(models.Manager):
         return self._cross_provider_hidden_season_item_ids(
             user,
             enabled_types,
+            active_tv_items,
         ) | self._cross_bucket_hidden_anime_item_ids(
             user,
             enabled_types,
         )
 
-    def _active_tv_show_media_ids(self, user):
-        """Return media_ids of the user's actively-tracked TV shows, deduped across providers."""
-        items = list(
+    def _active_tv_items(self, user):
+        """Return the user's actively-tracked TV `Item`s with only the dedupe fields.
+
+        The calendar needs this list twice (which shows to include, which
+        duplicates to hide). Loading every column, including the large JSON
+        ones, for thousands of shows was most of the page's time.
+        """
+        return list(
             Item.objects.filter(
                 tv__user=user,
                 media_type=MediaTypes.TV.value,
-            ).exclude(tv__status__in=INACTIVE_TRACKING_STATUSES),
+            )
+            .exclude(tv__status__in=INACTIVE_TRACKING_STATUSES)
+            .only(*_DEDUPE_ITEM_FIELDS),
+        )
+
+    def _active_tv_show_media_ids(self, user, active_tv_items=None):
+        """Return media_ids of the user's actively-tracked TV shows, deduped across providers."""
+        items = (
+            self._active_tv_items(user) if active_tv_items is None else active_tv_items
         )
         if not items:
             return []
@@ -127,7 +162,12 @@ class EventManager(models.Manager):
         deduped = dedupe_cross_provider_items(items, preferred_source)
         return [item.media_id for item in deduped]
 
-    def _cross_provider_hidden_season_item_ids(self, user, enabled_types):
+    def _cross_provider_hidden_season_item_ids(
+        self,
+        user,
+        enabled_types,
+        active_tv_items=None,
+    ):
         """Return Season `Item` ids to hide because a preferred counterpart exists.
 
         A user can legitimately track the same show under both a TMDB and a
@@ -144,11 +184,8 @@ class EventManager(models.Manager):
         ):
             return set()
 
-        all_active_tv_items = list(
-            Item.objects.filter(
-                tv__user=user,
-                media_type=MediaTypes.TV.value,
-            ).exclude(tv__status__in=INACTIVE_TRACKING_STATUSES),
+        all_active_tv_items = (
+            self._active_tv_items(user) if active_tv_items is None else active_tv_items
         )
         if not all_active_tv_items:
             return set()
@@ -186,7 +223,7 @@ class EventManager(models.Manager):
             Item.objects.filter(
                 media_type=MediaTypes.SEASON.value,
                 media_id__in=kept_tv_media_ids,
-            ),
+            ).only(*_DEDUPE_ITEM_FIELDS),
         )
         if season_items:
             deduped = dedupe_cross_provider_items(season_items, preferred_source)
@@ -264,7 +301,7 @@ class EventManager(models.Manager):
 
         return hidden_ids
 
-    def _build_tv_query(self, user, enabled_types):
+    def _build_tv_query(self, user, enabled_types, active_tv_items=None):
         """Build query for TV shows based on TV status and season statuses."""
         if not (
             MediaTypes.TV.value in enabled_types
@@ -273,7 +310,7 @@ class EventManager(models.Manager):
             return Q()
 
         # Get active TV shows
-        active_tv_shows = self._active_tv_show_media_ids(user)
+        active_tv_shows = self._active_tv_show_media_ids(user, active_tv_items)
 
         if not active_tv_shows:
             return Q()
@@ -336,6 +373,14 @@ class Event(models.Model):
     content_number = models.IntegerField(null=True)
     datetime = models.DateTimeField()
     notification_sent = models.BooleanField(default=False)
+    # notification_sent is global, so it cannot say who was actually reached.
+    # Users whose real-time alert failed are recorded here so the daily digest
+    # can still list the event for them.
+    alert_failed_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name="+",
+    )
     objects = EventManager()
 
     class Meta:

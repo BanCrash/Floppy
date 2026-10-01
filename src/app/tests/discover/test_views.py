@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import ANY, call, patch
 
 from django.contrib.auth import get_user_model
@@ -23,6 +24,7 @@ from app.models import (
     Sources,
     Status,
 )
+from app.providers import services
 from app.services.tracking_hydration import HydratedItemResult
 from users.models import DateFormatChoices
 
@@ -805,6 +807,69 @@ class DiscoverViewTests(TestCase):
         )
         self.assertFalse(Podcast.objects.filter(user=self.user, item=item).exists())
         mock_update_undo_snapshot.assert_called_once()
+
+    def _planning_provider_failure(self, status_code):
+        error = Exception("provider said no")
+        error.response = SimpleNamespace(status_code=status_code, headers={})
+        with patch(
+            "app.views.ensure_item_metadata",
+            side_effect=services.ProviderAPIError(Sources.POCKETCASTS.value, error),
+        ):
+            return self.client.post(
+                reverse("discover_action"),
+                {
+                    "action": "planning",
+                    "candidate_media_type": MediaTypes.PODCAST.value,
+                    "source": Sources.POCKETCASTS.value,
+                    "media_id": "gone-show-uuid",
+                    "active_media_type": MediaTypes.PODCAST.value,
+                    "show_more": "0",
+                    "row_key": "top_picks_for_you",
+                    "title": "Gone Show",
+                },
+                HTTP_HX_REQUEST="true",
+            )
+
+    def test_discover_action_planning_provider_404_is_a_clean_failure(self):
+        response = self._planning_provider_failure(404)
+
+        self.assertEqual(response.status_code, 404)
+        detail = json.loads(response["HX-Trigger"])["discoverActionComplete"]
+        self.assertIn("Gone Show", detail["message"])
+        self.assertIn("no longer has it", detail["message"])
+        self.assertNotIn("undo_token", detail)
+        self.assertFalse(PodcastShowTracker.objects.filter(user=self.user).exists())
+
+    def test_discover_action_planning_unconfigured_provider_keeps_setup_guidance(self):
+        with patch(
+            "app.views.ensure_item_metadata",
+            side_effect=services.ProviderNotConfiguredError(
+                Sources.IGDB.value,
+                "IGDB credentials are not set.",
+            ),
+        ):
+            response = self.client.post(
+                reverse("discover_action"),
+                {
+                    "action": "planning",
+                    "candidate_media_type": MediaTypes.GAME.value,
+                    "source": Sources.IGDB.value,
+                    "media_id": "1",
+                    "active_media_type": MediaTypes.GAME.value,
+                    "title": "A Game",
+                },
+                HTTP_HX_REQUEST="true",
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("HX-Trigger", response)
+
+    def test_discover_action_planning_provider_outage_asks_to_retry(self):
+        response = self._planning_provider_failure(503)
+
+        self.assertEqual(response.status_code, 502)
+        detail = json.loads(response["HX-Trigger"])["discoverActionComplete"]
+        self.assertIn("Please try again", detail["message"])
 
     @patch("app.views.discover_tab_cache.invalidate_for_feedback_change")
     @patch("app.views.ensure_item_metadata")

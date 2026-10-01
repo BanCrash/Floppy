@@ -232,18 +232,22 @@ def _random_sql(ctx: TypeContext, seed: int):
 MEASURED_SORT_KEYS = frozenset({"runtime", "time_watched", "time_to_beat"})
 
 
-def _next_episode_air_date(candidate):
+def _next_episode_air_date_values(user, candidates, direction):
+    """Return each candidate's next-episode air date, reading events per batch."""
     from app.models import BasicMedia
 
-    if candidate.media is None:
-        return None
-    return BasicMedia.objects._next_episode_air_date_value(candidate.media)
+    medias = [c.media for c in candidates if c.media is not None]
+    BasicMedia.objects.attach_show_season_events(medias)
+    return [
+        None
+        if candidate.media is None
+        else BasicMedia.objects._next_episode_air_date_value(candidate.media)
+        for candidate in candidates
+    ]
 
 
 def _media_list_value(sort_key: str):
     """Reuse the media list's Python value for keys that live in Python."""
-    if sort_key == "next_episode_air_date":
-        return _next_episode_air_date
 
     def value(candidate):
         from app.media_list_filters import MediaListEntry, _sort_value
@@ -287,7 +291,11 @@ SORTS: tuple[SortDef, ...] = (
     SortDef(("author",), needs=_MEDIA),
     SortDef(("updated", "progressed_at"), needs=_MEDIA),
     SortDef(("time_left",), needs=frozenset({NEEDS_MEDIA, NEEDS_MAX_PROGRESS})),
-    SortDef(("next_episode_air_date",), needs=_MEDIA),
+    SortDef(
+        ("next_episode_air_date",),
+        needs=_MEDIA,
+        batch_values=_next_episode_air_date_values,
+    ),
 )
 
 SORTS_BY_KEY = {key: definition for definition in SORTS for key in definition.keys}

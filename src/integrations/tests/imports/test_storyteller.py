@@ -1,11 +1,12 @@
 """Tests for the Storyteller importer."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import requests
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from app.models import Book, Item, MediaTypes, Sources, Status
 from app.providers import services
@@ -414,6 +415,30 @@ class StorytellerImporterTests(TestCase):
 
         self.assertEqual(media.start_date, first_start)
         self.assertEqual(media.progress, 60)
+
+    @patch("integrations.imports.storyteller.StorytellerClient.get_position")
+    @patch("integrations.imports.storyteller.StorytellerClient.get_books")
+    def test_sync_keeps_a_status_the_user_set(self, mock_books, mock_position):
+        """Reading from before a pause does not undo it; reading after does (#1316)."""
+        mock_books.return_value = [{"uuid": "abc", "title": "The Hobbit"}]
+        mock_position.return_value = _position(0.3)
+        StorytellerImporter(self.user).import_data()
+        book = Book.objects.get(user=self.user)
+        book.status = Status.PAUSED.value
+        book.save()
+
+        earlier = int((timezone.now() - timedelta(minutes=5)).timestamp() * 1000)
+        mock_position.return_value = _position(0.6, timestamp=earlier)
+        StorytellerImporter(self.user).import_data()
+        book.refresh_from_db()
+        self.assertEqual(book.status, Status.PAUSED.value)
+        self.assertEqual(book.progress, 60)
+
+        later = int((timezone.now() + timedelta(minutes=5)).timestamp() * 1000)
+        mock_position.return_value = _position(0.7, timestamp=later)
+        StorytellerImporter(self.user).import_data()
+        book.refresh_from_db()
+        self.assertEqual(book.status, Status.IN_PROGRESS.value)
 
     def test_storyteller_source_book_resolves_from_local_item(self):
         """get_media_metadata for a storyteller item reads local data, no network."""

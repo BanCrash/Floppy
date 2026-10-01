@@ -1,13 +1,13 @@
 """Tests for CooperativeRun and its adoption in backfill tasks."""
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from app.interactive_requests import INTERACTIVE_REQUEST_TTL_SECONDS
 from app.models import Item, MediaTypes, Sources
-from app.task_cooperation import CooperativeRun
+from app.task_cooperation import CooperativeRun, higher_priority_task_waiting
 
 
 def _fake_items(count):
@@ -166,3 +166,40 @@ class TraktPopularityDeferralTests(TestCase):
             kwargs,
             {"countdown": INTERACTIVE_REQUEST_TTL_SECONDS, "force": True},
         )
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=False)
+@patch("app.task_cooperation._BROKER_LOOK_FAILED_AT", 0.0)
+class HigherPriorityTaskWaitingTests(SimpleTestCase):
+    """A long task can see a webhook queued behind it without owning a broker."""
+
+    def channel(self, queued):
+        client = SimpleNamespace(llen=lambda key: queued if key == "interactive" else 0)
+        channel = SimpleNamespace(client=client, _q_for_pri=lambda queue, pri: queue)
+        connection = MagicMock()
+        connection.default_channel = channel
+        pool = MagicMock()
+        pool.acquire.return_value.__enter__.return_value = connection
+        return SimpleNamespace(pool=pool)
+
+    def test_reports_a_queued_task(self):
+        with patch("config.celery.app", self.channel(queued=2)):
+            self.assertTrue(higher_priority_task_waiting("interactive"))
+
+    def test_reports_an_empty_queue(self):
+        with patch("config.celery.app", self.channel(queued=0)):
+            self.assertFalse(higher_priority_task_waiting("interactive"))
+
+    def test_a_broker_error_never_stops_the_caller_and_is_not_retried_at_once(self):
+        broken = SimpleNamespace(pool=MagicMock())
+        broken.pool.acquire.side_effect = ConnectionError("down")
+        with patch("config.celery.app", broken):
+            self.assertFalse(higher_priority_task_waiting("interactive"))
+            self.assertFalse(higher_priority_task_waiting("interactive"))
+        self.assertEqual(broken.pool.acquire.call_count, 1)
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_eager_runs_never_touch_a_broker(self):
+        with patch("config.celery.app") as app:
+            self.assertFalse(higher_priority_task_waiting("interactive"))
+        app.pool.acquire.assert_not_called()

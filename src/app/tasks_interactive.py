@@ -23,6 +23,27 @@ def statistics_sync_task(user_id: int):
     statistics_sync.sync_task_body(user_id)
 
 
+@shared_task(name="Refresh statistics talent fragment", ignore_result=True)
+def refresh_statistics_talent_fragment_task(
+    user_id: int,
+    range_name=None,
+    start_date_str=None,
+    end_date_str=None,
+    compare_mode_param=None,
+):
+    """Rebuild a Statistics talent section the viewer is already seeing a copy of."""
+    from django.contrib.auth import get_user_model
+
+    from app.statistics_views import build_talent_fragment
+
+    user = get_user_model().objects.filter(pk=user_id).first()
+    if user is None:
+        return
+    build_talent_fragment(
+        user, range_name, start_date_str, end_date_str, compare_mode_param
+    )
+
+
 @shared_task(name="Reconcile statistics sync", ignore_result=True)
 def reconcile_statistics_sync_task():
     """Queue a sync for every user whose Statistics trail their changes.

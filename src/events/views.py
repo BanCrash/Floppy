@@ -3,10 +3,10 @@ import logging
 from collections import defaultdict
 from datetime import UTC, date, timedelta
 
-import icalendar
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
+from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 from django.http import HttpResponse
@@ -21,6 +21,40 @@ from events.models import INACTIVE_TRACKING_STATUSES, Event
 from users.models import User, WeekStartDayChoices
 
 logger = logging.getLogger(__name__)
+
+CALENDAR_FEED_CACHE_SECONDS = 15 * 60
+ICS_DATETIME_FORMAT = "%Y%m%dT%H%M%SZ"
+ICS_LINE_OCTETS = 75
+
+
+def _escape_ics_text(value):
+    """Escape a TEXT value (RFC 5545 section 3.3.11)."""
+    return (
+        value.replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\r\n", "\\n")
+        .replace("\n", "\\n")
+        .replace("\r", "\\n")
+    )
+
+
+def _fold_ics_line(line):
+    """Fold a content line at 75 octets without splitting a UTF-8 character."""
+    if len(line) * 4 <= ICS_LINE_OCTETS:
+        return line
+    folded = []
+    current = ""
+    limit = ICS_LINE_OCTETS
+    for char in line:
+        if len((current + char).encode()) > limit:
+            folded.append(current)
+            current = char
+            limit = ICS_LINE_OCTETS - 1  # continuation lines start with a space
+        else:
+            current += char
+    folded.append(current)
+    return "\r\n ".join(folded)
 
 
 @require_GET
@@ -234,6 +268,15 @@ def download_calendar(request, token: str):
 
     now = timezone.now()
 
+    # Calendar apps poll this feed on their own schedule, and each build walks
+    # the whole event window, so a rendered feed is reused briefly per filter.
+    feed_cache_key = (
+        f"calendar_feed:{user.id}:{now.date().isoformat()}:{request.GET.urlencode()}"
+    )
+    cached_feed = cache.get(feed_cache_key)
+    if cached_feed is not None:
+        return _calendar_feed_response(cached_feed)
+
     # Define default start and end date (from past 30 days to incoming 90 days)
     start_date = now.date() - timedelta(days=30)
     end_date = now.date() + timedelta(days=90)
@@ -259,7 +302,9 @@ def download_calendar(request, token: str):
     selected_statuses = request.GET.getlist("status")
     if selected_statuses:
         valid_statuses = {
-            status for status in selected_statuses if status in {c.value for c in Status}
+            status
+            for status in selected_statuses
+            if status in {c.value for c in Status}
         }
 
         if valid_statuses:
@@ -273,27 +318,48 @@ def download_calendar(request, token: str):
                 )
             releases = releases.filter(status_query)
 
-    # Create iCalendar object
-    cal = icalendar.Calendar()
-    cal.add("prodid", "-//Floppy//EN")
-    cal.add("version", "2.0")
+    # An entry only needs its time and its title, and reading every Item
+    # column (a dozen of them JSON) for each row was most of the query time.
+    releases = releases.only(
+        "datetime",
+        "content_number",
+        "item__title",
+        "item__media_type",
+        "item__season_number",
+        "item__episode_number",
+    )
 
+    # Written out directly: building an icalendar.Event per release spent most
+    # of the request's time (about 0.3 ms each, on feeds of thousands).
+    dtstamp = now.astimezone(UTC).strftime(ICS_DATETIME_FORMAT)
+    lines = ["BEGIN:VCALENDAR", "PRODID:-//Floppy//EN", "VERSION:2.0"]
     for release in releases:
-        cal_event = icalendar.Event()
-        cal_event.add("uid", release.id)
-        cal_event.add("summary", str(release))
         if release.is_sentinel_time:
             start_date = release.datetime.date()
-            cal_event.add("dtstart", start_date)
-            cal_event.add("dtend", start_date + timedelta(days=1))
+            dtstart = f"DTSTART;VALUE=DATE:{start_date:%Y%m%d}"
+            dtend = f"DTEND;VALUE=DATE:{start_date + timedelta(days=1):%Y%m%d}"
         else:
             dt_tz_aware = release.datetime.replace(tzinfo=UTC)
-            cal_event.add("dtstart", dt_tz_aware)
-            cal_event.add("dtend", dt_tz_aware)
-        cal_event.add("dtstamp", now)
-        cal.add_component(cal_event)
+            dtstart = f"DTSTART:{dt_tz_aware.strftime(ICS_DATETIME_FORMAT)}"
+            dtend = f"DTEND:{dt_tz_aware.strftime(ICS_DATETIME_FORMAT)}"
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:{release.id}",
+            _fold_ics_line(f"SUMMARY:{_escape_ics_text(str(release))}"),
+            dtstart,
+            dtend,
+            f"DTSTAMP:{dtstamp}",
+            "END:VEVENT",
+        ]
+    lines.append("END:VCALENDAR")
 
-    # Return the iCal file
-    response = HttpResponse(cal.to_ical(), content_type="text/calendar")
+    feed = ("\r\n".join(lines) + "\r\n").encode()
+    cache.set(feed_cache_key, feed, CALENDAR_FEED_CACHE_SECONDS)
+    return _calendar_feed_response(feed)
+
+
+def _calendar_feed_response(feed):
+    """Return the iCal file."""
+    response = HttpResponse(feed, content_type="text/calendar")
     response["Content-Disposition"] = 'attachment; filename="calendar.ics"'
     return response

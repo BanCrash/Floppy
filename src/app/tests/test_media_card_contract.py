@@ -10,10 +10,22 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.template import engines
+from django.template.loader import render_to_string
 from django.test import RequestFactory, TestCase
+from django.urls import reverse
 
 from app.card_surfaces import SURFACES
-from app.models import Item, MediaTypes, Movie, Sources, Status
+from app.models import (
+    Album,
+    AlbumTracker,
+    Artist,
+    ArtistTracker,
+    Item,
+    MediaTypes,
+    Movie,
+    Sources,
+    Status,
+)
 
 TEMPLATES_DIR = Path(settings.BASE_DIR) / "templates"
 CARD_TEMPLATE = "app/components/media_card.html"
@@ -65,6 +77,51 @@ class MediaCardSurfaceContractTest(TestCase):
         for surface in SURFACES:
             with self.subTest(surface=surface):
                 self.assertIn(">8.5</span>", self.render_card(surface))
+
+    def test_rating_is_a_button_that_rates_the_tracked_item(self):
+        """A tracked card's rating opens the shared picker, posting to this item."""
+        rate_url = reverse(
+            "update_media_score", args=[MediaTypes.MOVIE.value, self.movie.id]
+        )
+        for surface, flags in SURFACES.items():
+            with self.subTest(surface=surface):
+                content = self.render_card(surface)
+                self.assertEqual(
+                    "media-card-rate-button" in content,
+                    not flags.is_recommend_mode,
+                )
+                self.assertEqual(
+                    f'hx-post="{rate_url}"' in content, not flags.is_recommend_mode
+                )
+
+    def test_rating_is_read_only_where_the_viewer_cannot_rate(self):
+        """Public pages and untracked items keep the plain rating, with no button."""
+        self.assertNotIn(
+            "media-card-rate-button",
+            self.render_card("related", public_view=True),
+        )
+        content = self.render(
+            "{% media_card 'library' item=item %}",
+            item=self.item,
+        )
+        self.assertNotIn("media-card-rate-button", content)
+
+    def test_unrated_tracked_card_offers_the_empty_star(self):
+        """A tracked item with no rating still gets the button, starting empty."""
+        self.movie.score = None
+        self.movie.save()
+        content = self.render_card("library")
+        self.assertIn("media-card-rate-button", content)
+        self.assertIn("rating: null", content)
+
+    def test_picker_has_one_star_per_point_of_the_users_scale(self):
+        """The picker shows 10 stars on the 10-point scale and 5 on the 5-point scale."""
+        for scale, stars in (("10", 10), ("5", 5)):
+            with self.subTest(scale=scale):
+                self.user.rating_scale = scale
+                self.user.save()
+                content = self.render_card("library")
+                self.assertEqual(content.count('"toggle": true'), stars)
 
     def test_status_chip_follows_the_surface_table(self):
         """The status chip shows exactly where the surface declares it."""
@@ -155,3 +212,50 @@ class MediaCardTemplateUsageTest(TestCase):
         self.assertTrue(used)
         undeclared = sorted(pair for pair in used if pair[1] not in SURFACES)
         self.assertEqual(undeclared, [])
+
+
+class MusicGridRatingTest(TestCase):
+    """The music library's artist and album tiles rate through the same picker."""
+
+    def setUp(self):
+        """Create an artist and an album the user tracks."""
+        self.user = get_user_model().objects.create_user(
+            username="music-grid",
+            password="12345",
+        )
+        self.artist = Artist.objects.create(name="Grid Artist")
+        self.album = Album.objects.create(title="Grid Album", artist=self.artist)
+
+    def render_grid(self, template, tracker):
+        """Render a music grid partial holding one tracker."""
+        request = RequestFactory().get("/")
+        request.user = self.user
+        return render_to_string(
+            template,
+            {"media_list": [tracker], "user": self.user, "media_type": "music"},
+            request,
+        )
+
+    def test_artist_tile_rates_the_artist(self):
+        """An unrated artist tile offers the empty star and posts to the artist."""
+        tracker = ArtistTracker.objects.create(user=self.user, artist=self.artist)
+        content = self.render_grid("app/components/artist_grid_items.html", tracker)
+        self.assertIn("media-card-rate-button", content)
+        self.assertIn(
+            f'hx-post="{reverse("update_artist_score", args=[self.artist.id])}"',
+            content,
+        )
+
+    def test_album_tile_rates_the_album(self):
+        """A rated album tile shows its score and posts to the album."""
+        tracker = AlbumTracker.objects.create(
+            user=self.user,
+            album=self.album,
+            score=6,
+        )
+        content = self.render_grid("app/components/album_list_grid_items.html", tracker)
+        self.assertIn("rating: 6", content)
+        self.assertIn(
+            f'hx-post="{reverse("update_album_score", args=[self.album.id])}"',
+            content,
+        )

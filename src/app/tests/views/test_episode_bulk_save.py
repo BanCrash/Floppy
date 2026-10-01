@@ -770,6 +770,7 @@ class EpisodeBulkSaveViewTests(TestCase):
             related_season=season,
             end_date=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
             score=8.5,
+            scored_at=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
         )
 
         response = self._post_bulk(
@@ -799,6 +800,8 @@ class EpisodeBulkSaveViewTests(TestCase):
             end_date__gt=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
         )
         self.assertEqual(rewatch.score, 8.5)
+        # The rating keeps its original time, not the replay's (#1280).
+        self.assertEqual(rewatch.scored_at, datetime(2024, 1, 1, 0, 0, tzinfo=UTC))
         new_unrated_play = Episode.objects.get(
             related_season=season,
             item=unrated_episode_item,

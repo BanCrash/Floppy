@@ -186,6 +186,34 @@ class ImportDataViewTests(TestCase):
         self.assertContains(response, "Page 2 of 6")
         self.assertContains(response, "Reimport full history")
 
+    def test_file_upload_forms_disclose_one_time_import_and_ignore_frequency(self):
+        """Uploads run once whatever Import Frequency says: never disabled, badged One-time."""
+        html = self.client.get(reverse("import_data")).content.decode()
+        badge = ">One-time</span>"
+        upload_routes = (
+            "import_trakt_export_file",
+            "import_yamtrack",
+            "import_clz",
+            "import_hltb",
+            "import_grouvee",
+            "import_imdb",
+            "import_goodreads",
+            "import_hardcover",
+            "import_storygraph",
+            "import_wetrakr",
+            "import_tvtime",
+        )
+        for route in upload_routes:
+            with self.subTest(route=route):
+                action = f'action="{reverse(route)}"'
+                self.assertIn(action, html)
+                start = html.index(action)
+                form_start = html.rindex("<form", 0, start)
+                form = html[form_start : html.index("</form>", start)]
+                modal_start = html.rindex('x-show="activeModal ===', 0, form_start)
+                self.assertIn(badge, html[modal_start:form_start])
+                self.assertNotIn("importFrequency", form.replace('x-model="importFrequency"', ""))
+
     @override_settings(
         TRAKT_API="test-client-id", TRAKT_API_SECRET="test-client-secret"
     )

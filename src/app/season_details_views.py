@@ -258,15 +258,16 @@ def season_details(
         )
         season_metadata_missing = True
     else:
-        tv_with_seasons_metadata = services.get_media_metadata(
-            "tv_with_seasons",
-            media_id,
-            source,
-            [season_number],
-            language=metadata_resolution.metadata_language_default(
-                request.user, show_item
-            ),
-        )
+        with services.interactive_request_scope():
+            tv_with_seasons_metadata = services.get_media_metadata(
+                "tv_with_seasons",
+                media_id,
+                source,
+                [season_number],
+                language=metadata_resolution.metadata_language_default(
+                    request.user, show_item
+                ),
+            )
         season_metadata = tv_with_seasons_metadata.get(season_key)
         season_metadata_missing = season_metadata is None
         if season_metadata_missing:

@@ -349,6 +349,7 @@ class CompleteMediaSerializer(serializers.Serializer):
                         "item": item,
                         "created_at": None,
                         "score": None,
+            "scored_at": None,
                         "status": None,
                         "progress": None,
                         "progressed_at": None,
@@ -571,6 +572,7 @@ class EpisodeSerializer(serializers.ModelSerializer):
                 "score": float(instance.score)
                 if getattr(instance, "score", None) is not None
                 else None,
+                "scored_at": getattr(instance, "scored_at", None),
                 "status": get_media_status(instance.status),
                 "progress": 1 if instance.end_date else 0,
                 "progress_scope": "entry",
@@ -666,6 +668,7 @@ class EpisodeSerializer(serializers.ModelSerializer):
             if hasattr(episode, "created_at")
             else None,
             "score": None,
+            "scored_at": None,
             "status": 3 if tracked else None,
             "progress": 1 if tracked else None,
             "progress_scope": "entry" if tracked else None,
@@ -762,6 +765,7 @@ class HistorySerializer(serializers.Serializer):
                 "score": float(instance.score)
                 if getattr(instance, "score", None) is not None
                 else None,
+                "scored_at": getattr(instance, "scored_at", None),
                 "progress": 1 if instance.end_date else 0,
                 "progressed_at": instance.end_date,
                 "status": get_media_status(getattr(instance, "status", None)),
@@ -783,6 +787,7 @@ class HistorySerializer(serializers.Serializer):
             "score": float(instance.score)
             if hasattr(instance, "score") and instance.score is not None
             else None,
+            "scored_at": getattr(instance, "scored_at", None),
             "progress": instance.progress if hasattr(instance, "progress") else None,
             "progressed_at": instance.progressed_at
             if hasattr(instance, "progressed_at") and instance.progressed_at is not None
@@ -946,6 +951,7 @@ class MediaSerializer(serializers.ModelSerializer):
             "score": float(instance.score)
             if hasattr(instance, "score") and instance.score is not None
             else None,
+            "scored_at": getattr(instance, "scored_at", None),
             "status": StatusField().to_representation(instance),
             "progress": instance.progress if hasattr(instance, "progress") else None,
             "episodes_left": episodes_left,
@@ -1020,6 +1026,7 @@ class UntrackedMediaSerializer(serializers.Serializer):
             "tracked": False,
             "created_at": None,
             "score": None,
+            "scored_at": None,
             "status": None,
             "progress": None,
             "episodes_left": None,

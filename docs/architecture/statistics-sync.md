@@ -69,6 +69,11 @@ request a full sweep (imports, provider migrations, preference changes).
 follow-up imports and backfills (3+). That matters on the minimal tier, where
 one worker consumes every queue.
 
+When an interactive browser request is active, the background task yields before
+claiming its database lease or between day slices and ranges. The reconciler
+finds deferred work after browsing quiets down. Snapshot publication uses one
+database upsert per range to avoid a read-then-write lock upgrade.
+
 1. Claim the database lease (a sync already running → return).
 2. Read the generation and the dirty rows (with tokens).
 3. Build days, newest first, in prefetched slices of
@@ -97,6 +102,21 @@ restarting in a loop.
 **It is bounded.** After `STATISTICS_SYNC_TASK_BUDGET_SECONDS` (10 s) it stops
 at the next slice or range, queues its own continuation and returns, so the
 single-slot interactive worker is never held for a whole All Time rebuild.
+
+A range aggregate cannot stop partway, so the budget is enforced by choosing
+what to start: each finished range records its cost (`stats:sync:range_seconds`),
+and a task starts a further range only if it is expected to fit in what is left.
+The first range a task builds always runs, so a range dearer than a whole budget
+still gets a task of its own. At each slice and range boundary the sync also
+looks at the broker and yields when a webhook-priority (0) task is queued: the
+worker cannot be preempted, so this is the only way a scrobble waits for one
+slice instead of one task. The worst case is therefore the budget plus one range.
+A sync more than 5 s over budget logs `stats_sync_overrun` naming its slowest
+range; `stats_sync` carries `days` and `days_ms` for the day-building phase.
+
+The highlights ("on this day") read the History day cache and keep any day they
+had to build, so a History cache that keeps losing days (see the coverage repair
+reasons in the log) also makes every Statistics range slower.
 
 ## The reconciler — why a lost message cannot strand a page
 

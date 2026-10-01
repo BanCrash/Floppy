@@ -376,7 +376,6 @@ def _render_standard_track_modal(
                         ).get("number_of_pages")
                         if number_of_pages:
                             media.item.number_of_pages = number_of_pages
-                            media.item.save(update_fields=["number_of_pages"])
                             max_progress = number_of_pages
                     except Exception:  # noqa: S110  # deliberate best-effort; failure is non-fatal here
                         pass
@@ -442,7 +441,12 @@ def _render_standard_track_modal(
                 .filter(status=Status.IN_PROGRESS.value)
                 .exists()
             )
-            if existing_in_progress:
+            # An episode form logs a watch, so it keeps the Completed default.
+            if media_type != MediaTypes.EPISODE.value:
+                initial_data["status"] = helpers.default_status_for_new_entry(
+                    has_in_progress_entry=existing_in_progress,
+                )
+            elif existing_in_progress:
                 initial_data["status"] = Status.IN_PROGRESS.value
 
     title_subtitle = ""
@@ -595,6 +599,7 @@ def _render_standard_track_modal(
             media_id=media_id,
             source=source,
             base_metadata=base_metadata,
+            persist_links=False,
         )
         display_provider = metadata_resolution_result.display_provider
         identity_provider = metadata_resolution_result.identity_provider
@@ -817,6 +822,11 @@ def _render_standard_track_modal(
         "metadata_tab_available": metadata_tab_available,
         "metadata_item": metadata_item,
         "match_item": metadata_item,
+        "tv_provider_switch_target": (
+            library_migration.tv_provider_switch_target(request.user, metadata_item)
+            if metadata_item is not None
+            else None
+        ),
         "current_instance": media,
         "general_hidden_fields": hidden_fields,
         "general_fields": general_fields,
@@ -1102,18 +1112,18 @@ def track_modal(
                 ).order_by("-end_date")
             )
 
-            # Get or create Item for this episode
-            item, _ = Item.objects.get_or_create(
+            # Render without creating a tracking Item during this GET.
+            item = Item.objects.filter(
                 media_id=episode.episode_uuid,
                 source=source,
                 media_type=media_type,
-                defaults={
-                    "title": episode.title,
-                    "image": show.image or settings.IMG_NONE,
-                    "runtime_minutes": (episode.duration // 60)
-                    if episode.duration
-                    else None,
-                },
+            ).first() or Item(
+                media_id=episode.episode_uuid,
+                source=source,
+                media_type=media_type,
+                title=episode.title,
+                image=show.image or settings.IMG_NONE,
+                runtime_minutes=(episode.duration // 60) if episode.duration else None,
             )
 
             # Create adapter objects to match template expectations

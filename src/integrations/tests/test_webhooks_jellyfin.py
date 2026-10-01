@@ -222,12 +222,8 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(movie.status, Status.IN_PROGRESS.value)
         self.assertEqual(movie.progress, 1)
 
-    @patch("app.models.tv.TV._start_next_available_season")
-    def test_user_data_saved_episode_rating_updates_parent_tv(
-        self,
-        _mock_start_next_available_season,
-    ):
-        """Episode and series ratings are stored on the parent TV tracker."""
+    def _create_rated_show(self, *, with_episode_play):
+        """Track Friends S1 (optionally with a play of E1) and rate the show 6."""
         item = Item.objects.create(
             media_id="1668",
             source=Sources.TMDB.value,
@@ -244,23 +240,108 @@ class JellyfinWebhookTests(TestCase):
             item=item,
             user=self.user,
             status=Status.IN_PROGRESS.value,
+            score=6,
         )
+        if not with_episode_play:
+            return tv, None
+        season = Season.objects.create(
+            item=Item.objects.create(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title="Friends",
+                season_number=1,
+            ),
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        with patch(
+            "app.providers.services.get_media_metadata",
+            return_value={"season/1": {"episodes": [{}, {}]}},
+        ):
+            episode = Episode.objects.create(
+                item=Item.objects.create(
+                    media_id="1668",
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.EPISODE.value,
+                    title="The One Where Monica Gets a Roommate",
+                    season_number=1,
+                    episode_number=1,
+                ),
+                related_season=season,
+                end_date=datetime(2026, 9, 1, 20, 0, tzinfo=UTC),
+            )
+        return tv, episode
+
+    def _episode_rating_payload(self, rating):
+        return {
+            "Event": "UserDataSaved",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "SeriesName": "Friends",
+                "ProviderIds": {"Tvdb": "76669"},
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "UserData": {"Rating": rating},
+            },
+        }
+
+    @patch("app.models.tv.TV._start_next_available_season")
+    def test_user_data_saved_episode_rating_rates_the_episode(
+        self,
+        _mock_start_next_available_season,
+    ):
+        """An episode rating lands on the episode and leaves the show's score."""
+        tv, episode = self._create_rated_show(with_episode_play=True)
 
         JellyfinWebhookProcessor().process_payload(
-            {
-                "Event": "UserDataSaved",
-                "Item": {
-                    "Type": "Episode",
-                    "Name": "The One Where Monica Gets a Roommate",
-                    "SeriesName": "Friends",
-                    "ProviderIds": {"Tvdb": "76669"},
-                    "ParentIndexNumber": 1,
-                    "IndexNumber": 1,
-                    "UserData": {"Rating": 8.0},
-                },
-            },
+            self._episode_rating_payload(8.0),
             self.user,
         )
+
+        episode.refresh_from_db()
+        tv.refresh_from_db()
+        self.assertEqual(episode.score, 8)
+        self.assertEqual(tv.score, 6)
+        self.assertEqual(tv.status, Status.IN_PROGRESS.value)
+
+        # A second episode rating replaces the first instead of the show's.
+        JellyfinWebhookProcessor().process_payload(
+            self._episode_rating_payload(7.5),
+            self.user,
+        )
+        episode.refresh_from_db()
+        tv.refresh_from_db()
+        self.assertEqual(episode.score, 7.5)
+        self.assertEqual(tv.score, 6)
+
+    @patch("app.models.tv.TV._start_next_available_season")
+    def test_user_data_saved_rating_for_unwatched_episode_is_ignored(
+        self,
+        _mock_start_next_available_season,
+    ):
+        """Rating an episode with no play neither creates one nor rates the show."""
+        tv, _ = self._create_rated_show(with_episode_play=False)
+
+        JellyfinWebhookProcessor().process_payload(
+            self._episode_rating_payload(8.0),
+            self.user,
+        )
+
+        tv.refresh_from_db()
+        self.assertEqual(tv.score, 6)
+        self.assertFalse(Episode.objects.exists())
+
+    @patch("app.models.tv.TV._start_next_available_season")
+    def test_user_data_saved_series_rating_rates_the_show(
+        self,
+        _mock_start_next_available_season,
+    ):
+        """A series rating is still stored on the TV tracker."""
+        tv, _ = self._create_rated_show(with_episode_play=False)
+
         JellyfinWebhookProcessor().process_payload(
             {
                 "Event": "UserDataSaved",
@@ -637,9 +718,10 @@ class JellyfinWebhookTests(TestCase):
         ``_handle_anime``, which refuses it. The refusal must not fall through
         to a plain TV row, or the show accrues progress in both libraries.
         """
+        # Jellyfin sends the episode's TVDB id, which TMDB resolves to its show.
         mock_find.return_value = {
-            "tv_episode_results": [],
-            "tv_results": [{"id": 12345}],
+            "tv_episode_results": [{"show_id": 12345}],
+            "tv_results": [],
         }
         mock_tv_with_seasons.return_value = {
             "media_id": "12345",
@@ -1123,7 +1205,7 @@ class JellyfinWebhookTests(TestCase):
             # present) and both resolve to the wrong show here, exactly as
             # the real bug did. Only the missing-season recovery's
             # alt-ids-only call (no kwargs) resolves to the real show.
-            if kwargs:
+            if kwargs.get("series_title"):
                 return ("42917", None, None)
             return ("3968", None, None)
 
@@ -2574,6 +2656,42 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(state["episode_number"], 1)
         self.assertEqual(state["duration_seconds"], 2666)
         self.assertEqual(state["view_offset_seconds"], 1447)
+
+    @patch("app.providers.tmdb.find")
+    def test_play_event_decodes_html_entities_in_titles(self, mock_find):
+        """The template HTML-escapes titles (#1387); live playback shows them decoded."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {"show_id": 1668, "season_number": 1, "episode_number": 1},
+            ],
+            "tv_results": [],
+        }
+        payload = {
+            "Event": "Play",
+            "Item": {
+                "Type": "Episode",
+                "Name": "Caf&#233; de Paris &amp; &quot;Co&quot;",
+                "Id": "jf-episode-1",
+                "SeriesName": "Caf&#233; Society",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "RunTimeTicks": 26660000000,
+                "ProviderIds": {"Tvdb": "303821", "Imdb": "tt0583459"},
+                "UserData": {"Played": False},
+            },
+            "PlaybackPositionTicks": 14470000000,
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertEqual(state["episode_title"], 'Café de Paris & "Co"')
+        self.assertEqual(state["series_title"], "Café Society")
 
     @patch("app.providers.tmdb.find")
     def test_pause_and_stop_events_update_live_playback_state(self, mock_find):

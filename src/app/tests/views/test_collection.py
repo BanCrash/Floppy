@@ -48,6 +48,56 @@ class CollectionListViewTest(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login", response.url)
 
+    def test_collection_list_filtered_by_location(self):
+        """Filtering by location keeps only entries stored there, per user."""
+        self.client.login(**self.credentials)
+        other_user = get_user_model().objects.create_user(
+            username="other",
+            password="12345",
+        )
+        items = {}
+        for key, location in (
+            ("nas", "NAS"),
+            ("home", "Home"),
+            ("all", "all"),
+            ("none", ""),
+        ):
+            items[key] = Item.objects.create(
+                media_id=f"loc-{key}",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                title=f"Movie {key}",
+                image="http://example.com/movie.jpg",
+            )
+            CollectionEntry.objects.create(
+                user=self.user,
+                item=items[key],
+                purchase_location=location,
+            )
+        CollectionEntry.objects.create(
+            user=other_user,
+            item=items["nas"],
+            purchase_location="Garage",
+        )
+
+        response = self.client.get(reverse("collection_list"), {"location": "NAS"})
+
+        entries = list(response.context["collection_entries"])
+        self.assertEqual([entry.item_id for entry in entries], [items["nas"].id])
+        self.assertEqual(response.context["location_filter"], "NAS")
+        self.assertEqual(
+            response.context["available_locations"],
+            ["Home", "NAS", "all"],
+        )
+
+        # A location literally called "all" filters like any other.
+        response = self.client.get(reverse("collection_list"), {"location": "all"})
+        entries = list(response.context["collection_entries"])
+        self.assertEqual([entry.item_id for entry in entries], [items["all"].id])
+
+        response = self.client.get(reverse("collection_list"))
+        self.assertEqual(len(response.context["collection_entries"]), 4)
+
     def test_collection_list_filtered_by_media_type(self):
         """Test filtering by media_type parameter."""
         self.client.login(**self.credentials)
@@ -479,8 +529,8 @@ class CollectionAddViewTest(TestCase):
         entry = CollectionEntry.objects.get(user=self.user, item=game_item)
         self.assertEqual(entry.resolution, long_platform)
 
-    def test_collection_add_creates_planning_game_when_untracked(self):
-        """Adding collection metadata for an untracked game creates a Planning tracker row."""
+    def test_collection_add_does_not_track_untracked_game(self):
+        """Collecting a game never creates a tracker row, same as every other type."""
         self.client.login(**self.credentials)
         game_item = Item.objects.create(
             media_id="game-2000",
@@ -502,9 +552,7 @@ class CollectionAddViewTest(TestCase):
         self.assertTrue(
             CollectionEntry.objects.filter(user=self.user, item=game_item).exists()
         )
-        game_tracker = Game.objects.get(user=self.user, item=game_item)
-        self.assertEqual(game_tracker.status, Status.PLANNING.value)
-        self.assertEqual(game_tracker.progress, 0)
+        self.assertFalse(Game.objects.filter(user=self.user, item=game_item).exists())
 
     def test_collection_add_does_not_change_existing_game_status(self):
         """Adding collection metadata must not overwrite an existing tracked game state."""

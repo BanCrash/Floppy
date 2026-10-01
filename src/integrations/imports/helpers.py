@@ -67,6 +67,15 @@ def mal_id_from_kitsu_mappings(mappings, media_type):
     return mappings.get(f"myanimelist/{media_type}")
 
 
+def periodic_task_user_kwargs(user_id):
+    """Return ``filter`` kwargs matching one user's periodic task by exact id.
+
+    A bare ``kwargs__contains='"user_id": 1'`` also matches user 10's task, so
+    the match must end at the closing brace or the next key.
+    """
+    return {"kwargs__regex": rf"[\"']user_id[\"']: {int(user_id)}[,}}]"}
+
+
 def find_item_across_buckets(preferred_bucket=None, **identity):
     """Return an existing Item for an identity, preferring one library bucket.
 
@@ -524,12 +533,23 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
 
     warnings = []
 
+    # A source season's aggregate status is not a destination season status:
+    # alternate orders may split or combine those groups.
+    active_shows = set(
+        app.models.TV.objects.filter(
+            user=user, active_episode_order__isnull=False,
+        ).values_list("item__source", "item__media_id"),
+    )
+
     # Importers build rows using their source provider's numbering. Resolve
     # before persistence so those numbers never become active-order numbers.
+    # Resolution is per episode and only ever matches a show with an active
+    # order, so a user with none skips it: it cost ~3 queries per episode, two
+    # thirds of the time this function spent on a large history import.
     ordered_episodes = []
     for episode in bulk_media_list.get(MediaTypes.EPISODE.value, []):
         item = episode.item
-        if item.episode_order_id:
+        if not active_shows or item.episode_order_id:
             ordered_episodes.append(episode)
             continue
         targets = resolve_incoming(
@@ -548,13 +568,6 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
     if MediaTypes.EPISODE.value in bulk_media_list:
         bulk_media_list[MediaTypes.EPISODE.value] = ordered_episodes
 
-    # A source season's aggregate status is not a destination season status:
-    # alternate orders may split or combine those groups.
-    active_shows = set(
-        app.models.TV.objects.filter(
-            user=user, active_episode_order__isnull=False,
-        ).values_list("item__source", "item__media_id"),
-    )
     if MediaTypes.SEASON.value in bulk_media_list:
         bulk_media_list[MediaTypes.SEASON.value] = [
             season for season in bulk_media_list[MediaTypes.SEASON.value]

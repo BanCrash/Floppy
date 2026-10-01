@@ -93,7 +93,17 @@ urlpatterns = [
         views.convert_anime_library,
         name="convert_anime_library",
     ),
+    path(
+        "settings/metadata/convert-tv-library",
+        views.convert_tv_library,
+        name="convert_tv_library",
+    ),
     path("settings/integrations", views.integrations, name="integrations"),
+    path(
+        "settings/integrations/stremio-catalog-status",
+        views.stremio_catalog_status,
+        name="stremio_catalog_status",
+    ),
     path("settings/rss", views.rss_settings, name="rss_settings"),
     path(
         "settings/metadata",
@@ -174,6 +184,11 @@ urlpatterns = [
         "cancel_import_run/<int:run_id>",
         views.cancel_import_run,
         name="cancel_import_run",
+    ),
+    path(
+        "cancel_pending_import/<str:task_id>",
+        views.cancel_pending_import,
+        name="cancel_pending_import",
     ),
     path(
         "bulk_delete_by_import_source/<str:media_type>/<str:source>",

@@ -135,6 +135,29 @@ class AppTagsTests(TestCase):
         self.assertEqual(app_tags.slug("[Oshi no Ko]"), "oshi-no-ko")
         self.assertEqual(app_tags.slug("_____"), "_____")
 
+    def test_slug_is_one_path_segment(self):
+        """Titles made of path characters still produce a usable URL segment."""
+        self.assertEqual(app_tags.slug("/"), "2f")
+        self.assertEqual(app_tags.slug("//"), "2f2f")
+        self.assertEqual(app_tags.slug("."), "2e")
+        self.assertEqual(app_tags.slug(".."), "2e2e")
+        self.assertEqual(app_tags.slug("..."), "...")
+
+    def test_media_url_episode_titled_slash(self):
+        """An episode titled "/" links to its page instead of raising (#1322)."""
+        episode = {
+            "media_type": MediaTypes.EPISODE.value,
+            "source": Sources.TMDB.value,
+            "media_id": "1411",
+            "title": "/",
+            "season_number": 3,
+            "episode_number": 17,
+        }
+
+        url = app_tags.media_url(episode)
+
+        self.assertEqual(url, "/details/tmdb/tv/1411/2f/season/3/episode/17")
+
     def test_title_preserve_acronyms(self):
         """Test acronym-preserving title casing."""
         self.assertEqual(app_tags.title_preserve_acronyms("rom"), "Rom")
@@ -1984,3 +2007,27 @@ class DetailScoreChipsTemplateTests(TestCase):
     def test_numeric_score_count_still_renders(self):
         html = self._render(42)
         self.assertIn("42", html)
+
+
+class EntrySourceLabelTests(TestCase):
+    """Test the entry_source_label display filter (issue #1258)."""
+
+    def test_built_in_lowercase_sources_are_capitalized(self):
+        self.assertEqual(app_tags.entry_source_label("plex"), "Plex")
+        self.assertEqual(app_tags.entry_source_label("jellyfin"), "Jellyfin")
+
+    def test_special_casing_and_underscores(self):
+        self.assertEqual(app_tags.entry_source_label("lastfm"), "Last.fm")
+        self.assertEqual(app_tags.entry_source_label("imdb"), "IMDb")
+        self.assertEqual(
+            app_tags.entry_source_label("jellyfin_playback_reporting"),
+            "Jellyfin playback reporting",
+        )
+
+    def test_user_typed_text_is_kept_as_typed(self):
+        self.assertEqual(app_tags.entry_source_label("Theatre"), "Theatre")
+        self.assertEqual(app_tags.entry_source_label("my BluRay"), "my BluRay")
+
+    def test_empty_values(self):
+        self.assertEqual(app_tags.entry_source_label(""), "")
+        self.assertEqual(app_tags.entry_source_label(None), "")

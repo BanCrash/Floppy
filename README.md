@@ -481,7 +481,10 @@ The only universally required variable is `SECRET`. For Docker installs you shou
 - `BGG_API_TOKEN` - board game metadata from [BoardGameGeek](https://boardgamegeek.com/using_the_xml_api)
 - `HARDCOVER_API` - Hardcover book metadata/imports. **Required to use Hardcover** ([generate a token](https://hardcover.app/account/api)); Hardcover meters its free tier per account (5000 requests/day), so Floppy ships no shared default and book search falls back to Open Library without one. Individual users can also set a personal token in their own settings.
 - `GOOGLE_BOOKS_API_KEY` - optional Google Books book metadata ([Google Books API](https://developers.google.com/books/docs/v1/using)); supports `GOOGLE_BOOKS_API_KEY_FILE` for Docker secrets
+- `OPENCRITIC_API_KEY` - optional OpenCritic critic scores for games, from a [RapidAPI key](https://rapidapi.com/opencritic-opencritic-default/api/opencritic-api). The free plan (25 searches and 200 requests a day) is enough: a score is fetched when a game page is opened, and quota left over in the hour before the daily reset fills in tracked games. Supports `OPENCRITIC_API_KEY_FILE`; can also be set in Settings > Metadata
 - `COMICVINE_API` - comic metadata
+- `MANGABAKA_NSFW` - optional, set to `true` to include erotica and pornographic series in [MangaBaka](https://mangabaka.org/) manga search results. MangaBaka needs no API key and is available as a manga source next to MyAnimeList and MangaUpdates; light novels are left out
+- `GCD_USERNAME` / `GCD_PASSWORD` - optional [Grand Comics Database](https://www.comics.org/) comic metadata, as a second comic source next to Comic Vine. Use a free GCD account: GCD limits anonymous API access to 30 requests an hour, so Floppy ships no shared default and the source stays hidden until a login is set. Support `GCD_USERNAME_FILE` / `GCD_PASSWORD_FILE` for Docker secrets; can also be set in Settings > Metadata, then chosen as the default comic source there
 - `LASTFM_API_KEY` - Last.fm integration and scrobble polling
 - `MUSICBRAINZ_URL` - custom MusicBrainz-compatible API root, including `/ws/2` (defaults to `https://musicbrainz.org/ws/2`)
 - `TRAKT_API` / `TRAKT_API_SECRET` - Trakt private-profile OAuth imports
@@ -837,7 +840,7 @@ Options:
 | `--json` | Print one JSON object and nothing else. |
 | `--no-redis` | Do not check Redis. |
 | `--auto-migrate` | Apply the pending migrations, then check again. |
-| `--timeout SECONDS` | Bound the database storage check. The default matches the startup entrypoint's own bound (`integrity_timeout` in `entrypoint.sh`), currently 600 seconds. |
+| `--timeout SECONDS` | Bound the database storage check (default 600 seconds). Startup does not use a fixed bound. It stops its own check only when the check stops making progress; see `docs/architecture/sqlite-recovery-decisions.md`. |
 
 The command reads only. `--auto-migrate` is the one exception, and it is for an
 operator at a terminal. Containers do not need it, because the startup sequence

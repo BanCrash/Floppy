@@ -218,6 +218,22 @@ class LogSafetyTests(SimpleTestCase):
             '[REDACTED] HTTP/1.1" 200 760',
         )
 
+    def test_redact_secrets_strips_urllib3_connection_pool_host(self):
+        """urllib3's error text names the host in Celery failures (#1307)."""
+        line = (
+            'raised unexpected: ReadTimeout(ReadTimeoutError("HTTPSConnectionPool('
+            "host='myserver.duckdns.org', port=443): Read timed out. "
+            '(read timeout=20)"))'
+        )
+
+        result = redact_secrets(line)
+
+        self.assertNotIn("myserver.duckdns.org", result)
+        self.assertIn(
+            "HTTPSConnectionPool(host='[REDACTED]', port=443): Read timed out.",
+            result,
+        )
+
     def test_redact_secrets_keeps_safe_url_diagnostics_intact(self):
         """The urllib3 rules match only the third-party logger's own format.
 

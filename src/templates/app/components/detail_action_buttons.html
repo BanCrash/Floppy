@@ -5,9 +5,9 @@
 {% load humanize %}
 {% load static %}
 {% if not public_view|default:False %}
-  {% if not activity_subtitle and media.score_count is None and not trakt_score and not imdb_score and not mal_score and not user_medias %}
+  {% if not activity_subtitle and media.score_count is None and not trakt_score and not imdb_score and not mal_score and not opencritic_score and not user_medias %}
     <div class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
-    {% elif not activity_subtitle and media.score_count is None and not trakt_score and not imdb_score and not mal_score and user_medias and not current_instance %}
+    {% elif not activity_subtitle and media.score_count is None and not trakt_score and not imdb_score and not mal_score and not opencritic_score and user_medias and not current_instance %}
       <div class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
       {% else %}
         <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
@@ -286,7 +286,7 @@
               </button>
             </form>
           </div>
-          {% if activity_subtitle or media.score_count is not None or trakt_score or imdb_score or mal_score or user_medias and current_instance %}
+          {% if activity_subtitle or media.score_count is not None or trakt_score or imdb_score or mal_score or opencritic_score or user_medias and current_instance %}
           </div>
         {% endif %}
       </div>

@@ -664,6 +664,15 @@ def _acquire_refresh_lock(
     return True
 
 
+def release_refresh_lock(user_id: int, media_type: str, *, show_more: bool) -> None:
+    """Drop a tab refresh lock the task did not need to use."""
+    _cache_delete(
+        _refresh_lock_key(
+            user_id, _normalize_media_type(media_type), show_more=show_more
+        )
+    )
+
+
 def _reserve_scheduled_refresh(
     user_id: int,
     media_type: str,

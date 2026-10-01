@@ -3,6 +3,11 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+SCORED_AT_HELP = (
+    "When the score was last set, changed or cleared; null when never scored "
+    "or when the rating predates this field."
+)
+
 
 @extend_schema_field(
     {"oneOf": [{"type": "string"}, {"type": "integer"}]}
@@ -161,6 +166,17 @@ class NextEpisodeSerializer(serializers.Serializer):
     season_number = serializers.IntegerField(allow_null=True)
     episode_number = serializers.IntegerField()
     air_date = serializers.DateTimeField(allow_null=True)
+    title = serializers.CharField(
+        allow_null=True,
+        help_text="The episode's own name; null when unknown, never the show's title.",
+    )
+    episode_code = serializers.CharField(
+        allow_null=True,
+        help_text="SxxEyy code, as in history entries; null without a season number.",
+    )
+    image = serializers.CharField(allow_null=True, allow_blank=True)
+    ids = serializers.DictField(child=serializers.CharField())
+    url = serializers.CharField(allow_null=True)
 
 
 class ShowSerializer(serializers.Serializer):
@@ -185,6 +201,10 @@ class TrackedMediaResponseSerializer(serializers.Serializer):
     tracked = serializers.BooleanField()
     created_at = serializers.DateTimeField(allow_null=True)
     score = serializers.FloatField(allow_null=True)
+    scored_at = serializers.DateTimeField(
+        allow_null=True,
+        help_text=SCORED_AT_HELP,
+    )
     status = serializers.IntegerField(allow_null=True)
     progress = serializers.FloatField(allow_null=True)
     episodes_left = serializers.IntegerField(allow_null=True)
@@ -214,6 +234,10 @@ class ConsumptionResponseSerializer(serializers.Serializer):
     consumption_id = serializers.IntegerField()
     created = serializers.DateTimeField(allow_null=True)
     score = serializers.FloatField(allow_null=True)
+    scored_at = serializers.DateTimeField(
+        allow_null=True,
+        help_text=SCORED_AT_HELP,
+    )
     progress = serializers.FloatField(allow_null=True)
     progressed_at = serializers.DateTimeField(allow_null=True)
     status = serializers.IntegerField(allow_null=True)

@@ -190,6 +190,105 @@ class HelpersTest(TestCase):
         )
         self.assertEqual(Episode.objects.get().related_season_id, season.id)
 
+    def _unsaved_tv_season_episode(self):
+        tv_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test Show",
+        )
+        season_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test Show",
+            season_number=1,
+        )
+        episode_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Test Show",
+            season_number=1,
+            episode_number=1,
+        )
+        tv = TV(item=tv_item, user=self.user, status=Status.IN_PROGRESS.value)
+        season = Season(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode = Episode(item=episode_item, related_season=season)
+        return {
+            MediaTypes.EPISODE.value: [episode],
+            MediaTypes.SEASON.value: [season],
+            MediaTypes.TV.value: [tv],
+        }
+
+    @patch("integrations.episode_orders.resolve_incoming")
+    def test_bulk_create_media_skips_order_lookup_without_active_orders(
+        self,
+        mock_resolve,
+    ):
+        """No tracked show has an alternate order, so no episode can map to one."""
+        helpers.bulk_create_media(self._unsaved_tv_season_episode(), self.user)
+
+        mock_resolve.assert_not_called()
+        self.assertEqual(
+            Episode.objects.filter(related_season__user=self.user).count(),
+            1,
+        )
+
+    @patch("integrations.episode_orders.resolve_incoming", return_value=None)
+    def test_bulk_create_media_still_resolves_orders_for_a_show_with_one(
+        self,
+        mock_resolve,
+    ):
+        from app.services.episode_ordering import persist_order
+
+        bulk_media = self._unsaved_tv_season_episode()
+        tv = TV.objects.create(
+            item=bulk_media[MediaTypes.TV.value][0].item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        order = persist_order(
+            tv.item,
+            Sources.TMDB.value,
+            "1396",
+            "aired",
+            "TMDB (Aired)",
+            {
+                "episodes": [
+                    {
+                        "provider_episode_id": "new-1",
+                        "season_number": 1,
+                        "episode_number": 1,
+                        "title": "Pilot",
+                        "image": "",
+                    },
+                ],
+            },
+        )
+        TV.objects.filter(pk=tv.pk).update(active_episode_order=order)
+        bulk_media.pop(MediaTypes.TV.value)
+        bulk_media.pop(MediaTypes.SEASON.value)
+        episode = bulk_media[MediaTypes.EPISODE.value][0]
+        episode.related_season = Season.objects.create(
+            item=Item.objects.get(
+                media_type=MediaTypes.SEASON.value,
+                media_id="1396",
+            ),
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        helpers.bulk_create_media(bulk_media, self.user)
+
+        mock_resolve.assert_called_once()
+
     def test_bulk_create_media_skips_episode_with_no_matching_season(self):
         """An unresolvable episode is dropped with a warning, not a DB crash.
 

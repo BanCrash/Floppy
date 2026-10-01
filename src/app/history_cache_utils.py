@@ -40,7 +40,12 @@ HISTORY_INDEX_PREFIX = f"history_index_v{HISTORY_CACHE_VERSION}"
 HISTORY_DAY_PREFIX = f"history_day_v{HISTORY_CACHE_VERSION}"
 HISTORY_CACHE_PREFIX = HISTORY_INDEX_PREFIX
 HISTORY_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours for the history index
-HISTORY_DAY_CACHE_TIMEOUT = getattr(settings, "HISTORY_DAY_CACHE_TIMEOUT", None)
+# Finite so day payloads are evictable: Redis runs volatile-lru, which only
+# evicts keys that carry a TTL, so payloads without one crowded out sessions
+# and page caches instead. Expired days are rebuilt by the coverage repair.
+HISTORY_DAY_CACHE_TIMEOUT = getattr(
+    settings, "HISTORY_DAY_CACHE_TIMEOUT", 30 * 24 * 60 * 60
+)
 HISTORY_STALE_AFTER = _coerce_timedelta(
     getattr(settings, "HISTORY_CACHE_STALE_AFTER", None),
     timedelta(hours=1),

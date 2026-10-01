@@ -62,7 +62,7 @@
                   </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0 ml-auto">
-                  <span class="px-2 py-1 text-xs rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">{{ entry.current_label }}</span>
+                  <span class="px-2 py-1 text-xs rounded bg-amber-500/10 text-[var(--color-warning-text)] border border-amber-500/30">{{ entry.current_label }}</span>
                   <button type="button"
                           @click="openModal('media-type-{{ entry.media_type }}')"
                           class="px-3 py-1.5 text-sm rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer">
@@ -104,6 +104,50 @@
       {% include "users/components/media_type_provider_modal.html" %}
     {% endfor %}
   </div>
+
+  {% if tv_provider_prompt %}
+    {% comment %}
+      Switching the TV provider only decides where new shows come from. Ask
+      before moving a library the user already has.
+    {% endcomment %}
+    <div x-data="{ open: true }"
+         x-cloak
+         x-show="open"
+         @keydown.escape.window="open = false"
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="tv-provider-title">
+      <div @click.outside="open = false"
+           class="w-full max-w-lg rounded-2xl border border-[var(--color-surface-border)] bg-[var(--color-page-bg)] p-6 shadow-2xl">
+        <h2 id="tv-provider-title"
+            class="text-lg font-semibold text-[var(--color-text)]">
+          {% blocktranslate with label=tv_provider_prompt.label %}Move your tracked shows to {{ label }}?{% endblocktranslate %}
+        </h2>
+        <p class="mt-2 text-sm text-[var(--color-text-muted)]">
+          {% blocktranslate count count=tv_provider_prompt.count with label=tv_provider_prompt.label %}New shows will use {{ label }} straight away. You have {{ count }} show already tracked on the other provider.{% plural %}New shows will use {{ label }} straight away. You have {{ count }} shows already tracked on the other provider.{% endblocktranslate %}
+        </p>
+        <p class="mt-2 text-sm text-[var(--color-text-muted)]">
+          {% translate "Moving keeps your status, ratings, notes and watched episodes. Shows that cannot be moved safely are left exactly as they are, and you can still move any show from its Match & Ordering tab." %}
+        </p>
+
+        <div class="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <button type="button"
+                  @click="open = false"
+                  class="inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] px-4 py-2 text-sm font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-muted)] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
+            {% translate "Leave my library as it is" %}
+          </button>
+          <form method="post" action="{% url 'convert_tv_library' %}">
+            {% csrf_token %}
+            <button type="submit"
+                    class="inline-flex w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 sm:w-auto">
+              {% translate "Move my tracked shows" %}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endif %}
 
   {% if anime_shape_prompt_count %}
     {% comment %}

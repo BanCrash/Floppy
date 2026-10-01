@@ -36,7 +36,7 @@
             <a href="{% if media.album %}{{ media.album|music_album_url }}{% elif media.artist %}{{ media.artist|music_artist_url }}{% elif use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_list_reference %}{{ item|media_url }}?public_view=1&amp;public_list={{ public_list_reference|urlencode }}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}"
                {% if enable_bulk_select %}@click="if (selectMode) { $event.preventDefault(); toggleItemSelected({{ item.id }}) }"{% endif %}>
               {% if enable_bulk_select %}
-                <div class="absolute top-2 left-2 z-10" x-cloak x-show="selectMode" @click.stop.prevent>
+                <div class="absolute top-2 left-2 z-10" x-cloak x-show="selectMode" @click.stop>
                   <input type="checkbox"
                          class="cursor-pointer w-5 h-5"
                          :checked="isItemSelected({{ item.id }})"
@@ -253,7 +253,7 @@
                     <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
                             title="{% translate "Add to tracker" %}"
                             hx-get="{% media_view_url 'track_modal' item %}"
-                            hx-vals='{"return_url": "{{ card_return_url|urlencode }}", "instance_id": "{{ media.id }}"{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
+                            hx-vals='{"return_url": "{{ card_return_url|urlencode }}"{% if media %}, "instance_id": "{{ media.id }}"{% endif %}{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
                             hx-target="#{% component_id 'track' item media.id %}{% if card_uid %}-{{ card_uid }}{% endif %}"
                             hx-trigger="click once"
                             @click="trackOpen = true">
@@ -429,7 +429,10 @@
               {% endif %}
               {% if media %}
                 <span id="media-card-rating-{{ media.id }}">
-                  {% include "app/components/media_card_rating.html" %}
+                  {% if not public_view|default:False and not recommend_mode and not use_podcast_show|default:False %}
+                    {% url 'update_media_score' item.media_type media.id as card_rate_url %}
+                  {% endif %}
+                  {% include "app/components/media_card_rating.html" with rate_url=card_rate_url|default:"" %}
                 </span>
               {% else %}
                 {% include "app/components/media_card_rating.html" %}

@@ -28,6 +28,7 @@ from app.providers import (
     igdb,
     mangaupdates,
     openlibrary,
+    services,
     tmdb,
     tvdb,
 )
@@ -103,7 +104,10 @@ def person_detail(request, source, person_id, name):
     if not source_config:
         return HttpResponseBadRequest("Person pages are not available for this source.")
 
-    person_metadata = source_config["fetcher"](person_id) or {}
+    # A viewer is waiting: a rate-limited provider fails fast instead of
+    # holding the request through long retry waits.
+    with services.interactive_request_scope():
+        person_metadata = source_config["fetcher"](person_id) or {}
     person = credits.upsert_person_profile(source, person_id, person_metadata)
 
     person_id_str = str(person_id)

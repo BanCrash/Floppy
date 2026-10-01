@@ -86,6 +86,13 @@ urlpatterns = [
     path("import/mylar/connect", views.mylar_connect, name="mylar_connect"),
     path("import/mylar/disconnect", views.mylar_disconnect, name="mylar_disconnect"),
     path("import/mylar", views.import_mylar, name="import_mylar"),
+    path("import/kapowarr/connect", views.kapowarr_connect, name="kapowarr_connect"),
+    path(
+        "import/kapowarr/disconnect",
+        views.kapowarr_disconnect,
+        name="kapowarr_disconnect",
+    ),
+    path("import/kapowarr", views.import_kapowarr, name="import_kapowarr"),
     path("import/sonarr/connect", views.sonarr_connect, name="sonarr_connect"),
     path("import/sonarr/disconnect", views.sonarr_disconnect, name="sonarr_disconnect"),
     path("import/sonarr", views.import_sonarr, name="import_sonarr"),
@@ -130,6 +137,41 @@ urlpatterns = [
         "import/audiobookshelf",
         views.import_audiobookshelf,
         name="import_audiobookshelf",
+    ),
+    path(
+        "import/hardcover/sync",
+        views.hardcover_sync,
+        name="hardcover_sync",
+    ),
+    path(
+        "import/kavita/connect",
+        views.kavita_connect,
+        name="kavita_connect",
+    ),
+    path(
+        "import/kavita/disconnect",
+        views.kavita_disconnect,
+        name="kavita_disconnect",
+    ),
+    path(
+        "import/kavita",
+        views.import_kavita,
+        name="import_kavita",
+    ),
+    path(
+        "import/komga/connect",
+        views.komga_connect,
+        name="komga_connect",
+    ),
+    path(
+        "import/komga/disconnect",
+        views.komga_disconnect,
+        name="komga_disconnect",
+    ),
+    path(
+        "import/komga",
+        views.import_komga,
+        name="import_komga",
     ),
     path(
         "import/audiobookshelf/cover/<str:token>",

@@ -938,6 +938,29 @@ def build_rule_filter_data(
                 ),
             )
 
+    return build_filter_data_for_items(
+        owner,
+        item_ids,
+        target_media_types,
+        precomputed_tags=precomputed_tags,
+        include_list_options=include_list_options,
+    )
+
+
+def build_filter_data_for_items(
+    owner,
+    item_ids,
+    target_media_types,
+    *,
+    precomputed_tags: list[str] | None = None,
+    include_list_options: bool = True,
+):
+    """Build filter-menu options (genres, years, platforms...) from ``item_ids``.
+
+    ``owner`` supplies the tag names, provider region and linked-list options;
+    ``target_media_types`` decides which type-specific panes the menu shows.
+    """
+    item_ids = set(item_ids)
     region = getattr(owner, "watch_provider_region", None)
 
     only_fields = (

@@ -29,7 +29,15 @@ logger = logging.getLogger(__name__)
 
 @shared_task(name="Cleanup task results", ignore_result=True)
 def cleanup_task_results(batch_size=5000):
-    """Remove expired and abandoned durable task-status rows in small batches."""
+    """Remove expired and abandoned durable task-status rows in small batches.
+
+    Also closes import runs whose task was killed before it could say so.
+    """
+    from integrations.tasks._import_helpers import close_abandoned_import_runs
+
+    # Same housekeeping cadence: a killed import leaves no other record.
+    close_abandoned_import_runs()
+
     batch_size = max(int(batch_size), 0)
     if not batch_size:
         return 0
@@ -222,6 +230,10 @@ from app.tasks_music import (  # noqa: E402
     prefetch_album_covers_batch,
     prefetch_artist_images_batch,
 )
+from app.tasks_opencritic import (  # noqa: E402
+    backfill_opencritic_scores,  # noqa: F401
+    refresh_item_opencritic_score,  # noqa: F401
+)
 from app.tasks_podcast import (  # noqa: E402
     PODCAST_WEBSITE_BACKFILL_VERSION,
     backfill_podcast_show_websites,
@@ -276,6 +288,7 @@ from app.tasks_trakt import (  # noqa: E402
 )
 from app.tasks_tv_provider_migration import (  # noqa: E402
     migrate_tv_shows_to_preferred_provider_task,
+    move_user_tv_library_task,
 )
 from app.tasks_watch_state import (  # noqa: E402
     backfill_user_watch_state,
@@ -287,10 +300,12 @@ RELEASE_BACKFILL_SOURCES = (
     Sources.TVDB.value,
     Sources.MAL.value,
     Sources.MANGAUPDATES.value,
+    Sources.MANGABAKA.value,
     Sources.IGDB.value,
     Sources.OPENLIBRARY.value,
     Sources.HARDCOVER.value,
     Sources.COMICVINE.value,
+    Sources.GCD.value,
     Sources.BGG.value,
     Sources.MUSICBRAINZ.value,
 )
@@ -1359,6 +1374,7 @@ __all__ = [
     "is_genre_backfill_reconcile_complete",
     "is_provider_backfill_reconcile_complete",
     "migrate_tv_shows_to_preferred_provider_task",
+    "move_user_tv_library_task",
     "populate_album_tracks_batch",
     "populate_credits_backfill_queue",
     "populate_credits_data_for_items",

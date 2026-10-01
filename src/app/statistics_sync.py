@@ -27,6 +27,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F, Model, Q
 from django.utils import timezone
 
+from app.interactive_requests import interactive_request_active
 from app.models import StatisticsDirtyDay, StatisticsSnapshot, StatisticsSyncState
 from app.statistics_day_cache import (
     STATISTICS_DAY_CACHE_TIMEOUT,
@@ -34,6 +35,7 @@ from app.statistics_day_cache import (
     _normalize_day_value,
     _set_history_version,
 )
+from app.task_cooperation import higher_priority_task_waiting
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,14 @@ HEAVY_RANGES = (
     "All Time",
 )
 WARM_DAY_COUNT = 2
+# The dedicated worker runs one task at a time, so a sync yields at its next
+# boundary to anything queued at webhook priority instead of making it wait.
+INTERACTIVE_QUEUE = "interactive"
+# What a range cost the last time it was built, so a task can tell whether the
+# next one fits in what is left of its budget.
+RANGE_COST_TIMEOUT = 7 * 24 * 60 * 60
+# A sync this far past its budget is worth a warning naming the range.
+OVERRUN_WARNING_SECONDS = 5
 
 
 def _setting(name: str, default: int) -> int:
@@ -137,7 +147,10 @@ def _after_mark(user_id: int, reason: str | None, days: int) -> None:
     # Still the change token for the per-person talent caches.
     _set_history_version(user_id)
     logger.info(
-        "stats_mark user_id=%s days=%s reason=%s", user_id, days, reason or "unspecified"
+        "stats_mark user_id=%s days=%s reason=%s",
+        user_id,
+        days,
+        reason or "unspecified",
     )
     transaction.on_commit(lambda: ensure_sync(user_id))
 
@@ -451,9 +464,7 @@ def _hydrate_tag(tag, inner, instances):
         return {_hydrate(item, instances) for item in inner}
     if tag == "__stats_ns__":
         return SimpleNamespace(**_hydrate(inner, instances))
-    return {
-        _hydrate(key, instances): _hydrate(item, instances) for key, item in inner
-    }
+    return {_hydrate(key, instances): _hydrate(item, instances) for key, item in inner}
 
 
 _MISSING = object()
@@ -476,6 +487,19 @@ def _snapshot_entry(data, generation, built_day, built_at, schema_version):
     }
 
 
+_SNAPSHOT_META_FIELDS = ("built_at", "built_day", "generation", "schema_version")
+
+
+def _meta_cache_key(user_id: int, range_name: str) -> str:
+    from app.statistics_cache import _cache_key
+
+    return f"{_cache_key(user_id, range_name)}_meta"
+
+
+def _snapshot_meta(entry: dict) -> dict:
+    return {field: entry.get(field) for field in _SNAPSHOT_META_FIELDS}
+
+
 def publish_snapshot(user_id: int, range_name: str, data: dict, generation: int):
     """Publish a range payload to the cache and, durably, the database."""
     from app.statistics_cache import (
@@ -490,8 +514,12 @@ def publish_snapshot(user_id: int, range_name: str, data: dict, generation: int)
     entry = _snapshot_entry(
         data, generation, built_day, built_at, SNAPSHOT_SCHEMA_VERSION
     )
-    cache.set(
-        _cache_key(user_id, range_name), entry, timeout=STATISTICS_RANGE_CACHE_TIMEOUT
+    cache.set_many(
+        {
+            _cache_key(user_id, range_name): entry,
+            _meta_cache_key(user_id, range_name): _snapshot_meta(entry),
+        },
+        timeout=STATISTICS_RANGE_CACHE_TIMEOUT,
     )
     try:
         payload = dehydrate_payload(data)
@@ -503,16 +531,27 @@ def publish_snapshot(user_id: int, range_name: str, data: dict, generation: int)
             exc,
         )
         return entry
-    StatisticsSnapshot.objects.update_or_create(
-        user_id=user_id,
-        range_name=range_name,
-        defaults={
-            "payload": payload,
-            "generation": generation,
-            "built_day": built_day,
-            "built_at": built_at,
-            "schema_version": SNAPSHOT_SCHEMA_VERSION,
-        },
+    StatisticsSnapshot.objects.bulk_create(
+        [
+            StatisticsSnapshot(
+                user_id=user_id,
+                range_name=range_name,
+                payload=payload,
+                generation=generation,
+                built_day=built_day,
+                built_at=built_at,
+                schema_version=SNAPSHOT_SCHEMA_VERSION,
+            )
+        ],
+        update_conflicts=True,
+        update_fields=[
+            "payload",
+            "generation",
+            "built_day",
+            "built_at",
+            "schema_version",
+        ],
+        unique_fields=["user", "range_name"],
     )
     return entry
 
@@ -537,8 +576,36 @@ def load_snapshot(user_id: int, range_name: str) -> dict | None:
         snapshot.built_at,
         snapshot.schema_version,
     )
-    cache.set(key, entry, timeout=STATISTICS_RANGE_CACHE_TIMEOUT)
+    cache.set_many(
+        {key: entry, _meta_cache_key(user_id, range_name): _snapshot_meta(entry)},
+        timeout=STATISTICS_RANGE_CACHE_TIMEOUT,
+    )
     return entry
+
+
+def load_snapshot_meta(user_id: int, range_name: str) -> dict | None:
+    """Return a range's build time, day, generation and schema, not its data.
+
+    Pollers and the page header only need to know when a snapshot was built
+    and whether it is stale. Loading the full entry for that unpickles every
+    chart and list in the range, which on a large library is the cost of the
+    whole page, so the fields are kept under their own small key.
+    """
+    from app.statistics_cache import STATISTICS_RANGE_CACHE_TIMEOUT
+
+    key = _meta_cache_key(user_id, range_name)
+    meta = cache.get(key)
+    if isinstance(meta, dict) and "generation" in meta:
+        return meta
+    meta = (
+        StatisticsSnapshot.objects.filter(user_id=user_id, range_name=range_name)
+        .values(*_SNAPSHOT_META_FIELDS)
+        .first()
+    )
+    if meta is None:
+        return None
+    cache.set(key, meta, timeout=STATISTICS_RANGE_CACHE_TIMEOUT)
+    return meta
 
 
 def current_generation(user_id: int) -> int:
@@ -575,6 +642,33 @@ class _OutOfTimeError(Exception):
 
 def _check_deadline(deadline) -> None:
     if deadline is not None and time.monotonic() >= deadline:
+        raise _OutOfTimeError
+
+
+def _yield_if_interactive(enabled: bool) -> None:
+    if enabled and (
+        interactive_request_active()
+        or higher_priority_task_waiting(
+            INTERACTIVE_QUEUE, settings.CELERY_TASK_PRIORITY_INTERACTIVE
+        )
+    ):
+        raise _OutOfTimeError
+
+
+def _range_cost_key(user_id: int, range_name: str) -> str:
+    return f"stats:sync:range_seconds:{user_id}:{range_name}"
+
+
+def _check_range_fits(user_id: int, range_name: str, deadline, built_one: bool):
+    """Stop, unless the range is expected to finish inside the budget that is left.
+
+    The first range a task builds always runs, so a range that is dearer than a
+    whole budget still gets a task of its own instead of never being built.
+    """
+    if deadline is None or not built_one:
+        return
+    expected = cache.get(_range_cost_key(user_id, range_name))
+    if expected and time.monotonic() + expected > deadline:
         raise _OutOfTimeError
 
 
@@ -621,7 +715,9 @@ def _missing_days(user_id: int, days) -> set:
     return missing
 
 
-def _build_days(user, days, deadline, dirty_tokens) -> int:
+def _build_days(
+    user, days, deadline, dirty_tokens, *, yield_to_interactive=False
+) -> int:
     """Build day payloads in slices; clear each slice's dirty rows as it lands."""
     from app.statistics_day_builder import (
         _build_prefetch_for_range,
@@ -632,6 +728,7 @@ def _build_days(user, days, deadline, dirty_tokens) -> int:
     credit_hints = 0
     size = _slice_days()
     for offset in range(0, len(days), size):
+        _yield_if_interactive(yield_to_interactive)
         _check_deadline(deadline)
         chunk = days[offset : offset + size]
         prefetch = _build_prefetch_for_range(user, chunk)
@@ -642,7 +739,12 @@ def _build_days(user, days, deadline, dirty_tokens) -> int:
             "credit_item_ids": set(),
         }
         pending = {}
+        processed_days = []
+        deferred = False
         for day in chunk:
+            if processed_days and yield_to_interactive and interactive_request_active():
+                deferred = True
+                break
             day_stats = build_stats_for_day(
                 user.id,
                 day,
@@ -656,6 +758,7 @@ def _build_days(user, days, deadline, dirty_tokens) -> int:
                 credit_hints += int(
                     day_stats.get("backfill", {}).get("missing_credits") or 0
                 )
+            processed_days.append(day)
         if pending:
             failed = set(
                 cache.set_many(pending, timeout=STATISTICS_DAY_CACHE_TIMEOUT) or ()
@@ -666,8 +769,10 @@ def _build_days(user, days, deadline, dirty_tokens) -> int:
                     timeout=STATISTICS_DAY_CACHE_TIMEOUT,
                 )
         _enqueue_collected_backfills(user.id, collector)
-        _clear_dirty(user.id, chunk, dirty_tokens)
+        _clear_dirty(user.id, processed_days, dirty_tokens)
         _renew_lease(user.id)
+        if deferred:
+            raise _OutOfTimeError
     return credit_hints
 
 
@@ -720,13 +825,17 @@ def run_sync(
 
     Returns ``{"status": ..., "published": {range: data}}`` where status is
     ``done``, ``busy`` (another sync holds the lease), ``continued`` (the time
-    budget ran out and a follow-up was queued) or ``missing``.
+    budget ran out), ``deferred`` (an interactive request is active), or
+    ``missing``.
 
     ``only_ranges`` rebuilds just those ranges, unconditionally; it is the
     inline path the eager/test read and the top-talent upgrade use.
     """
     started = time.monotonic()
     deadline = None if budget_seconds is None else started + budget_seconds
+    yield_to_interactive = budget_seconds is not None and only_ranges is None
+    if yield_to_interactive and interactive_request_active():
+        return {"status": "deferred", "published": {}}
     user_model = apps.get_model(settings.AUTH_USER_MODEL)
     user = user_model.objects.filter(pk=user_id).first()
     if user is None:
@@ -737,15 +846,19 @@ def run_sync(
         return {"status": "busy", "published": {}}
 
     published: dict[str, dict] = {}
+    range_seconds_by_name: dict[str, float] = {}
+    days_built = 0
+    days_seconds = 0.0
     status = "done"
     now = timezone.now()
     today = timezone.localdate()
     try:
         state = StatisticsSyncState.objects.get(user_id=user_id)
         generation = state.generation
-        full = state.full_sweep_requested_at is not None or cache.get(
-            _day_epoch_key(user_id)
-        ) is None
+        full = (
+            state.full_sweep_requested_at is not None
+            or cache.get(_day_epoch_key(user_id)) is None
+        )
 
         dirty_tokens = dict(
             StatisticsDirtyDay.objects.filter(user_id=user_id).values_list(
@@ -768,7 +881,18 @@ def run_sync(
         # Newest first, so the hot ranges are correct as early as possible.
         work_days = sorted(work, reverse=True)
 
-        credit_hints = _build_days(user, work_days, deadline, dirty_tokens)
+        days_built = len(work_days)
+        days_started = time.monotonic()
+        try:
+            credit_hints = _build_days(
+                user,
+                work_days,
+                deadline,
+                dirty_tokens,
+                yield_to_interactive=yield_to_interactive,
+            )
+        finally:
+            days_seconds = time.monotonic() - days_started
         if full:
             cache.set(_day_epoch_key(user_id), now.isoformat(), timeout=None)
 
@@ -792,18 +916,28 @@ def run_sync(
         for range_name in _ordered_ranges(user, heavy_due, only_ranges):
             if not only_ranges and not needs_rebuild(range_name):
                 continue
+            _yield_if_interactive(yield_to_interactive)
             _check_deadline(deadline)
+            if not only_ranges:
+                _check_range_fits(user_id, range_name, deadline, bool(published))
             range_started = time.monotonic()
             data = _aggregate_range(user, range_name, credit_hints, deadline)
             publish_snapshot(user_id, range_name, data, generation)
             published[range_name] = data
             _renew_lease(user_id)
+            range_seconds = time.monotonic() - range_started
+            range_seconds_by_name[range_name] = range_seconds
+            cache.set(
+                _range_cost_key(user_id, range_name),
+                range_seconds,
+                timeout=RANGE_COST_TIMEOUT,
+            )
             logger.info(
                 "stats_range_summary user_id=%s range=%s generation=%s elapsed_ms=%.2f",
                 user_id,
                 range_name,
                 generation,
-                (time.monotonic() - range_started) * 1000,
+                range_seconds * 1000,
             )
 
         # Cleared only once the pass completes: a continuation must still see
@@ -833,14 +967,39 @@ def run_sync(
             lease_expires_at=None, last_finished_at=timezone.now()
         )
 
+    elapsed = time.monotonic() - started
     logger.info(
-        "stats_sync user_id=%s status=%s ranges=%s elapsed_ms=%.2f",
+        "stats_sync user_id=%s status=%s ranges=%s elapsed_ms=%.2f days=%s days_ms=%.2f",
         user_id,
         status,
         len(published),
-        (time.monotonic() - started) * 1000,
+        elapsed * 1000,
+        days_built,
+        days_seconds * 1000,
     )
-    if not only_ranges and (status == "continued" or _has_hot_work(user_id)):
+    if (
+        budget_seconds is not None
+        and elapsed > budget_seconds + OVERRUN_WARNING_SECONDS
+    ):
+        # Names where the time went: the range aggregate is the one step that
+        # cannot stop partway, so it is the usual overrun.
+        slowest = max(
+            range_seconds_by_name.items(), key=lambda pair: pair[1], default=("-", 0.0)
+        )
+        logger.warning(
+            "stats_sync_overrun user_id=%s budget_s=%s elapsed_ms=%.2f days_ms=%.2f slowest_range=%s slowest_range_ms=%.2f",
+            user_id,
+            budget_seconds,
+            elapsed * 1000,
+            days_seconds * 1000,
+            slowest[0],
+            slowest[1] * 1000,
+        )
+    if (
+        not only_ranges
+        and not (yield_to_interactive and interactive_request_active())
+        and (status == "continued" or _has_hot_work(user_id))
+    ):
         ensure_sync(user_id, bypass_gate=True)
     return {"status": status, "published": published}
 
@@ -923,7 +1082,5 @@ def reconcile() -> int:
     user_ids = users_needing_sync(limit)
     queued = sum(1 for user_id in user_ids if ensure_sync(user_id, bypass_gate=True))
     if user_ids:
-        logger.info(
-            "stats_reconcile candidates=%s queued=%s", len(user_ids), queued
-        )
+        logger.info("stats_reconcile candidates=%s queued=%s", len(user_ids), queued)
     return queued

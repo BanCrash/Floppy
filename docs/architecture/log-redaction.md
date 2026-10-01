@@ -74,6 +74,7 @@ enforce these rules.
 | Unquoted value | `?X-Plex-Token=abc&size=10` | `?X-Plex-Token=[REDACTED]&size=10` |
 | urllib3 connection host | `Starting new HTTPS connection (1): my.duckdns.org:32400` | `Starting new HTTPS connection (1): [REDACTED]` |
 | urllib3 request-line host | `https://my.duckdns.org:32400 "GET /x HTTP/1.1" 200 760` | `https://[REDACTED] "GET /x HTTP/1.1" 200 760` |
+| urllib3 error host | `HTTPSConnectionPool(host='my.duckdns.org', port=443): Read timed out.` | `HTTPSConnectionPool(host='[REDACTED]', port=443): Read timed out.` |
 
 A value is a credential when its name **ends** with one of these keywords:
 `token`, `secret`, `password`, `passwd`, `apikey`, `api_key`, `api-key`,
@@ -126,7 +127,10 @@ so two more rules in `_SECRET_PATTERNS` strip it independent of the
 keyword-name rules above. Both match only urllib3's own line shape (the
 literal `Starting new ... connection (N):` prefix, or a URL immediately
 followed by a quoted HTTP method), so an ordinary URL an app log line builds
-with `safe_url()` is untouched.
+with `safe_url()` is untouched. The same host also appears in urllib3's own error
+text (`HTTPSConnectionPool(host='...', port=...)`), which reaches Celery's
+task-failure line and every traceback, so a third rule strips the quoted
+`host=` value there ([#1307](https://github.com/dannyvfilms/Floppy/issues/1307)).
 
 ## What the rules do not cover
 

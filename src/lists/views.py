@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import replace
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
@@ -17,8 +18,9 @@ from app.columns import (
     resolve_columns,
     resolve_default_column_config,
 )
-from app.library_query import FilterValues
+from app.library_query.adapters import filter_values_from_media_list_filters
 from app.library_query.spec import STATUS_MATCH_ANY
+from app.media_list_filters import parse_media_list_filters
 from app.media_list_views import MEDIA_LIST_NO_STATUS, MEDIA_LIST_NO_STATUS_LABEL
 from app.models import MediaTypes
 from app.providers import (
@@ -26,6 +28,7 @@ from app.providers import (
 )
 from app.release_years import prefill_display_release_years
 from integrations import exports
+from lists import smart_rules
 from lists import tasks as list_tasks
 from lists.forms import CustomListForm
 from lists.models import CustomList
@@ -234,22 +237,34 @@ def list_detail(request, list_reference):
 
     if params["media_types"]:
         items = items.filter(media_type__in=params["media_types"])
+    elif request.GET.get("type_mode") == "subset":
+        # The filter menu's "Hide all" leaves no type selected.
+        items = items.none()
     filtered_media_types = list(
         items.order_by().values_list("media_type", flat=True).distinct(),
     )
+    # The remaining filters (genre, year, rating, dates, tags...) go through
+    # the media list's own parser, so a list page accepts exactly the URL
+    # filters the media list and the API do. Type, status and search keep the
+    # list page's own handling above.
     # A no-status match includes list items with no tracker row as well as
     # rows whose status is null; other statuses match any of the user's rows.
     status_filter = tuple(params["status_filter"] or ())
+    parsed_filters = replace(
+        parse_media_list_filters(request, strict=False),
+        statuses=tuple(v for v in status_filter if v != MEDIA_LIST_NO_STATUS),
+        include_no_status=MEDIA_LIST_NO_STATUS in status_filter,
+        search=params["search_query"],
+    )
+    list_filters = replace(
+        filter_values_from_media_list_filters(parsed_filters),
+        status_match=STATUS_MATCH_ANY,
+    )
     items_page, filtered_items_count = paginate_list_items(
         custom_list=custom_list,
         media_user=media_user,
         candidates=items.values("pk"),
-        filters=FilterValues(
-            statuses=tuple(v for v in status_filter if v != MEDIA_LIST_NO_STATUS),
-            include_no_status=MEDIA_LIST_NO_STATUS in status_filter,
-            status_match=STATUS_MATCH_ANY,
-            search=params["search_query"],
-        ),
+        filters=list_filters,
         sort_by=params["sort_by"],
         direction=params["direction"],
         page=params["page"],
@@ -326,7 +341,7 @@ def list_detail(request, list_reference):
                 tag_url=reverse("tag_bulk_toggle"),
             )
             if can_edit
-            else {},
+            else {}
         ),
         "list_ordering_enabled": can_edit
         and params["sort_by"] == ListDetailSortChoices.CUSTOM,
@@ -396,6 +411,18 @@ def list_detail(request, list_reference):
                 "completion_percent": completion_percent,
                 "completed_count": completed_count,
                 "media_type_breakdown": media_type_breakdown,
+                "list_filter_data": smart_rules.build_filter_data_for_items(
+                    media_user,
+                    custom_list.items.values_list("id", flat=True),
+                    [entry["value"] for entry in media_type_breakdown],
+                    # A visitor must not see the owner's private tag names.
+                    precomputed_tags=[] if is_public_view else None,
+                    include_list_options=False,
+                ),
+                "list_filter_state": {
+                    **parsed_filters.menu_state(),
+                    "media_types": params["media_types"],
+                },
             },
         )
         return render(request, "lists/list_detail.html", context)

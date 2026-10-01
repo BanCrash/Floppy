@@ -689,6 +689,8 @@ def paginate_list_items(
         sort_list_id=custom_list.id,
         routing=ROUTING_MODEL,
         dedupe_cross_provider=False,
+        provider_region=str(getattr(media_user, "watch_provider_region", "") or ""),
+        pinned_providers=tuple(getattr(media_user, "pinned_watch_providers", None) or ()),
     )
     executor = LibraryQueryExecutor(media_user, query)
     total = executor.count()

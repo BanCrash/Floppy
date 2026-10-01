@@ -35,11 +35,40 @@ logger = logging.getLogger(__name__)
 
 MINUTES_PER_HOUR = 60
 
+# How often viewing an artist may call MusicBrainz on the viewer's time: an
+# MBID search when the artist has none, and a discography sync.
+ARTIST_VIEW_MBID_RESOLVE_SECONDS = 24 * 60 * 60
+ARTIST_VIEW_SYNC_SECONDS = 60 * 60
+# The artist page's cover and member-photo pollers run every 5 seconds; this
+# bounds each to about two minutes per page view.
+ARTIST_IMAGE_POLL_MAX_ATTEMPTS = 24
+
 # Lengths of the partial-date strings MusicBrainz can return for a release
 # date: "YYYY", "YYYY-MM", or a full "YYYY-MM-DD" (10+ chars).
 DATE_STR_LEN_YEAR_ONLY = 4
 DATE_STR_LEN_YEAR_MONTH = 7
 DATE_STR_LEN_FULL_DATE = 10
+
+
+def _play_counts_by_music_id(music_entries):
+    """Return each album track's play count in one grouped history query."""
+    return dict(
+        Music.history.model.objects.filter(
+            id__in=[music.id for music in music_entries if music.album_id],
+        )
+        .order_by()
+        .values("id")
+        .annotate(play_count=models.Count("history_id"))
+        .values_list("id", "play_count"),
+    )
+
+
+def _poll_attempt(request):
+    """Return the poll attempt number an HTMX poller sent back."""
+    try:
+        return max(int(request.GET.get("attempt", 0)), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _music_artist_detail_url(artist):
@@ -414,14 +443,21 @@ def _render_music_artist_details(request, artist):
     from app.providers import musicbrainz
     from app.services.music import (
         build_discography_groups,
-        canonicalize_album,
+        canonicalize_albums,
         needs_discography_sync,
         sync_artist_discography,
         sync_artist_members,
     )
     from app.services.music_scrobble import dedupe_artist_albums
 
-    if not artist.musicbrainz_id:
+    # Resolving an MBID searches MusicBrainz under several name variants, each
+    # a rate-limited call. An artist with no match would repeat that search on
+    # every view, so a view tries at most once a day.
+    if not artist.musicbrainz_id and cache.add(
+        f"music:artist-mbid-resolve:{artist.id}",
+        True,
+        ARTIST_VIEW_MBID_RESOLVE_SECONDS,
+    ):
         try:
             mbid, cand_count, variant = sync_services.resolve_artist_mbid(
                 artist.name or "",
@@ -484,8 +520,20 @@ def _render_music_artist_details(request, artist):
     )
     force_sync = existing_album_count == 0 or missing_mbids
 
+    # A forced sync re-reads the whole discography from MusicBrainz. Albums the
+    # provider cannot match keep ``missing_mbids`` true forever, so without a
+    # gate every view of such an artist paid for a full sync. The page's sync
+    # button still forces one on demand.
     synced_count = 0
-    if should_sync and artist.musicbrainz_id:
+    if (
+        should_sync
+        and artist.musicbrainz_id
+        and cache.add(
+            f"music:artist-view-sync:{artist.id}",
+            True,
+            ARTIST_VIEW_SYNC_SECONDS,
+        )
+    ):
         synced_count = sync_artist_discography(artist, force=force_sync)
         if synced_count:
             dedupe_artist_albums(artist)
@@ -499,12 +547,12 @@ def _render_music_artist_details(request, artist):
         Album.objects.filter(
             models.Q(artist=artist) | models.Q(artist_credits__artist=artist),
         )
+        .select_related("artist")
         .distinct()
         .order_by("-release_date", "title"),
     )
     all_albums_by_id = {}
-    for album in raw_albums:
-        canonical_album = canonicalize_album(album, user=request.user)
+    for canonical_album in canonicalize_albums(raw_albums, user=request.user):
         all_albums_by_id[canonical_album.id] = canonical_album
     all_albums = list(all_albums_by_id.values())
 
@@ -516,11 +564,12 @@ def _render_music_artist_details(request, artist):
         ).select_related("album", "item"),
     )
 
+    play_counts_by_music_id = _play_counts_by_music_id(user_music_entries)
     album_play_counts = {}
     total_plays = 0
     for music in user_music_entries:
         if music.album_id:
-            play_count = music.history.count()
+            play_count = play_counts_by_music_id.get(music.id, 0)
             album_play_counts[music.album_id] = (
                 album_play_counts.get(music.album_id, 0) + play_count
             )
@@ -1277,10 +1326,11 @@ def prefetch_artist_covers(request, artist_id):
         .select_related("album")
     )
 
+    play_counts_by_music_id = _play_counts_by_music_id(user_music_entries)
     album_play_counts = {}
     for music in user_music_entries:
         if music.album_id:
-            play_count = music.history.count()
+            play_count = play_counts_by_music_id.get(music.id, 0)
             album_play_counts[music.album_id] = (
                 album_play_counts.get(music.album_id, 0) + play_count
             )
@@ -1322,6 +1372,7 @@ def prefetch_artist_covers(request, artist_id):
                 exception_summary(exc),
             )
 
+    attempt = _poll_attempt(request)
     return render(
         request,
         "app/components/artist_discography_container.html",
@@ -1329,7 +1380,12 @@ def prefetch_artist_covers(request, artist_id):
             "discography_groups": discography_groups,
             "artist": artist,
             "missing_cover_count": missing_cover_count,
-            "poll_for_covers": poll_for_covers,
+            # Covers the provider cannot find never arrive, so polling stops
+            # after a bounded number of tries rather than for the prefetch
+            # marker's full ten minutes.
+            "poll_for_covers": poll_for_covers
+            and attempt < ARTIST_IMAGE_POLL_MAX_ATTEMPTS,
+            "next_attempt": attempt + 1,
             "user": request.user,
         },
     )
@@ -1358,6 +1414,7 @@ def prefetch_artist_relation_images(request, artist_id):
             cache.get(f"music:artist-image-prefetch:{artist.id}"),
         )
 
+    attempt = _poll_attempt(request)
     return render(
         request,
         "app/components/artist_relations_container.html",
@@ -1366,7 +1423,9 @@ def prefetch_artist_relation_images(request, artist_id):
             "band_members": band_members,
             "member_of_bands": member_of_bands,
             "missing_relation_image_count": missing_relation_image_count,
-            "poll_for_relation_images": poll_for_relation_images,
+            "poll_for_relation_images": poll_for_relation_images
+            and attempt < ARTIST_IMAGE_POLL_MAX_ATTEMPTS,
+            "next_attempt": attempt + 1,
             "user": request.user,
         },
     )

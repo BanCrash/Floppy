@@ -74,7 +74,8 @@
         <a href="{{ tracker.album|music_album_url }}"
            class="media-card-title text-sm font-semibold text-[var(--color-text)] hover:text-[var(--color-link)] transition duration-300 line-clamp-2 min-w-0"
            title="{{ tracker.album.title }}">{{ tracker.album.title }}</a>
-        {% include "app/components/media_card_rating.html" with rating_value=tracker.score %}
+        {% url 'update_album_score' tracker.album.id as rate_url %}
+        {% include "app/components/media_card_rating.html" with rating_value=tracker.score rate_url=rate_url %}
       </div>
       {% if tracker.album.artist %}
         <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1">{{ tracker.album.artist.name }}</p>

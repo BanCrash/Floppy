@@ -1,5 +1,7 @@
 """Language selection and presentation must not change stored media identities."""
 
+import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -95,6 +97,26 @@ class GermanPreferencesTests(TestCase):
             reverse("javascript-catalog"), HTTP_ACCEPT_LANGUAGE="en"
         )
         self.assertNotContains(english, "Heute")
+
+
+class FilterMenuCatalogTests(TestCase):
+    """The shared filter menu's JavaScript labels are in the JS catalogs."""
+
+    def test_every_filter_state_label_is_translated(self):
+        source = (
+            Path(settings.BASE_DIR) / "static" / "js" / "libraryFilterState.js"
+        ).read_text()
+        messages = set(re.findall(r"gettext\('([^']*)'\)", source))
+        self.assertIn("All Types", messages)
+        for language in ("de", "fr"):
+            response = self.client.get(
+                reverse("javascript-catalog"), HTTP_ACCEPT_LANGUAGE=language
+            )
+            catalog = json.loads(
+                re.search(r"const newcatalog = (\{.*?\});", response.text, re.DOTALL)[1],
+            )
+            with self.subTest(language=language):
+                self.assertEqual(messages - catalog.keys(), set())
 
 
 class FrenchPresentationTests(SimpleTestCase):

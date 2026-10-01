@@ -6,6 +6,7 @@ from uuid import UUID
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.utils import OperationalError
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from app.models import (
     Episode,
@@ -95,6 +96,7 @@ class MediaCoreTests(FloppyApiTestCase):
                     "tracked",
                     "created_at",
                     "score",
+                    "scored_at",
                     "status",
                     "progress",
                     "episodes_left",
@@ -2151,6 +2153,7 @@ class MediaCoreTests(FloppyApiTestCase):
                 "consumption_id",
                 "created",
                 "score",
+                "scored_at",
                 "progress",
                 "progressed_at",
                 "status",
@@ -2307,6 +2310,32 @@ class MediaCoreTests(FloppyApiTestCase):
         payload = response.json()
         check_consumption_structure(self, payload)
         self.assertIsNone(payload["score"])
+
+    def test_media_consumption_entry_detail_patch_score_reports_scored_at(self):
+        """A score PATCH returns when the rating was set, for sync clients (#1280)."""
+        movie = self.movie_medias[0]
+        movie_item = self.items_by_type[MediaTypes.MOVIE.value][0]
+
+        response = self.call_api(
+            "patch",
+            "api_media_consumption_entry_detail",
+            args=(
+                MediaTypes.MOVIE.value,
+                movie_item.source,
+                movie_item.media_id,
+                movie.id,
+            ),
+            payload={"score": 8.4},
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        movie.refresh_from_db()
+        self.assertIsNotNone(movie.scored_at)
+        self.assertEqual(
+            parse_datetime(response.json()["scored_at"]),
+            movie.scored_at,
+        )
 
     def test_media_consumption_entry_detail_patch_invalid_score_returns_bad_request(
         self,

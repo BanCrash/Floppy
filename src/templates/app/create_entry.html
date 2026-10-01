@@ -310,7 +310,7 @@
           <div class="relative">
             <select class="w-full p-2 bg-[var(--color-surface-strong)] rounded-md text-[var(--color-text)] border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] appearance-none"
                     name="status">
-              {% for status in Status.values %}<option value="{{ status }}">{% translate status %}</option>{% endfor %}
+              {% for status in Status.values %}<option value="{{ status }}"{% if status == default_status %} selected{% endif %}>{% translate status %}</option>{% endfor %}
             </select>
             <div class="absolute inset-y-0 right-2 flex items-center pointer-events-none">
               {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}

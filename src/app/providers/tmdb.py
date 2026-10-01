@@ -188,8 +188,12 @@ def get_external_links(external_ids, tmdb_id=None):
 
 
 def _tvdb_override_cache_key(media_id):
-    """Return cache key for a preferred TVDB override on a TMDB show."""
-    return f"{Sources.TMDB.value}_tvdb_override_{media_id}"
+    """Return cache key for a preferred TVDB override on a TMDB show.
+
+    The ``v2`` drops overrides written before #1312, when Jellyfin/Emby
+    episode TVDB ids were saved here as if they were the show's.
+    """
+    return f"{Sources.TMDB.value}_tvdb_override_v2_{media_id}"
 
 
 def get_tvdb_id_override(media_id):

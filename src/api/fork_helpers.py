@@ -22,7 +22,11 @@ FORK_VALID_SOURCES = {
         Sources.GPODDER.value,
         Sources.AUDIOBOOKSHELF.value,
     ],
-    MediaTypes.COMIC_ISSUE.value: [Sources.COMICVINE.value, Sources.MANUAL.value],
+    MediaTypes.COMIC_ISSUE.value: [
+        Sources.COMICVINE.value,
+        Sources.GCD.value,
+        Sources.MANUAL.value,
+    ],
 }
 
 # FORK: sources the fork resolves for a media type upstream *already* lists.

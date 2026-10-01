@@ -5,6 +5,7 @@ from datetime import datetime, time, timedelta
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
+import requests
 from django.apps import apps
 from django.conf import settings
 from django.contrib import messages
@@ -213,6 +214,40 @@ def media_save(request):
                 library_media_type=library_media_type,
                 edition_id=(request.POST.get("edition_id") or "").strip() or None,
             )
+        except services.ProviderNotConfiguredError:
+            # Setup guidance is rendered by the provider-error middleware.
+            raise
+        except services.ProviderAPIError as error:
+            # A provider that no longer has the title, or is down, is a failed
+            # save the user can read about, not a server error.
+            logger.warning(
+                "First-save metadata hydration hit a provider error for "
+                "media_type=%s source=%s media_id=%s status=%s user_id=%s",
+                media_type,
+                source,
+                media_id,
+                error.status_code,
+                request.user.id,
+            )
+            if error.status_code == requests.codes.not_found:
+                message = gettext(
+                    "%(provider)s no longer has this title, so it can't be saved."
+                ) % {"provider": error.provider_label}
+            else:
+                message = gettext(
+                    "%(provider)s did not respond. Please try saving again."
+                ) % {"provider": error.provider_label}
+            if request.headers.get("HX-Request"):
+                # htmx follows a redirect and would swap the whole page in, and
+                # the messages framework is never rendered for it, so answer
+                # with a toast. It does not swap a non-2xx body.
+                response = HttpResponse(status=502)
+                response["HX-Trigger"] = json.dumps(
+                    {"showToast": {"message": message, "type": "error"}},
+                )
+                return response
+            messages.error(request, message)
+            return helpers.redirect_back(request)
         except Exception:
             logger.exception(
                 "First-save metadata hydration failed for "
@@ -398,6 +433,10 @@ def media_save(request):
                     {
                         "media_instance_id": media.id,
                         "rating_value": media.formatted_score,
+                        "rate_url": reverse(
+                            "update_media_score",
+                            args=[media.item.media_type, media.id],
+                        ),
                         "user": request.user,
                     },
                     request=request,

@@ -32,6 +32,93 @@ from app.models import (
     Status,
     Track,
 )
+from app.providers import services
+
+
+class MediaSaveProviderFailure(TestCase):
+    """A provider that cannot supply a title is a failed save, not a 500."""
+
+    def setUp(self):
+        """Create a user and log in."""
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+    def _save_with_provider_status(self, status_code):
+        error = Exception("provider said no")
+        error.response = SimpleNamespace(status_code=status_code, headers={})
+        with patch(
+            "app.save_views.ensure_item_metadata",
+            side_effect=services.ProviderAPIError(Sources.POCKETCASTS.value, error),
+        ):
+            return self.client.post(
+                reverse("media_save"),
+                {
+                    "media_id": "gone-show-uuid",
+                    "source": Sources.POCKETCASTS.value,
+                    "media_type": MediaTypes.PODCAST.value,
+                    "status": Status.PLANNING.value,
+                },
+                follow=True,
+            )
+
+    def test_provider_404_shows_a_message_and_saves_nothing(self):
+        response = self._save_with_provider_status(404)
+
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context["messages"]]
+        self.assertTrue(any("no longer has this title" in m for m in page_messages))
+        self.assertFalse(Item.objects.filter(media_id="gone-show-uuid").exists())
+
+    def test_htmx_first_save_gets_a_toast_not_a_redirect(self):
+        error = Exception("provider said no")
+        error.response = SimpleNamespace(status_code=404, headers={})
+        with patch(
+            "app.save_views.ensure_item_metadata",
+            side_effect=services.ProviderAPIError(Sources.POCKETCASTS.value, error),
+        ):
+            response = self.client.post(
+                reverse("media_save"),
+                {
+                    "media_id": "gone-show-uuid",
+                    "source": Sources.POCKETCASTS.value,
+                    "media_type": MediaTypes.PODCAST.value,
+                    "status": Status.PLANNING.value,
+                },
+                HTTP_HX_REQUEST="true",
+            )
+
+        self.assertEqual(response.status_code, 502)
+        toast = json.loads(response["HX-Trigger"])["showToast"]
+        self.assertEqual(toast["type"], "error")
+        self.assertIn("no longer has this title", toast["message"])
+
+    def test_unconfigured_provider_keeps_setup_guidance(self):
+        with patch(
+            "app.save_views.ensure_item_metadata",
+            side_effect=services.ProviderNotConfiguredError(
+                Sources.IGDB.value,
+                "IGDB credentials are not set.",
+            ),
+        ):
+            response = self.client.post(
+                reverse("media_save"),
+                {
+                    "media_id": "1",
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "status": Status.PLANNING.value,
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_provider_outage_asks_the_user_to_retry(self):
+        response = self._save_with_provider_status(503)
+
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context["messages"]]
+        self.assertTrue(any("did not respond" in m for m in page_messages))
 
 
 class CreateMedia(TestCase):

@@ -6,6 +6,7 @@ import datetime
 from dataclasses import dataclass, replace
 
 from django.apps import apps
+from django.core.cache import cache
 from django.utils import timezone
 
 from app import helpers
@@ -15,6 +16,7 @@ from app.models import (
     Item,
     MediaTypes,
     Season,
+    Sources,
     Status,
 )
 from app.templatetags.app_tags import media_url
@@ -97,14 +99,28 @@ class MediaListFilters:
     include_no_status: bool = False
     search: str = ""
     rating: str = "all"
+    rating_min: str = ""
+    rating_max: str = ""
     collection: str = "all"
     progress: str = "all"
     genre: str = ""
     implied_genre: str = ""
     year: str = ""
+    # Each date range is resolved to from/to; ``*_within`` keeps a relative
+    # window ("last 7 days") as asked, so a page can show the choice again.
     completed_date_from: str = ""
     completed_date_to: str = ""
+    completed_date_within: str = ""
+    completed_date_within_unit: str = "days"
     release: str = "all"
+    release_date_from: str = ""
+    release_date_to: str = ""
+    release_date_within: str = ""
+    release_date_within_unit: str = "days"
+    date_added_from: str = ""
+    date_added_to: str = ""
+    date_added_within: str = ""
+    date_added_within_unit: str = "days"
     source: str = ""
     media_status: str = ""
     language: str = ""
@@ -123,6 +139,47 @@ class MediaListFilters:
     direction: str = ""
     exclude: tuple[str, ...] = ()
     media_type: str | None = None
+
+    def menu_state(self) -> dict:
+        """Return the filter menu's state in the smart-rule vocabulary.
+
+        ``static/js/libraryFilterState.js`` reads this. A relative date window
+        is handed back as chosen rather than as the dates it resolved to.
+        """
+        state = {
+            "status": [*self.statuses, *(("no_status",) if self.include_no_status else ())],
+            "rating": self.rating,
+            "rating_min": self.rating_min,
+            "rating_max": self.rating_max,
+            "collection": self.collection,
+            "progress": self.progress,
+            "genre": self.genre,
+            "implied_genre": self.implied_genre,
+            "year": self.year,
+            "release": self.release,
+            "source": self.source,
+            "media_status": self.media_status,
+            "language": self.language,
+            "country": self.country,
+            "platform": self.platforms[0] if self.platforms else "",
+            "platforms": list(self.platforms),
+            "platform_mode": self.platform_mode,
+            "origin": self.origin,
+            "format": self.format,
+            "author": self.author,
+            "provider": self.provider,
+            "tag": list(self.tags),
+            "tag_mode": self.tag_mode,
+            "search": self.search,
+        }
+        for field in ("completed_date", "release_date", "date_added"):
+            within = getattr(self, f"{field}_within")
+            state[f"{field}_within"] = within
+            state[f"{field}_within_unit"] = getattr(self, f"{field}_within_unit")
+            for bound in ("from", "to"):
+                key = f"{field}_{bound}"
+                state[key] = "" if within else getattr(self, key)
+        return state
 
 
 @dataclass
@@ -170,11 +227,43 @@ def _split_values(values) -> list[str]:
     return result
 
 
-def _parse_status_values(request) -> tuple[tuple[str, ...], bool]:
-    raw_values = _split_values(request.query_params.getlist("status"))
+class _Params:
+    """Read one request's query string under the API or the web contract.
+
+    ``strict`` is the API contract: comma-separated values are split and an
+    invalid value raises ``MediaListFilterError``. The web media list reads
+    repeated parameters only, and an invalid value (a stale bookmark) falls
+    back to "not filtering".
+    """
+
+    def __init__(self, request, *, strict: bool):
+        self.query = (
+            request.query_params if hasattr(request, "query_params") else request.GET
+        )
+        self.strict = strict
+
+    def text(self, name: str) -> str:
+        return str(self.query.get(name, "") or "").strip()
+
+    def values(self, name: str) -> tuple[str, ...]:
+        if self.strict:
+            return tuple(_split_values(self.query.getlist(name)))
+        return tuple(
+            dict.fromkeys(
+                value.strip() for value in self.query.getlist(name) if value.strip()
+            ),
+        )
+
+    def invalid(self, name: str, message: str, fallback):
+        if self.strict:
+            raise MediaListFilterError(name, message)
+        return fallback
+
+
+def _parse_status_values(params: _Params) -> tuple[tuple[str, ...], bool]:
     statuses = []
     include_no_status = False
-    for raw_value in raw_values:
+    for raw_value in params.values("status"):
         normalized = _normalize(raw_value).replace("_", " ")
         if normalized == "all":
             continue
@@ -192,169 +281,188 @@ def _parse_status_values(request) -> tuple[tuple[str, ...], bool]:
                 None,
             )
         if status_value is None:
-            parameter = "status"
-            message = "status must be a numeric code, status label, all, or no_status"
-            raise MediaListFilterError(
-                parameter,
-                message,
+            params.invalid(
+                "status",
+                "status must be a numeric code, status label, all, or no_status",
+                None,
             )
+            continue
         if status_value not in statuses:
             statuses.append(status_value)
     return tuple(statuses), include_no_status
 
 
-def _parse_choice(request, name: str, allowed: set[str], default: str) -> str:
+def _parse_choice(params: _Params, name: str, allowed: set[str], default: str) -> str:
     """Parse a lower-case choice query parameter."""
-    value = _normalize(request.query_params.get(name, default)) or default
+    value = _normalize(params.query.get(name, default)) or default
     if value not in allowed:
-        raise MediaListFilterError(
+        return params.invalid(
             name,
             f"{name} must be one of: {', '.join(sorted(allowed))}",
+            default,
         )
     return value
 
 
-def _parse_sort(request) -> tuple[str, str]:
-    raw_sort = _normalize(request.query_params.get("sort"))
-    direction = _normalize(request.query_params.get("direction"))
+def _parse_date(params: _Params, name: str) -> str:
+    raw = params.text(name)
+    if raw and not normalize_completed_date_filter(raw):
+        return params.invalid(name, f"{name} must be a YYYY-MM-DD date", "")
+    return raw
+
+
+def _parse_rating_bound(params: _Params, name: str) -> str:
+    from lists.smart_rules import _normalize_decimal_value
+
+    raw = params.text(name)
+    value = _normalize_decimal_value(raw)
+    if raw and not value:
+        return params.invalid(name, f"{name} must be a number from 0 to 10", "")
+    return value
+
+
+def _parse_date_ranges(params: _Params) -> dict[str, str]:
+    """Parse the three date ranges, each absolute or "in the last N units".
+
+    A relative window is resolved to dates for this request, with the helper
+    smart lists use, so both read "the last 7 days" the same way.
+    """
+    from lists.smart_rules import (
+        RELATIVE_DATE_FIELDS,
+        RELATIVE_DATE_UNITS,
+        _normalize_relative_amount,
+        normalize_relative_unit,
+        resolve_relative_date_windows,
+    )
+
+    ranges = {}
+    for field in RELATIVE_DATE_FIELDS:
+        ranges[f"{field}_from"] = _parse_date(params, f"{field}_from")
+        ranges[f"{field}_to"] = _parse_date(params, f"{field}_to")
+        amount = params.text(f"{field}_within")
+        ranges[f"{field}_within"] = _normalize_relative_amount(amount)
+        if amount and not ranges[f"{field}_within"]:
+            params.invalid(
+                f"{field}_within",
+                f"{field}_within must be a whole number from 1 to 999",
+                "",
+            )
+        unit = params.text(f"{field}_within_unit")
+        ranges[f"{field}_within_unit"] = normalize_relative_unit(unit)
+        if unit and unit.lower() not in RELATIVE_DATE_UNITS:
+            params.invalid(
+                f"{field}_within_unit",
+                f"{field}_within_unit must be one of: days, months, weeks, years",
+                "",
+            )
+    return resolve_relative_date_windows(ranges)
+
+
+def _parse_sort(params: _Params) -> tuple[str, str]:
+    raw_sort = _normalize(params.query.get("sort"))
+    direction = _normalize(params.query.get("direction"))
     if raw_sort.endswith(("_asc", "_desc")):
         suffix = raw_sort.rsplit("_", 1)[1]
         raw_sort = raw_sort[: -(len(suffix) + 1)]
         if direction and direction != suffix:
-            parameter = "direction"
-            message = "direction conflicts with the sort suffix"
-            raise MediaListFilterError(
-                parameter,
-                message,
-            )
+            params.invalid("direction", "direction conflicts with the sort suffix", None)
         direction = suffix
     if raw_sort and raw_sort not in MEDIA_LIST_SORTS:
-        parameter = "sort"
-        message = f"sort must be one of: {', '.join(sorted(MEDIA_LIST_SORTS))}"
-        raise MediaListFilterError(
-            parameter,
-            message,
+        raw_sort = params.invalid(
+            "sort",
+            f"sort must be one of: {', '.join(sorted(MEDIA_LIST_SORTS))}",
+            "",
         )
     if direction and direction not in {"asc", "desc"}:
-        parameter = "direction"
-        message = "direction must be asc or desc"
-        raise MediaListFilterError(parameter, message)
+        direction = params.invalid("direction", "direction must be asc or desc", "")
     if not direction:
         direction = "asc" if raw_sort in MEDIA_LIST_SORT_DEFAULTS_ASC else "desc"
     return raw_sort, direction
 
 
-def parse_media_list_filters(request) -> MediaListFilters:
-    """Parse the shared media-list query contract."""
-    statuses, include_no_status = _parse_status_values(request)
-    rating = _parse_choice(request, "rating", {"all", "rated", "not_rated"}, "all")
-    collection = _parse_choice(
-        request,
-        "collection",
-        {"all", "collected", "not_collected"},
-        "all",
-    )
-    progress = _parse_choice(
-        request,
-        "progress",
-        {"all", "caught_up", "not_caught_up"},
-        "all",
-    )
-    release = _parse_choice(
-        request,
-        "release",
-        {"all", "released", "not_released"},
-        "all",
-    )
-    platform_mode = _parse_choice(
-        request,
-        "platform_mode",
-        {"and", "or", "not"},
-        "or",
-    )
-    tag_mode = _parse_choice(
-        request,
-        "tag_mode",
-        {"and", "or", "not"},
-        "or",
-    )
-    sort, direction = _parse_sort(request)
-    tags = tuple(_split_values(request.query_params.getlist("tag")))
-    tag_mode_value = tag_mode
+def parse_media_list_filters(request, *, strict: bool = True) -> MediaListFilters:
+    """Parse the shared media-list query contract.
+
+    The API calls this strictly; the web media list calls it with
+    ``strict=False`` (see ``_Params``). Both get the same filters, so a filter
+    added here reaches both.
+    """
+    params = _Params(request, strict=strict)
+    statuses, include_no_status = _parse_status_values(params)
+    tags = params.values("tag")
+    tag_mode = _parse_choice(params, "tag_mode", {"and", "or", "not"}, "or")
     if not tags:
-        legacy_tag_exclude = str(
-            request.query_params.get("tag_exclude", "") or ""
-        ).strip()
+        legacy_tag_exclude = params.text("tag_exclude")
         if legacy_tag_exclude:
             tags = tuple(_split_values([legacy_tag_exclude]))
-            tag_mode_value = "not"
-    year = str(request.query_params.get("year", "") or "").strip()
+            tag_mode = "not"
+    year = params.text("year")
     if (
         year
         and year != "unknown"
         and (not year.isdigit() or len(year) != MEDIA_LIST_YEAR_LENGTH)
     ):
-        parameter = "year"
-        message = "year must be a four-digit year or unknown"
-        raise MediaListFilterError(parameter, message)
-    completed_date_from_raw = str(
-        request.query_params.get("completed_date_from", "") or ""
-    ).strip()
-    if completed_date_from_raw and not normalize_completed_date_filter(
-        completed_date_from_raw,
-    ):
-        parameter = "completed_date_from"
-        message = "completed_date_from must be a YYYY-MM-DD date"
-        raise MediaListFilterError(parameter, message)
-    completed_date_to_raw = str(
-        request.query_params.get("completed_date_to", "") or ""
-    ).strip()
-    if completed_date_to_raw and not normalize_completed_date_filter(
-        completed_date_to_raw,
-    ):
-        parameter = "completed_date_to"
-        message = "completed_date_to must be a YYYY-MM-DD date"
-        raise MediaListFilterError(parameter, message)
+        year = params.invalid("year", "year must be a four-digit year or unknown", "")
+    sort, direction = _parse_sort(params)
+    ranges = _parse_date_ranges(params)
+    user = getattr(request, "user", None)
     return MediaListFilters(
         statuses=statuses,
         include_no_status=include_no_status,
-        search=str(request.query_params.get("search", "") or "").strip(),
-        rating=rating,
-        collection=collection,
-        progress=progress,
-        genre=str(request.query_params.get("genre", "") or "").strip(),
-        implied_genre=str(
-            request.query_params.get("implied_genre", "") or ""
-        ).strip(),
-        year=year,
-        completed_date_from=completed_date_from_raw,
-        completed_date_to=completed_date_to_raw,
-        release=release,
-        source=str(request.query_params.get("source", "") or "").strip(),
-        media_status=str(
-            request.query_params.get("media_status", "") or ""
-        ).strip(),
-        language=str(request.query_params.get("language", "") or "").strip(),
-        country=str(request.query_params.get("country", "") or "").strip(),
-        platforms=tuple(_split_values(request.query_params.getlist("platform"))),
-        platform_mode=platform_mode,
-        origin=str(request.query_params.get("origin", "") or "").strip(),
-        format=str(request.query_params.get("format", "") or "").strip(),
-        author=str(request.query_params.get("author", "") or "").strip(),
-        provider=str(request.query_params.get("provider", "") or "").strip(),
-        provider_region=str(
-            getattr(getattr(request, "user", None), "watch_provider_region", "")
-            or ""
-        ).strip(),
-        pinned_providers=tuple(
-            getattr(getattr(request, "user", None), "pinned_watch_providers", None)
-            or ()
+        search=params.text("search"),
+        rating=_parse_choice(params, "rating", {"all", "rated", "not_rated"}, "all"),
+        rating_min=_parse_rating_bound(params, "rating_min"),
+        rating_max=_parse_rating_bound(params, "rating_max"),
+        collection=_parse_choice(
+            params,
+            "collection",
+            {"all", "collected", "not_collected"},
+            "all",
         ),
+        progress=_parse_choice(
+            params,
+            "progress",
+            {"all", "caught_up", "not_caught_up"},
+            "all",
+        ),
+        genre=params.text("genre"),
+        implied_genre=params.text("implied_genre"),
+        year=year,
+        completed_date_from=ranges["completed_date_from"],
+        completed_date_to=ranges["completed_date_to"],
+        completed_date_within=ranges["completed_date_within"],
+        completed_date_within_unit=ranges["completed_date_within_unit"],
+        release=_parse_choice(
+            params,
+            "release",
+            {"all", "released", "not_released"},
+            "all",
+        ),
+        release_date_from=ranges["release_date_from"],
+        release_date_to=ranges["release_date_to"],
+        release_date_within=ranges["release_date_within"],
+        release_date_within_unit=ranges["release_date_within_unit"],
+        date_added_from=ranges["date_added_from"],
+        date_added_to=ranges["date_added_to"],
+        date_added_within=ranges["date_added_within"],
+        date_added_within_unit=ranges["date_added_within_unit"],
+        source=params.text("source"),
+        media_status=params.text("media_status"),
+        language=params.text("language"),
+        country=params.text("country"),
+        platforms=params.values("platform"),
+        platform_mode=_parse_choice(params, "platform_mode", {"and", "or", "not"}, "or"),
+        origin=params.text("origin"),
+        format=params.text("format"),
+        author=params.text("author"),
+        provider=params.text("provider"),
+        provider_region=str(getattr(user, "watch_provider_region", "") or "").strip(),
+        pinned_providers=tuple(getattr(user, "pinned_watch_providers", None) or ()),
         tags=tags,
-        tag_mode=tag_mode_value,
+        tag_mode=tag_mode,
         sort=sort,
         direction=direction,
-        exclude=tuple(_split_values(request.query_params.getlist("exclude"))),
+        exclude=params.values("exclude"),
     )
 
 
@@ -512,22 +620,97 @@ def _episode_air_date(season, episode_number):
     return None
 
 
-def _enrich_next_episode(base, *, source, media_id):
-    """Attach title/image/ids/url to a next_episode dict from a matching Item."""
+def _fill_cached_episode_titles(pairs):
+    """Name untitled next episodes from cached TMDB seasons, without a request.
+
+    ``pairs`` is ``(item, next_episode)``; one ``get_many`` covers the page.
+    """
+    from app.providers.tmdb import _season_cache_key
+
+    wanted = {}
+    for item, next_episode in pairs:
+        if (
+            next_episode is None
+            or next_episode.get("title") is not None
+            or item.source != Sources.TMDB.value
+            or next_episode.get("season_number") is None
+            or next_episode.get("episode_number") is None
+        ):
+            continue
+        key = _season_cache_key(item.media_id, next_episode["season_number"])
+        wanted.setdefault(key, []).append(next_episode)
+    if not wanted:
+        return
+    found = cache.get_many(list(wanted)) or {}
+    for key, next_episodes in wanted.items():
+        season_data = found.get(key)
+        if not isinstance(season_data, dict):
+            continue
+        titles = {
+            episode.get("episode_number"): Item.title_fields_from_episode_metadata(
+                episode,
+            )["title"]
+            for episode in season_data.get("episodes") or []
+        }
+        for next_episode in next_episodes:
+            next_episode["title"] = titles.get(next_episode["episode_number"]) or None
+
+
+def _show_title(item, media):
+    """Return the show's title for a TV, season, or anime row."""
+    if item.media_type == MediaTypes.SEASON.value:
+        tv_item = getattr(getattr(media, "related_tv", None), "item", None)
+        if tv_item is not None and tv_item.title:
+            return tv_item.title
+    return item.title
+
+
+def _enrich_next_episode(base, item, media):
+    """Attach title/code/image/ids/url to a next_episode dict.
+
+    Several write paths store an unwatched episode's Item under the show's
+    title as a placeholder, so a title equal to the show's is not an episode
+    name. ``title`` stays ``None`` here when no Item carries a real name;
+    ``_fill_cached_episode_titles`` then tries the cached season payload.
+    """
     if base is None:
         return None
-    episode_item = None
-    if base.get("episode_number") is not None:
-        episode_item = Item.objects.filter(
-            source=source,
-            media_id=media_id,
-            media_type=MediaTypes.EPISODE.value,
-            season_number=base.get("season_number"),
-            episode_number=base.get("episode_number"),
-        ).first()
+    season_number = base.get("season_number")
+    episode_number = base.get("episode_number")
+    episode_items = []
+    if episode_number is not None:
+        episode_items = list(
+            Item.objects.filter(
+                source=item.source,
+                media_id=item.media_id,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=season_number,
+                episode_number=episode_number,
+            ).order_by("id")
+        )
+    placeholder_titles = {item.title}
+    if any(
+        episode_item.title and episode_item.title != item.title
+        for episode_item in episode_items
+    ):
+        # Only a season row's own title can differ from the show's.
+        placeholder_titles.add(_show_title(item, media))
+    named_item = next(
+        (
+            episode_item
+            for episode_item in episode_items
+            if episode_item.title and episode_item.title not in placeholder_titles
+        ),
+        None,
+    )
+    episode_item = named_item or next(iter(episode_items), None)
+    episode_code = None
+    if season_number is not None and episode_number is not None:
+        episode_code = f"S{season_number:02d}E{episode_number:02d}"
     return {
         **base,
-        "title": episode_item.title if episode_item else None,
+        "title": named_item.title if named_item else None,
+        "episode_code": episode_code,
         "image": episode_item.image if episode_item else None,
         "ids": helpers.build_provider_ids(episode_item) if episode_item else {},
         "url": (media_url(episode_item) or None) if episode_item else None,
@@ -536,6 +719,14 @@ def _enrich_next_episode(base, *, source, media_id):
 
 def next_episode_for_media(media):
     """Return the first released, unwatched episode for a TV-like row."""
+    next_episode = _next_episode_for_media(media)
+    if next_episode is not None:
+        _fill_cached_episode_titles([(media.item, next_episode)])
+    return next_episode
+
+
+def _next_episode_for_media(media):
+    """Resolve the next episode, before the cached-title fallback."""
     if media is None:
         return None
     item = getattr(media, "item", None)
@@ -569,8 +760,8 @@ def next_episode_for_media(media):
                         "episode_number": episode_number,
                         "air_date": _episode_air_date(season, episode_number),
                     },
-                    source=item.source,
-                    media_id=item.media_id,
+                    item,
+                    media,
                 )
         from events.models import Event
 
@@ -594,8 +785,8 @@ def next_episode_for_media(media):
                     "episode_number": event.content_number,
                     "air_date": event.datetime,
                 },
-                source=item.source,
-                media_id=item.media_id,
+                item,
+                media,
             )
         return None
     if media_type == MediaTypes.SEASON.value and hasattr(media, "next_episode_number"):
@@ -608,8 +799,8 @@ def next_episode_for_media(media):
                 "episode_number": episode_number,
                 "air_date": _episode_air_date(media, episode_number),
             },
-            source=item.source,
-            media_id=item.media_id,
+            item,
+            media,
         )
     if media_type == MediaTypes.ANIME.value:
         from events.models import Event
@@ -632,8 +823,8 @@ def next_episode_for_media(media):
                     "episode_number": event.content_number,
                     "air_date": event.datetime,
                 },
-                source=item.source,
-                media_id=item.media_id,
+                item,
+                media,
             )
     return None
 
@@ -781,8 +972,14 @@ def get_media_list_entries(user, media_type, filters: MediaListFilters, *, limit
 
 def get_next_episode_map(entries):
     """Build the next-episode payload map used by media serializers."""
-    return {
-        entry.item.id: next_episode_for_media(entry.media)
+    next_episodes = {
+        entry.item.id: _next_episode_for_media(entry.media)
         for entry in entries
         if entry.media is not None
     }
+    _fill_cached_episode_titles(
+        (entry.media.item, next_episodes[entry.item.id])
+        for entry in entries
+        if entry.media is not None
+    )
+    return next_episodes

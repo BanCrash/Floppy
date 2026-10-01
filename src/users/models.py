@@ -462,6 +462,8 @@ class MetadataSourceDefaultChoices(models.TextChoices):
     HARDCOVER = Sources.HARDCOVER.value, Sources.HARDCOVER.label
     OPENLIBRARY = Sources.OPENLIBRARY.value, Sources.OPENLIBRARY.label
     GOOGLEBOOKS = Sources.GOOGLEBOOKS.value, Sources.GOOGLEBOOKS.label
+    COMICVINE = Sources.COMICVINE.value, Sources.COMICVINE.label
+    GCD = Sources.GCD.value, Sources.GCD.label
 
 
 class AnimeLibraryModeChoices(models.TextChoices):
@@ -865,6 +867,14 @@ class User(AbstractUser):
         ],
         help_text="Default metadata provider for TV details and search tabs.",
     )
+    tv_auto_move_to_default_provider = models.BooleanField(
+        default=True,
+        help_text=(
+            "Let the nightly job move TV shows tracked on the other provider to "
+            "the default provider. Turned off when the user chooses to leave "
+            "their library as it is after switching providers."
+        ),
+    )
     anime_metadata_source_default = models.CharField(
         max_length=20,
         # TMDB by default so the Anime library gets real season/episode trees,
@@ -908,6 +918,21 @@ class User(AbstractUser):
             ),
         ],
         help_text="Default metadata provider for Book details and search tabs.",
+    )
+    comic_metadata_source_default = models.CharField(
+        max_length=20,
+        default=MetadataSourceDefaultChoices.COMICVINE,
+        choices=[
+            (
+                MetadataSourceDefaultChoices.COMICVINE,
+                MetadataSourceDefaultChoices.COMICVINE.label,
+            ),
+            (
+                MetadataSourceDefaultChoices.GCD,
+                MetadataSourceDefaultChoices.GCD.label,
+            ),
+        ],
+        help_text="Default metadata provider for Comic details and search tabs.",
     )
     stats_split_tv_anime = models.BooleanField(
         default=False,
@@ -1515,6 +1540,15 @@ class User(AbstractUser):
                 ),
             ),
             models.CheckConstraint(
+                name="comic_metadata_source_default_valid",
+                condition=models.Q(
+                    comic_metadata_source_default__in=[
+                        MetadataSourceDefaultChoices.COMICVINE,
+                        MetadataSourceDefaultChoices.GCD,
+                    ],
+                ),
+            ),
+            models.CheckConstraint(
                 name="lists_sort_valid",
                 condition=models.Q(lists_sort__in=ListSortChoices.values),
             ),
@@ -1869,6 +1903,15 @@ class User(AbstractUser):
 
         return None
 
+    def task_result_filter(self):
+        """Match TaskResult rows whose kwargs carry this user's id."""
+        return (
+            Q(task_kwargs__contains=f"'user_id': {self.id},")
+            | Q(task_kwargs__contains=f"'user_id': {self.id}" + "}")
+            | Q(task_kwargs__contains=f'"user_id": {self.id},')
+            | Q(task_kwargs__contains=f'"user_id": {self.id}' + "}")
+        )
+
     def get_import_tasks(self):
         """Return import tasks history and schedules for the user."""
         result_task_names = {
@@ -1905,10 +1948,13 @@ class User(AbstractUser):
             "radarr": ["Import from Radarr", "Import from Radarr (Recurring)"],
             "sonarr": ["Import from Sonarr", "Import from Sonarr (Recurring)"],
             "mylar": ["Import from Mylar3", "Import from Mylar3 (Recurring)"],
+            "kapowarr": ["Import from Kapowarr", "Import from Kapowarr (Recurring)"],
             "audiobookshelf": [
                 "Import from Audiobookshelf",
                 "Import from Audiobookshelf (Recurring)",
             ],
+            "kavita": ["Import from Kavita", "Import from Kavita (Recurring)"],
+            "komga": ["Import from Komga", "Import from Komga (Recurring)"],
             "storyteller": [
                 "Import from Storyteller",
                 "Import from Storyteller (Recurring)",
@@ -1924,7 +1970,10 @@ class User(AbstractUser):
                 "Import from Stremio (Recurring)",
             ],
             "lastfm": ["Import from Last.fm History"],
-            "hardcover": ["Import from Hardcover"],
+            "hardcover": [
+                "Import from Hardcover",
+                "Import from Hardcover Account",
+            ],
             "storygraph": ["Import from StoryGraph"],
             "koito": ["Import from Koito History"],
         }
@@ -1933,7 +1982,11 @@ class User(AbstractUser):
             "radarr": ["Import from Radarr (Recurring)"],
             "sonarr": ["Import from Sonarr (Recurring)"],
             "mylar": ["Import from Mylar3 (Recurring)"],
+            "kapowarr": ["Import from Kapowarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
+            "kavita": ["Import from Kavita (Recurring)"],
+            "komga": ["Import from Komga (Recurring)"],
+            "hardcover": ["Import from Hardcover Account"],
             "storyteller": ["Import from Storyteller (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
             "gpodder": ["Import from GPodder (Recurring)"],
@@ -1958,12 +2011,7 @@ class User(AbstractUser):
         }
         schedule_import_task_names = list(schedule_task_to_source)
 
-        task_result_filters = (
-            Q(task_kwargs__contains=f"'user_id': {self.id},")
-            | Q(task_kwargs__contains=f"'user_id': {self.id}" + "}")
-            | Q(task_kwargs__contains=f'"user_id": {self.id},')
-            | Q(task_kwargs__contains=f'"user_id": {self.id}' + "}")
-        )
+        task_result_filters = self.task_result_filter()
 
         # Get all task results for this user (last 7 days only).
         # Exclude stale PENDING records (created >30 min ago and never updated)
@@ -2012,6 +2060,7 @@ class User(AbstractUser):
             results.append(
                 {
                     "task": processed_task,
+                    "task_id": task.task_id,
                     "source": source,
                     "date": task.date_done,
                     "status": task.status,
@@ -2422,17 +2471,25 @@ class HomeScreenRow(models.Model):
         return f"{self.user_id}:{self.media_type}:{self.row_type}:{self.position}"
 
 
+# Saved views of the History page live beside the media list ones, keyed by
+# this pseudo media type.
+HISTORY_VIEW_TYPE = "history"
+
+
 class SavedView(models.Model):
-    """A named media list view (filters, sort, layout) pinned under the sidebar."""
+    """A named media list or History view (filters, sort, layout) in the sidebar."""
 
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="saved_views",
     )
-    media_type = models.CharField(max_length=16, choices=MediaTypes.choices)
+    media_type = models.CharField(
+        max_length=16,
+        choices=[*MediaTypes.choices, (HISTORY_VIEW_TYPE, "History")],
+    )
     name = models.CharField(max_length=100)
-    # The media list query string, e.g. "sort=score&direction=desc&status=Completed".
+    # The media list (or History) query string, e.g. "sort=score&direction=desc&status=Completed".
     query = models.TextField(blank=True, default="")
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -2448,6 +2505,9 @@ class SavedView(models.Model):
         return f"{self.user_id}:{self.media_type}:{self.name}"
 
     def get_absolute_url(self):
-        """Return the media list URL that reproduces this view."""
-        base = reverse("medialist", args=[self.media_type])
+        """Return the media list or History URL that reproduces this view."""
+        if self.media_type == HISTORY_VIEW_TYPE:
+            base = reverse("history")
+        else:
+            base = reverse("medialist", args=[self.media_type])
         return f"{base}?{self.query}" if self.query else base

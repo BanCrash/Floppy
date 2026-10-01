@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from app.models import TV, Anime, Item, MediaTypes, Sources, Status
+from app.models import TV, Anime, Item, MediaTypes, Music, Sources, Status
 from app.providers import services
 from events.calendar.selectors import (
     get_changed_tmdb_movie_ids,
@@ -337,6 +337,27 @@ class CalendarSelectorTests(CalendarFixturesMixin, TestCase):
         )
 
         self.assertEqual(get_changed_tmdb_movie_ids(), set())
+
+
+class CalendarMusicSelectionTests(CalendarFixturesMixin, TestCase):
+    """Music tracks never gain calendar events, so they are never fetched."""
+
+    @patch("events.calendar.selectors.tmdb.movie_changes", return_value=set())
+    @patch("events.calendar.selectors.tmdb.tv_changes", return_value=set())
+    def test_tracked_music_is_not_selected(self, _tv, _movie):
+        """A music track has no events, so it used to be selected every reload."""
+        item = Item.objects.create(
+            media_id="11111111-1111-1111-1111-111111111111",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Some Song",
+            image="http://example.com/song.jpg",
+        )
+        Music.objects.create(item=item, user=self.user, status=Status.COMPLETED.value)
+
+        self.assertNotIn(item, get_items_to_process(self.user))
+        self.assertNotIn(item, get_items_to_process())
+        self.assertIn(self.anime_item, get_items_to_process(self.user))
 
 
 class CalendarStalenessGateTests(CalendarFixturesMixin, TestCase):

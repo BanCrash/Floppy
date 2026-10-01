@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import OperationalError
 from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -459,6 +460,27 @@ class ListsViewTests(TestCase):
             f"{reverse('list_detail', args=[smart_list.id])}?edit_smart_rules=1",
         )
         self.assertContains(response, "More list actions")
+
+    @patch.object(get_user_model(), "update_preference")
+    def test_lists_view_marks_only_smart_lists_with_badge(
+        self,
+        mock_update_preference,
+    ):
+        """Smart list cards carry the bolt badge; manual list cards do not."""
+        mock_update_preference.return_value = "name"
+        self.client.login(**self.credentials)
+
+        response = self.client.get(reverse("lists"))
+        self.assertNotContains(response, 'aria-label="Smart List"')
+
+        CustomList.objects.create(
+            name="Smart List",
+            owner=self.user,
+            is_smart=True,
+        )
+
+        response = self.client.get(reverse("lists"))
+        self.assertContains(response, 'aria-label="Smart List"', count=1)
 
 
 class ListDetailViewTests(TestCase):
@@ -989,6 +1011,45 @@ class ListDetailViewTests(TestCase):
 
         self.assertTrue(response.context["show_public_notes"])
         self.assertContains(response, "Owner-only public-list note")
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch.object(CustomList, "_get_tmdb_backdrop", return_value=None)
+    def test_public_list_table_hides_owner_entry_source(
+        self,
+        _mock_backdrop,
+        mock_get_media_metadata,
+    ):
+        """Anonymous and signed-in visitors never see the owner's entry source (issue #1258)."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+            entry_source="plex",
+        )
+        url = reverse("list_detail", args=[self.custom_list.id]) + "?layout=table"
+
+        # The owner sees the source.
+        response = self.client.get(url)
+        self.assertContains(response, ">Plex</div>")
+
+        self.custom_list.visibility = "public"
+        self.custom_list.save(update_fields=["visibility"])
+        viewer = get_user_model().objects.create_user(
+            username="source-viewer",
+            password="12345",
+        )
+        for logged_in_viewer in (None, viewer):
+            self.client.logout()
+            if logged_in_viewer:
+                self.client.force_login(logged_in_viewer)
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotContains(response, ">Plex</div>")
 
     @patch("app.providers.services.get_media_metadata")
     @patch.object(CustomList, "_get_tmdb_backdrop", return_value=None)
@@ -1547,6 +1608,7 @@ class ListDetailViewTests(TestCase):
                 "date_added",
                 "start_date",
                 "end_date",
+                "entry_source",
                 "notes",
                 "synopsis",
             ],
@@ -1798,6 +1860,7 @@ class ListDetailViewTests(TestCase):
                     "date_added",
                     "start_date",
                     "end_date",
+                    "entry_source",
                     "notes",
                     "synopsis",
                 ],
@@ -3755,6 +3818,66 @@ class ListItemToggleTests(TestCase):
 
         # Nothing committed: the item was never added.
         self.assertNotIn(self.item, self.list.items.all())
+
+    def _toggle_post(self):
+        return self.client.post(
+            reverse("list_item_toggle"),
+            {"item_id": self.item.id, "custom_list_id": self.list.id},
+        )
+
+    @patch("lists.views_list_actions.time.sleep")
+    @patch("lists.views_list_actions._toggle_list_membership")
+    def test_list_item_toggle_retries_an_immediate_lock_error(self, mock_toggle, _sleep):
+        """A stale-snapshot lock error is instant, so a quick retry succeeds."""
+        self.client.login(**self.credentials)
+        mock_toggle.side_effect = [OperationalError("database is locked"), True]
+
+        response = self._toggle_post()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_toggle.call_count, 2)
+
+    @patch("lists.views_list_actions.time.sleep")
+    @patch(
+        "lists.views_list_actions._toggle_list_membership",
+        side_effect=OperationalError("database is locked"),
+    )
+    def test_list_item_toggle_lock_failure_is_a_busy_toast_with_diagnostics(
+        self,
+        mock_toggle,
+        _sleep,
+    ):
+        self.client.login(**self.credentials)
+
+        with self.assertLogs("lists.views_list_actions", level="ERROR") as logs:
+            response = self._toggle_post()
+
+        self.assertEqual(response.status_code, 503)
+        trigger = json.loads(response.headers["HX-Trigger"])
+        self.assertEqual(trigger["showToast"]["type"], "error")
+        self.assertIn("busy", trigger["showToast"]["message"])
+        self.assertEqual(mock_toggle.call_count, 3)
+        output = "".join(logs.output)
+        self.assertIn("contention=True", output)
+        self.assertIn("attempts=3", output)
+        self.assertIn("elapsed_ms=", output)
+
+    @patch("lists.views_list_actions.LIST_TOGGLE_QUICK_FAILURE_SECONDS", -1)
+    @patch(
+        "lists.views_list_actions._toggle_list_membership",
+        side_effect=OperationalError("database is locked"),
+    )
+    def test_list_item_toggle_does_not_retry_a_lock_that_waited_out_the_timeout(
+        self,
+        mock_toggle,
+    ):
+        self.client.login(**self.credentials)
+
+        with self.assertLogs("lists.views_list_actions", level="ERROR"):
+            response = self._toggle_post()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(mock_toggle.call_count, 1)
 
     def test_list_item_toggle_rolls_back_membership_when_activity_fails(self):
         """Membership and its activity record must commit or roll back together."""

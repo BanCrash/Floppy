@@ -33,10 +33,8 @@ from app.models import (
     CollectionField,
     CollectionFieldGroup,
     CollectionFieldType,
-    Game,
     Item,
     MediaTypes,
-    Status,
 )
 from app.providers import services
 from app.services import metadata_resolution
@@ -131,6 +129,8 @@ def collection_list(request, media_type=None):
     hdr_filter = request.GET.get("hdr", "")
     if hdr_filter == "all":
         hdr_filter = ""
+    # Free text, so no value ("all" included) can double as "any location".
+    location_filter = request.GET.get("location", "")
     rating_filter = request.GET.get("rating", "all")
     if rating_filter not in COLLECTION_RATING_CHOICES:
         rating_filter = "all"
@@ -147,6 +147,8 @@ def collection_list(request, media_type=None):
         collection = collection.filter(resolution=resolution_filter)
     if hdr_filter:
         collection = collection.filter(hdr=hdr_filter)
+    if location_filter:
+        collection = collection.filter(purchase_location=location_filter)
 
     if rating_filter != "all":
         item_ids_by_media_type = defaultdict(list)
@@ -269,6 +271,14 @@ def collection_list(request, media_type=None):
         .distinct()
         if value
     )
+    available_locations = sorted(
+        value
+        for value in base_collection.exclude(purchase_location="")
+        .order_by()
+        .values_list("purchase_location", flat=True)
+        .distinct()
+        if value
+    )
 
     is_fragment = helpers.is_htmx_fragment(request)
     context = {
@@ -278,6 +288,7 @@ def collection_list(request, media_type=None):
         "available_formats": available_formats,
         "available_resolutions": available_resolutions,
         "available_hdr": available_hdr,
+        "available_locations": available_locations,
         "sort_choices": COLLECTION_SORT_CHOICES,
         "sort_by": sort_by,
         "direction": direction,
@@ -285,6 +296,7 @@ def collection_list(request, media_type=None):
         "format_filter": format_filter,
         "resolution_filter": resolution_filter,
         "hdr_filter": hdr_filter,
+        "location_filter": location_filter,
         "rating_filter": rating_filter,
         "completeness_filter": completeness_filter,
         "has_tv_family_collection": bool(
@@ -479,16 +491,6 @@ def collection_add(request):
         entry.user = request.user
         entry.item = item
         entry.save()
-
-        if item.media_type == MediaTypes.GAME.value:
-            game_exists = Game.objects.filter(user=request.user, item=item).exists()
-            if not game_exists:
-                Game.objects.create(
-                    user=request.user,
-                    item=item,
-                    status=Status.PLANNING.value,
-                    progress=0,
-                )
 
         collected_at = form.cleaned_data.get("collected_at")
         if collected_at:

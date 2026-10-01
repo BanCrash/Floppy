@@ -396,6 +396,7 @@
         sortables: [],
         sortableLoadPromise: null,
         nextRowId: 0,
+        subviewDefaults: { music: 'tracks', podcast: 'shows' },
         init() {
           window.homeScreenSettingsInstance = this;
           this.nextRowId = this.sections.reduce((maxId, section) => {
@@ -558,8 +559,8 @@
           else if (statuses.length > 1) parts.push(interpolate(ngettext('%s status', '%s Statuses', statuses.length), [statuses.length]));
           else parts.push(gettext('Library'));
 
-          if (section.media_type === 'music') {
-            const subview = row.filters?.subview || 'tracks';
+          if (section.media_type in this.subviewDefaults) {
+            const subview = row.filters?.subview || this.subviewDefaults[section.media_type];
             const subviewField = (section.filter_fields || []).find(field => field.key === 'subview');
             const subviewOption = (subviewField?.options || []).find(option => option.value === subview);
             const subviewLabel = subviewOption ? subviewOption.label : subview;
@@ -723,7 +724,7 @@
             tag: [],
             tag_mode: 'or'
           };
-          if (section.media_type === 'music') defaults.subview = 'tracks';
+          if (section.media_type in this.subviewDefaults) defaults.subview = this.subviewDefaults[section.media_type];
           return defaults;
         },
         removeRow(section, clientId) {

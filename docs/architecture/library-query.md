@@ -73,6 +73,32 @@ needs Python. A sort's SQL form is either `sql` (one value) or `sql_order`
 Home caches a Python-ordered shelf's id order for the row-cache lifetime, so
 "load more" costs one page.
 
+## Where filters come from
+
+The engine is one half. The other half turns what a surface was given into
+`FilterValues`, and there are exactly two of those:
+
+| Input | Parser | Used by |
+|---|---|---|
+| A URL query string | `app.media_list_filters.parse_media_list_filters` | Web media list (`strict=False`), API (strict), custom list pages (`strict=False`) |
+| Saved rule JSON | `lists.smart_rules.normalize_rule_payload`, then `adapters.filter_values_from_rules` | Smart lists, Home shelves |
+
+`strict` is the API contract: comma-separated values split, and an invalid
+value is a 400. The web pages read repeated parameters only, and an invalid
+value (a stale bookmark) means "not filtering". Relative date windows ("in the
+last 7 days") resolve with `smart_rules.resolve_relative_date_windows` in both
+parsers.
+
+On the page side, `static/js/libraryFilterState.js` is the filter menu's state
+(values, labels, clear) for every page that shows `filter_menu.html`. A page
+hands it its current filters in the smart-rule vocabulary:
+`MediaListFilters.menu_state()` for URL filters, the normalized rules for smart
+lists.
+
+The media list's Python-built paths (separate entries, time left) apply the
+rating and date ranges through the engine too (`apply_range_filters`), and the
+ranges are part of their cache keys.
+
 ## Adding a filter or sort
 
 - **Filter:** add a `FilterDef` to `filters.FILTERS` in the form it can be
@@ -82,7 +108,10 @@ Home caches a Python-ordered shelf's id order for the row-cache lifetime, so
   - `sql`: a condition on the item.
   - `predicate`: Python. Declare `needs` for what it reads.
 
-  Then add the field to `spec.FilterValues` and map it in `adapters`.
+  Then add the field to `spec.FilterValues` and map it in `adapters`. Parse
+  it in `parse_media_list_filters` (URL surfaces) and `normalize_rule_payload`
+  (saved rules), add it to `MediaListFilters.menu_state()`, and give the menu
+  state a default in `libraryFilterState.js`.
 - **Sort:** add a `SortDef` to `sorts.SORTS`, or `sorts.register(...)` it from
   the surface that owns it, as Home does for its upcoming, recent, completion
   and episodes-left orders.

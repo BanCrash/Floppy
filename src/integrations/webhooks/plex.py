@@ -732,6 +732,9 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                     )
                     return None
                 # Handle rating removal
+                if self._is_episode_rating(payload, media_type):
+                    self._apply_episode_rating(payload, user, ids, None, reference)
+                    return None
                 self._remove_rating(payload, user, ids, media_type)
                 return None
         except (TypeError, ValueError):
@@ -770,10 +773,17 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             return None
 
         # Apply rating based on media type
+        if self._is_episode_rating(payload, media_type):
+            return self._apply_episode_rating(
+                payload,
+                user,
+                ids,
+                normalized_rating,
+                reference,
+            )
         if media_type == MediaTypes.MOVIE.value:
             self._apply_movie_rating(payload, user, ids, normalized_rating)
         elif media_type == MediaTypes.TV.value:
-            # For TV, apply rating to the show (not episode-specific)
             self._apply_tv_rating(payload, user, ids, normalized_rating)
         elif media_type == MediaTypes.SEASON.value:
             self._apply_season_rating(
@@ -788,6 +798,72 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             return None
 
         return normalized_rating
+
+    def _is_episode_rating(self, payload, media_type):
+        metadata_type = (
+            ((payload.get("Metadata") or {}).get("type") or "").strip().lower()
+        )
+        return media_type == MediaTypes.TV.value and metadata_type == "episode"
+
+    def _apply_episode_rating(self, payload, user, ids, rating, reference):
+        """Rate (or clear, when ``rating`` is None) an episode's plays.
+
+        An episode rating never touches the show's score, and a rating alone
+        never creates a watch record.
+        """
+        from app.models import Sources
+        from app.services.episode_scores import (
+            set_episode_score,
+            tracked_episode_plays,
+        )
+
+        media_id = ids.get("tmdb_id")
+        season_number, episode_number = self._extract_season_episode_from_payload(
+            payload,
+        )
+        target = external_references.reference_target(reference)
+        if target and target.media_type == MediaTypes.EPISODE.value:
+            media_id = str(target.media_id)
+            season_number = target.season_number
+            episode_number = target.episode_number
+        elif target and target.media_type == MediaTypes.TV.value:
+            season_number, episode_number = external_references.map_episode_coordinates(
+                reference,
+                season_number,
+                episode_number,
+            )
+        if not media_id or season_number is None or episode_number is None:
+            logger.warning(
+                "Ignoring Plex episode rating without a show ID or episode numbers",
+            )
+            return None
+
+        episodes = tracked_episode_plays(
+            user,
+            media_id,
+            Sources.TMDB.value,
+            season_number,
+            episode_number,
+        )
+        if rating is None:
+            changed = episodes.exclude(score__isnull=True)
+        else:
+            changed = episodes.exclude(score=rating)
+        if set_episode_score(changed, rating, user.id):
+            logger.info(
+                "Updated episode rating from Plex webhook: S%sE%s=%s",
+                season_number,
+                episode_number,
+                rating,
+            )
+        elif not episodes.exists():
+            logger.info(
+                "Ignoring Plex rating for untracked episode S%sE%s",
+                season_number,
+                episode_number,
+            )
+            return None
+        return rating
 
     def _apply_movie_rating(self, payload, user, ids, rating):
         """Apply rating to a movie instance."""

@@ -88,7 +88,8 @@
         <a href="{{ tracker.artist|music_artist_url }}"
            class="media-card-title text-sm font-semibold text-[var(--color-text)] hover:text-[var(--color-link)] transition duration-300 line-clamp-1 min-w-0"
            title="{{ tracker.artist.name }}">{{ tracker.artist.name }}</a>
-        {% include "app/components/media_card_rating.html" with rating_value=tracker.score %}
+        {% url 'update_artist_score' tracker.artist.id as rate_url %}
+        {% include "app/components/media_card_rating.html" with rating_value=tracker.score rate_url=rate_url %}
       </div>
       {% if current_sort == 'release_date' and tracker.first_release_date %}
         <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1">{{ tracker.first_release_date|user_date_format:user }}</p>

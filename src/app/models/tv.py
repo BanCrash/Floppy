@@ -21,7 +21,7 @@ from app import cache_utils, providers
 from app.models.choices import USER_HELD_STATUSES, MediaTypes, Sources, Status
 from app.models.item import Item
 from app.models.manager import MediaManager
-from app.models.media import Media
+from app.models.media import Media, ScoreMonitorField
 
 logger = logging.getLogger(__name__)
 
@@ -2149,6 +2149,7 @@ class Episode(models.Model):
             "related_season",
             "created_at",
             "score",
+            "scored_at",
             "watch_operation_id",
             "external_id",
             # `start_date` and `status` are tracked: a play can be left in
@@ -2189,6 +2190,7 @@ class Episode(models.Model):
             MaxValueValidator(10),
         ],
     )
+    scored_at = ScoreMonitorField(monitor="score", null=True, blank=True)
 
     class Meta:
         """Meta options for the model."""
@@ -2198,6 +2200,11 @@ class Episode(models.Model):
             "item__episode_number",
             "-end_date",
             "-created_at",
+        ]
+        # History and Statistics build one day at a time with an end_date
+        # range; without this they walked every episode the user watched.
+        indexes = [
+            models.Index(fields=["end_date"], name="app_episode_end_date_idx"),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -2230,15 +2237,17 @@ class Episode(models.Model):
             # A rating belongs to the episode, not to one viewing of it — the
             # score endpoint writes every play at once — so a replay inherits
             # the rating instead of coming back unrated.
-            self.score = (
+            # It keeps the rating's own timestamp too, so a replay does not
+            # make an old rating look newly given.
+            self.score, self.scored_at = (
                 Episode.objects.filter(
                     related_season_id=self.related_season_id,
                     item_id=self.item_id,
                 )
                 .exclude(score__isnull=True)
-                .values_list("score", flat=True)
+                .values_list("score", "scored_at")
                 .first()
-            )
+            ) or (None, None)
 
         planning_entries, merged_fields = prepare_completed_entry(self)
         if merged_fields and kwargs.get("update_fields") is not None:

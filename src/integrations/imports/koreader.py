@@ -22,6 +22,7 @@ from app import helpers as app_helpers
 from app.log_safety import exception_summary
 from app.models import MediaTypes, Sources, Status
 from app.providers import services
+from app.services.synced_status import keep_held_status
 from integrations import connection_health, import_progress
 from integrations.imports.helpers import MediaImportError, decrypt_or_raise
 from integrations.models import KoreaderAccount, KoreaderDocumentLink
@@ -432,6 +433,20 @@ class KoreaderImporter:
             status = Status.IN_PROGRESS.value
             end_date = None
 
+        defaults = keep_held_status(
+            existing,
+            {
+                "progress": progress_value,
+                "status": status,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+            progress_time,
+        )
+        progress_value = defaults["progress"]
+        status = defaults["status"]
+        end_date = defaults["end_date"]
+
         if existing and self._book_progress_unchanged(
             existing,
             progress_value,
@@ -446,12 +461,7 @@ class KoreaderImporter:
         media, _created = app.models.Book.objects.update_or_create(
             user=self.user,
             item=item,
-            defaults={
-                "progress": progress_value,
-                "status": status,
-                "start_date": start_date,
-                "end_date": end_date,
-            },
+            defaults=defaults,
         )
         return media, existing is None
 

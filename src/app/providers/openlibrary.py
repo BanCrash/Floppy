@@ -7,7 +7,7 @@ import requests
 from django.conf import settings
 from django.core.cache import cache
 
-from app import helpers
+from app import helpers, request_timing
 from app.models import MediaTypes, Sources
 from app.providers import services
 
@@ -116,6 +116,7 @@ def get_image_url(doc):
         return settings.IMG_NONE
 
 
+@request_timing.timed_provider_call
 def book(media_id):
     """Get metadata for a book from Open Library."""
     return asyncio.run(async_book(media_id))

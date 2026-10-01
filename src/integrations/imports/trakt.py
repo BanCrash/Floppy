@@ -1,10 +1,13 @@
+import contextlib
 import json
 import logging
+import time
 from collections import defaultdict
 
 import requests
 from django.conf import settings
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django_celery_beat.models import PeriodicTask
 from simple_history.utils import bulk_update_with_history
@@ -31,6 +34,36 @@ TRAKT_DEVICE_MIN_INTERVAL = 5
 TRAKT_DEVICE_MAX_INTERVAL = 60
 BULK_PAGE_SIZE = 1000
 TRAKT_UNKNOWN_DATE = "1970-01-01T00:00:00.000Z"
+# History is the long loop of an export import; a line every so many entries
+# shows it moving without one INFO record per watch.
+HISTORY_LOG_EVERY = 1000
+
+
+@contextlib.contextmanager
+def _phase(name, username):
+    """Log the start, duration and outcome of one stage of an import.
+
+    Stages after the history loop write nothing per entry, so without these a
+    long run looks identical to a stuck one in the logs.
+    """
+    started = time.monotonic()
+    logger.info("Trakt import stage started: %s (user %s)", name, username)
+    try:
+        yield
+    except BaseException:
+        logger.warning(
+            "Trakt import stage failed: %s after %.1fs (user %s)",
+            name,
+            time.monotonic() - started,
+            username,
+        )
+        raise
+    logger.info(
+        "Trakt import stage finished: %s in %.1fs (user %s)",
+        name,
+        time.monotonic() - started,
+        username,
+    )
 
 def _parse_watched_at(watched_at: str):
     if watched_at == TRAKT_UNKNOWN_DATE:
@@ -129,9 +162,13 @@ def _refresh_redirect_uri():
     Celery worker) or because it is plain HTTP on a non-loopback host, which is
     also how the connection was made in the first place.
     """
+    # Runs in a Celery worker, whose ROOT_URLCONF is empty and whose
+    # INSTALLED_APPS lack allauth, so neither the default urlconf nor
+    # ``config.urls`` can be resolved there. ``integrations.urls`` holds the
+    # route, mounted at the root, and imports fine in every process.
     redirect_uri = app_helpers.build_absolute_app_url(
         None,
-        reverse("import_trakt_private"),
+        reverse("import_trakt_private", urlconf="integrations.urls"),
     )
     if not app_helpers.supports_oauth_redirect(redirect_uri):
         return TRAKT_OOB_REDIRECT_URI
@@ -694,37 +731,42 @@ class TraktImporter(TraktMetadataResolverMixin):
         """Import all user data from Trakt."""
         self._validate_username()
         self.process_dropped()
-        self.process_history()
-        self.process_watchlist()
-        self.process_ratings()
-        self.process_notes()
-        self.process_comments()
-        self.process_collection()
+        for name, stage in (
+            ("history", self.process_history),
+            ("watchlist", self.process_watchlist),
+            ("ratings", self.process_ratings),
+            ("notes", self.process_notes),
+            ("comments", self.process_comments),
+            ("collection", self.process_collection),
+        ):
+            with _phase(name, self.username):
+                stage()
 
-        helpers.cleanup_existing_media(self.to_delete, self.user)
-        helpers.bulk_create_media(self.bulk_media, self.user)
+        with _phase("save media", self.username):
+            helpers.cleanup_existing_media(self.to_delete, self.user)
+            helpers.bulk_create_media(self.bulk_media, self.user)
 
-        if self.completed_seasons:
-            bulk_update_with_history(
-                self.completed_seasons,
-                app.models.Season,
-                fields=["status"],
-                default_change_reason=f"Trakt import ({self.mode})",
-            )
-        if self.completed_tvs:
-            bulk_update_with_history(
-                self.completed_tvs,
-                app.models.TV,
-                fields=["status"],
-                default_change_reason=f"Trakt import ({self.mode})",
-            )
-        if self.dropped_tvs:
-            bulk_update_with_history(
-                self.dropped_tvs,
-                app.models.TV,
-                fields=["status"],
-                default_change_reason=f"Trakt import ({self.mode})",
-            )
+            if self.completed_seasons:
+                bulk_update_with_history(
+                    self.completed_seasons,
+                    app.models.Season,
+                    fields=["status"],
+                    default_change_reason=f"Trakt import ({self.mode})",
+                )
+            if self.completed_tvs:
+                bulk_update_with_history(
+                    self.completed_tvs,
+                    app.models.TV,
+                    fields=["status"],
+                    default_change_reason=f"Trakt import ({self.mode})",
+                )
+            if self.dropped_tvs:
+                bulk_update_with_history(
+                    self.dropped_tvs,
+                    app.models.TV,
+                    fields=["status"],
+                    default_change_reason=f"Trakt import ({self.mode})",
+                )
 
         # Neither bulk_create_media() nor bulk_update_with_history() call
         # TV.save(), so the season/episode cascade it normally fires for a
@@ -743,28 +785,30 @@ class TraktImporter(TraktMetadataResolverMixin):
             )
             if tv.pk
         }
-        for tv_obj in touched_tvs.values():
-            if tv_obj.status == Status.COMPLETED.value:
-                pending_date = self.tv_completion_dates.get(f"{tv_obj.item.media_id}")
-                if pending_date is not None:
-                    tv_obj._pending_end_date = pending_date
-                try:
-                    tv_obj._completed()
-                except (
-                    services.ProviderAPIError,
-                    requests.exceptions.RequestException,
-                    KeyError,
-                    TypeError,
-                    ValueError,
-                ) as error:
-                    logger.warning(
-                        "Skipping completion fan-out due to missing metadata"
-                        " for %s: %s",
-                        tv_obj.item.media_id,
-                        error,
-                    )
-            elif tv_obj.status == Status.DROPPED.value:
-                tv_obj._mark_in_progress_seasons_as_dropped()
+        with _phase("finish shows", self.username):
+            for i, tv_obj in enumerate(touched_tvs.values(), start=1):
+                import_progress.report(i, len(touched_tvs), "Trakt: finishing shows")
+                if tv_obj.status == Status.COMPLETED.value:
+                    pending_date = self.tv_completion_dates.get(f"{tv_obj.item.media_id}")
+                    if pending_date is not None:
+                        tv_obj._pending_end_date = pending_date
+                    try:
+                        tv_obj._completed()
+                    except (
+                        services.ProviderAPIError,
+                        requests.exceptions.RequestException,
+                        KeyError,
+                        TypeError,
+                        ValueError,
+                    ) as error:
+                        logger.warning(
+                            "Skipping completion fan-out due to missing metadata"
+                            " for %s: %s",
+                            tv_obj.item.media_id,
+                            error,
+                        )
+                elif tv_obj.status == Status.DROPPED.value:
+                    tv_obj._mark_in_progress_seasons_as_dropped()
 
         imported_counts = {
             media_type: len(media_list)
@@ -875,17 +919,24 @@ class TraktImporter(TraktMetadataResolverMixin):
         total = len(full_history)
         for i, entry in enumerate(reversed(full_history), start=1):
             import_progress.report(i, total, "Trakt: watch history")
+            if i % HISTORY_LOG_EVERY == 0:
+                logger.info(
+                    "Trakt history progress: %s of %s entries (user %s)",
+                    i,
+                    total,
+                    self.username,
+                )
             watched_at = entry["watched_at"]
             try:
                 if entry["type"] == "movie":
-                    logger.info(
+                    logger.debug(
                         "Processing movie %s watched at %s",
                         entry["movie"]["title"],
                         watched_at,
                     )
                     self.process_watched_movie(entry)
                 elif entry["type"] == "episode":
-                    logger.info(
+                    logger.debug(
                         "Processing episode %s S%sE%s watched at %s",
                         entry["show"]["title"],
                         entry["episode"]["season"],
@@ -1528,7 +1579,7 @@ class TraktImporter(TraktMetadataResolverMixin):
     def _process_generic_entry(self, entry, entry_type, attribute_updates):
         """Process a generic entry (watchlist, rating, or comment)."""
         if entry["type"] == "movie":
-            logger.info(
+            logger.debug(
                 "Processing movie %s for %s",
                 entry["movie"]["title"],
                 entry_type,
@@ -1547,7 +1598,7 @@ class TraktImporter(TraktMetadataResolverMixin):
                 entry_type=entry_type,
             )
         elif entry["type"] == "show":
-            logger.info(
+            logger.debug(
                 "Processing show %s for %s",
                 entry["show"]["title"],
                 entry_type,
@@ -1561,7 +1612,7 @@ class TraktImporter(TraktMetadataResolverMixin):
                 entry_type=entry_type,
             )
         elif entry["type"] == "season":
-            logger.info(
+            logger.debug(
                 "Processing season %s S%s for %s",
                 entry["show"]["title"],
                 entry["season"]["number"],
@@ -1577,7 +1628,7 @@ class TraktImporter(TraktMetadataResolverMixin):
                 entry_type=entry_type,
             )
         elif entry["type"] == "episode":
-            logger.info(
+            logger.debug(
                 "Processing episode %s S%sE%s for %s",
                 entry["show"]["title"],
                 entry["episode"]["season"],
@@ -1639,7 +1690,10 @@ class TraktImporter(TraktMetadataResolverMixin):
                 item__episode_number=episode_number,
             )
             if episodes.exists():
-                episodes.update(score=scaled_score)
+                episodes.exclude(score=scaled_score).update(
+                    score=scaled_score,
+                    scored_at=timezone.now(),
+                )
                 return
 
         # Fall back to in-memory episode objects from this same import run

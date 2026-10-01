@@ -4,12 +4,12 @@ import re
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import tag
 from django.urls import reverse
 from playwright.sync_api import expect, sync_playwright
 
 from app.models import Item, MediaTypes
+from app.tests.live_server import SerialStaticLiveServerTestCase
 from lists.models import CustomList, CustomListItem
 
 PERFECT_BLUE_MEDIA_ID = "437"
@@ -63,7 +63,7 @@ PERFECT_BLUE_METADATA = {
 
 
 @tag("slow", "playwright")
-class IntegrationTest(StaticLiveServerTestCase):
+class IntegrationTest(SerialStaticLiveServerTestCase):
     """Integration tests for the application."""
 
     @classmethod
@@ -320,3 +320,30 @@ class IntegrationTest(StaticLiveServerTestCase):
             page.wait_for_function("window.__listCountUpdates >= 1")
             expect(count).to_have_text("0 items")
             self.assertEqual(page.evaluate("window.__listCountUpdates"), 1)
+
+    def test_ticking_a_card_checkbox_selects_the_item(self):
+        """In Select Items mode the card's own checkbox selects the item."""
+        item = Item.objects.create(
+            media_id=PERFECT_BLUE_MEDIA_ID,
+            source="mal",
+            media_type=MediaTypes.ANIME.value,
+            title="Perfect Blue",
+            image=PERFECT_BLUE_SEARCH_RESULT["image"],
+        )
+        custom_list = CustomList.objects.create(name="Select test", owner=self.user)
+        CustomListItem.objects.create(custom_list=custom_list, item=item)
+        list_url = (
+            f"{self.live_server_url}"
+            f"{reverse('list_detail', args=[custom_list.public_reference])}"
+        )
+        self.page.goto(list_url)
+
+        self.page.get_by_role("button", name="Select Items").click()
+        checkbox = self.page.locator("#items-view input[type=checkbox]").first
+        checkbox.click()
+
+        # The checkbox sits inside the card's link; a click on it used to be
+        # cancelled, so it never ticked (the rest of the card still worked).
+        expect(checkbox).to_be_checked()
+        expect(self.page.get_by_text("1 selected")).to_be_visible()
+        self.assertEqual(self.page.url, list_url)

@@ -5,20 +5,22 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 from django.contrib.auth import get_user_model
-from django.contrib.staticfiles.testing import StaticLiveServerTestCase
-from django.test import tag
+from django.db import OperationalError
+from django.test import RequestFactory, tag
 from django.urls import reverse
 from django.utils import timezone
 from playwright.sync_api import expect, sync_playwright
 
 from app.discover.schemas import RowResult
+from app.middleware import DatabaseRetryMiddleware
 from app.models import Game, Item, MediaTypes, Movie, Sources, Status
+from app.tests.live_server import SerialStaticLiveServerTestCase
 from app.tests.views.test_track_modal import _tv_with_seasons_payload
 from users.models import DateFormatChoices, HomeScreenRow, HomeScreenRowTypeChoices
 
 
 @tag("slow", "playwright")
-class IntegrationTest(StaticLiveServerTestCase):
+class IntegrationTest(SerialStaticLiveServerTestCase):
     """Integration tests for the application."""
 
     @classmethod
@@ -122,6 +124,71 @@ class IntegrationTest(StaticLiveServerTestCase):
         """
         self.page.locator("#global-search").fill(query)
         self.page.locator('form:has(#global-search) button[type="submit"]').click()
+
+    def test_htmx_database_contention_retries_original_get(self):
+        """A failed fragment retries its full URL without another user click."""
+        requests = []
+
+        def respond(route):
+            requests.append(route.request.url)
+            if len(requests) <= 2:
+                route.fulfill(
+                    status=503,
+                    headers={"X-Floppy-Transient-DB": "contention"},
+                    body="",
+                )
+            else:
+                route.fulfill(status=200, body='<p id="contention-loaded">Loaded</p>')
+
+        self.page.route("**/track_modal/tmdb/tv/1396?*", respond)
+        self.page.evaluate(
+            """() => {
+                const target = document.createElement('div');
+                target.id = 'contention-test-target';
+                document.body.append(target);
+                const button = document.createElement('button');
+                button.id = 'contention-test-button';
+                button.textContent = 'Open';
+                button.setAttribute('hx-get', '/track_modal/tmdb/tv/1396?instance_id=7&home_row_id=recent');
+                button.setAttribute('hx-target', '#contention-test-target');
+                button.setAttribute('hx-trigger', 'click once');
+                document.body.append(button);
+                htmx.process(button);
+            }"""
+        )
+        self.page.locator("#contention-test-button").click()
+        expect(self.page.locator("#contention-test-target #contention-loaded")).to_be_visible()
+        self.assertEqual(len(requests), 3)
+        for request_url in requests:
+            query = parse_qs(urlparse(request_url).query)
+            self.assertEqual(query["instance_id"], ["7"])
+            self.assertEqual(query["home_row_id"], ["recent"])
+            self.assertEqual(len(query.get("org.htmx.cache-buster", [])), 1)
+            self.assertEqual(len(query.get("cache_bust", [])), 1)
+
+    def test_full_page_database_contention_reloads_until_success(self):
+        response = DatabaseRetryMiddleware(lambda _request: None).process_exception(
+            RequestFactory().get("/medialist/tv?page=2"),
+            OperationalError("database is locked"),
+        )
+        failures = 0
+
+        def fail_twice(route):
+            nonlocal failures
+            failures += 1
+            if failures <= 2:
+                route.fulfill(
+                    status=503,
+                    headers={"Content-Type": "text/html"},
+                    body=response.content,
+                )
+            else:
+                route.continue_()
+
+        self.page.route("**/medialist/tv?page=2", fail_twice)
+        self.page.goto(f"{self.live_server_url}/medialist/tv?page=2")
+        expect(self.page.locator("#global-search")).to_be_visible()
+        self.assertEqual(failures, 3)
 
     def test_touch_media_card_reveals_and_executes_wrapped_actions(self):
         """A coarse-pointer card reveals, dismisses, and accepts an action tap."""

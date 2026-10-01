@@ -84,7 +84,7 @@ Two things this section is careful about:
                 {% if row.kill_switch %}
                   <span class="px-2 py-0.5 text-xs rounded bg-amber-500/20 text-[var(--color-warning-text)]">Paused</span>
                 {% elif row.is_operational %}
-                  <span class="px-2 py-0.5 text-xs rounded bg-emerald-500/10 text-emerald-300">Active</span>
+                  <span class="px-2 py-0.5 text-xs rounded bg-emerald-500/10" style="color: var(--color-status-clean)">Active</span>
                 {% else %}
                   <span class="px-2 py-0.5 text-xs rounded bg-[var(--color-surface-muted)] text-[var(--color-text-secondary)]">
                     {{ row.binding.get_status_display }}
@@ -169,7 +169,7 @@ Two things this section is careful about:
                   <span class="text-[var(--color-text-muted)]">{{ capability.label }}</span>
                   <span class="text-[var(--color-text-muted)]">— not verified for this provider yet</span>
                 {% elif capability.approved %}
-                  <span class="text-emerald-300">On</span>
+                  <span style="color: var(--color-status-clean)">On</span>
                   <span class="text-[var(--color-text-secondary)]">{{ capability.label }}</span>
                 {% elif capability.supported %}
                   <span class="text-[var(--color-text-muted)]">Off</span>

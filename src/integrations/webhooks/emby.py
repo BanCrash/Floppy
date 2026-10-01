@@ -28,6 +28,7 @@ class EmbyWebhookProcessor(BaseWebhookProcessor):
     """Processor for Emby webhook events."""
 
     SOURCE_LABEL = "emby"
+    TV_IDS_ARE_EPISODE_LEVEL = True
 
     def process_payload(self, payload, user):
         """Process the incoming Emby webhook payload."""
@@ -183,7 +184,10 @@ class EmbyWebhookProcessor(BaseWebhookProcessor):
             if ids.get("tvdb_id") or ids.get("imdb_id"):
                 alt_ids = dict(ids)
                 alt_ids["tmdb_id"] = None
-                resolved_id, _, _ = super()._find_tv_media_id(alt_ids)
+                resolved_id, _, _ = super()._find_tv_media_id(
+                    alt_ids,
+                    episode_ids=True,
+                )
                 if resolved_id:
                     media_id = str(resolved_id)
 
@@ -194,6 +198,7 @@ class EmbyWebhookProcessor(BaseWebhookProcessor):
                     ids,
                     series_title=series_title,
                     allow_title_fallback=True,
+                    episode_ids=True,
                 )
                 if resolved_id:
                     media_id = str(resolved_id)

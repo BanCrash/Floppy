@@ -787,9 +787,9 @@
             <template x-for="opt in mediaTypeOptions" :key="opt.value">
               <button @click="selectMediaType(opt.value)"
                       class="stats-option-row"
-                      :class="{'is-selected': selectedMediaType === opt.value}">
+                      :class="{'is-selected': isMediaTypeSelected(opt.value)}">
                 <span class="stats-option-title" x-text="opt.label"></span>
-                <svg x-show="selectedMediaType === opt.value"
+                <svg x-show="isMediaTypeSelected(opt.value)"
                      xmlns="http://www.w3.org/2000/svg"
                      width="24"
                      height="24"
@@ -913,13 +913,13 @@
           </div>
         </div>
         <div class="min-w-0 stats-hero-cards">
-          <div x-show="selectedMediaType === 'all'" x-cloak>
+          <div x-show="isHighlightSetVisible('all')" x-cloak>
             {% with highlights=history_highlights %}
               {% include "app/components/statistics/highlight_set.html" %}
             {% endwith %}
           </div>
           {% for mt, type_highlights in history_highlights_by_type.items %}
-          <div x-show="selectedMediaType === '{{ mt }}'" x-cloak>
+          <div x-show="isHighlightSetVisible('{{ mt }}')" x-cloak>
             {% with highlights=type_highlights %}
               {% include "app/components/statistics/highlight_set.html" %}
             {% endwith %}
@@ -1362,7 +1362,7 @@
            hx-swap="outerHTML"
            class="mb-4 sm:mb-8 space-y-4 sm:space-y-4"
            style="margin-top: 1rem;"
-           x-show="['all','tv','movie','anime','game'].includes(selectedMediaType)">
+           x-show="isTalentVisible()">
         <div class="grid grid-cols-1 lg:grid-cols-5 gap-3 sm:gap-4 items-start">
           <div class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 lg:col-span-2 overflow-hidden animate-pulse">
             <div class="h-6 w-48 bg-gray-700 rounded mb-4"></div>
@@ -1990,6 +1990,7 @@
 {% endblock content %}
 
 {% block js %}
+  <script src="{% static 'js/stats-media-merge.js' %}{% get_static_file_mtime 'js/stats-media-merge.js' %}"></script>
   <script src="{% static 'js/date-range.js' %}{% get_static_file_mtime 'js/date-range.js' %}"
           data-date-format="{{ user_django_date_format }}"></script>
 
