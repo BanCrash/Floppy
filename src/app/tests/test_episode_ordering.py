@@ -6,8 +6,10 @@ from django.test import TestCase
 from django.utils import timezone
 
 from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
+from app.models.episode_order import EpisodeOrderChange
 from app.services.episode_ordering import (
     apply_change,
+    can_revert,
     latest_reversible_change,
     persist_order,
     preview_change,
@@ -253,6 +255,42 @@ class EpisodeOrderRevertTests(TestCase):
 
         self.tv.refresh_from_db()
         self.assertEqual(self.tv.active_episode_order_id, self.order.pk)
+
+    def test_revert_refuses_after_a_viewing_was_edited(self):
+        """Edited notes, scores or dates on a moved viewing are never overwritten."""
+        row = Episode.objects.filter(related_season__related_tv=self.tv).first()
+        Episode.objects.filter(pk=row.pk).update(notes="rewatched with friends")
+
+        self.assertFalse(can_revert(self.tv))
+        with self.assertRaises(ValueError):
+            revert_change(self.tv)
+
+        row.refresh_from_db()
+        self.assertEqual(row.notes, "rewatched with friends")
+
+    def test_can_revert_follows_the_same_rules_as_revert(self):
+        """The flag clients read is false as soon as a newer viewing exists."""
+        self.assertTrue(can_revert(self.tv))
+        item = Item.objects.create(
+            media_id=self.order.media_id, source=Sources.TVDB.value,
+            media_type=MediaTypes.EPISODE.value, season_number=5, episode_number=18,
+            provider_episode_id="t18", title="Barge of the Dead", episode_order=self.order,
+        )
+        season = Season.objects.get(related_tv=self.tv, order_archived=False)
+        Episode.objects.create(item=item, related_season=season, end_date=timezone.now())
+
+        self.assertFalse(can_revert(self.tv))
+
+    def test_the_active_change_is_found_behind_many_undone_ones(self):
+        """Undone journals never hide the change that is still active."""
+        change = latest_reversible_change(self.tv)
+        for _ in range(25):
+            EpisodeOrderChange.objects.create(
+                user=self.user, tv=self.tv, order=self.order,
+                before_state={"reverted": True},
+            )
+
+        self.assertEqual(latest_reversible_change(self.tv), change)
 
     def test_revert_needs_a_change_to_undo(self):
         """A show still on its original numbering has nothing to undo."""

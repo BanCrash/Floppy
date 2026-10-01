@@ -20,7 +20,7 @@ class EpisodeOrderView(APIView):
         orders, errors = available_orders(tv, request.user)
         return Response({
             "active": tv.active_episode_order_id, "orders": orders, "errors": errors,
-            "can_revert": episode_ordering.latest_reversible_change(tv) is not None,
+            "can_revert": episode_ordering.can_revert(tv),
         })
 
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)

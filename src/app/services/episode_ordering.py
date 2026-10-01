@@ -267,6 +267,10 @@ def apply_change(tv, order, *, token, resolutions):
     )
     for item in Item.objects.filter(pk__in=touched):
         project_watch_state(tv.user, item, record_changes=False)
+    journal.before_state = {**journal.before_state, "after_watches": {
+        str(row.pk): _watch_values(row) for row in _watches(tv)
+    }}
+    journal.save(update_fields=["before_state"])
     # Queryset updates and bulk creates fire no signals: mark the watched days
     # before and after the remap so Statistics rebuild them.
     from app import statistics_sync
@@ -278,14 +282,45 @@ def apply_change(tv, order, *, token, resolutions):
     return journal
 
 
+def _watch_values(row):
+    """Return a watch's editable fields in their stored (JSON) form."""
+    return json.loads(json.dumps(
+        {field: getattr(row, field) for field in WATCH_FIELDS}, cls=DjangoJSONEncoder,
+    ))
+
+
 def latest_reversible_change(tv):
     """Return the change that produced the active order, unless already undone."""
     if not tv.active_episode_order_id:
         return None
-    for change in EpisodeOrderChange.objects.filter(tv=tv).order_by("-pk")[:20]:
+    for change in EpisodeOrderChange.objects.filter(tv=tv).order_by("-pk").iterator():
         if not change.before_state.get("reverted"):
             return change if change.order_id == tv.active_episode_order_id else None
     return None
+
+
+def _revert_blocker(change, current):
+    """Say why an undo would lose data, or return None when it is safe."""
+    state = change.before_state
+    after = state.get("after_watches")
+    if after is None:  # journal written before the resulting state was recorded
+        known = {str(row["id"]) for row in state["watches"]}
+        known.update(str(pk) for pk in state.get("created_watch_ids", []))
+        after = dict.fromkeys(known)
+    rows = {str(row.pk): row for row in current}
+    if rows.keys() - after.keys():
+        return "Viewings were added since the ordering changed, so it cannot be undone"
+    if any(after[pk] is not None and _watch_values(row) != after[pk] for pk, row in rows.items()):
+        return "Viewings were edited since the ordering changed, so it cannot be undone"
+    if any(after[pk] is not None for pk in after.keys() - rows.keys()):
+        return "Viewings were removed since the ordering changed, so it cannot be undone"
+    return None
+
+
+def can_revert(tv):
+    """Report whether the latest order change can be undone without losing data."""
+    change = latest_reversible_change(tv)
+    return change is not None and _revert_blocker(change, list(_watches(tv))) is None
 
 
 @transaction.atomic
@@ -304,10 +339,9 @@ def revert_change(tv):
     restored = {row["id"]: row for row in before["watches"]}
     created = set(before.get("created_watch_ids", []))
     current = list(_watches(tv, lock=True))
-    if any(row.pk not in restored and row.pk not in created for row in current):
-        raise ValueError(
-            "Viewings were added since the ordering changed, so it cannot be undone",
-        )
+    blocker = _revert_blocker(change, current)
+    if blocker:
+        raise ValueError(blocker)
     touched = {row.item_id for row in current}
     moved_days = [row.end_date for row in current]
     Episode.all_objects.filter(pk__in=created).delete()
