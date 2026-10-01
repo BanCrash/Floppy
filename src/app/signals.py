@@ -107,6 +107,7 @@ TRACKED_TASK_NAMES = frozenset(
         "Import from Stremio (Recurring)",
         "Import from Last.fm History",
         "Import from Hardcover",
+        "Import from Hardcover Account",
         "Import from StoryGraph",
         "Import from Koito History",
         "Scheduled backup export",

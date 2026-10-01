@@ -4621,6 +4621,36 @@ def import_hardcover(request):
 
 
 @require_POST
+def hardcover_sync(request):
+    """Sync the user's Hardcover library now, or on the chosen import schedule."""
+    if not credentials.has_user_value("hardcover", request.user):
+        messages.error(request, "Save your Hardcover API key before syncing.")
+        return _integration_redirect(request)
+
+    mode = request.POST["mode"]
+    frequency = request.POST["frequency"]
+    if frequency == "once":
+        if _queue_task_or_message(
+            request,
+            tasks.import_hardcover_account,
+            user_id=request.user.id,
+            mode=mode,
+        ) is not False:
+            messages.info(request, "Hardcover sync queued.")
+    else:
+        helpers.create_import_schedule(
+            username=request.user.username,
+            request=request,
+            mode=mode,
+            frequency=frequency,
+            import_time=request.POST["time"],
+            source="Hardcover Account",
+            extra_kwargs={"user_id": request.user.id},
+        )
+    return _integration_redirect(request, connected_slug="hardcover")
+
+
+@require_POST
 def import_storygraph(request):
     """View for importing books data from StoryGraph CSV."""
     file = request.FILES.get("storygraph_csv")

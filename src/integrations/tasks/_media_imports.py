@@ -396,6 +396,13 @@ def import_hardcover(file, user_id, mode):
     return _run_file_import(hardcover.importer, file, user_id, mode)
 
 
+@shared_task(name="Import from Hardcover Account")
+def import_hardcover_account(user_id, mode="new", username=None):
+    """Sync the user's Hardcover library through its official API."""
+    del username
+    return import_media(hardcover.sync_importer, None, user_id, mode)
+
+
 @shared_task(name="Import from StoryGraph")
 def import_storygraph(file, user_id, mode):
     """Celery task for importing media data from StoryGraph."""
