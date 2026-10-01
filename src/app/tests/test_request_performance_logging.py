@@ -5,6 +5,7 @@ import time
 from unittest import mock
 
 from django.contrib.auth.models import AnonymousUser
+from django.db import connection
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase
 from django.test.utils import override_settings
@@ -136,14 +137,22 @@ class RequestTimingBreakdownTests(TestCase):
         self.assertLess(self._field(line, "cpu_ms"), 40)
 
     def test_database_time_is_counted(self):
+        def slow_query(execute, sql, params, many, context):
+            # A query on an empty table finishes in well under the 0.1 ms the
+            # log line rounds to, which made this test report db_ms=0.0 on a
+            # fast runner. Make the query take measurable time.
+            time.sleep(0.02)
+            return execute(sql, params, many, context)
+
         def view(_request):
-            list(Item.objects.all())
+            with connection.execute_wrapper(slow_query):
+                list(Item.objects.all())
             return HttpResponse("ok")
 
         _response, line = self._run(view)
 
         self.assertEqual(self._field(line, "queries"), 1)
-        self.assertGreater(self._field(line, "db_ms"), 0)
+        self.assertGreaterEqual(self._field(line, "db_ms"), 15)
 
     def test_server_timing_header_for_signed_in_users_only(self):
         response, _line = self._run(lambda _request: HttpResponse("ok"), self.user)
