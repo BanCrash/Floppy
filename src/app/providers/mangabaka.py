@@ -120,6 +120,7 @@ def manga(media_id):
                 "authors": series.get("authors") or None,
                 "artists": series.get("artists") or None,
                 "tags": get_tags(series),
+                "content_rating": (series.get("content_rating") or "").title() or None,
             },
             "related": {"related_manga": [], "recommendations": []},
         }
@@ -127,6 +128,15 @@ def manga(media_id):
         cache.set(cache_key, data)
 
     return data
+
+
+def is_searchable(metadata):
+    """Return whether a series passes the same filters as the search results."""
+    details = metadata["details"]
+    if (details["format"] or "").lower() in EXCLUDED_TYPES:
+        return False
+    rating = (details["content_rating"] or "").lower()
+    return settings.MANGABAKA_NSFW or rating not in NSFW_CONTENT_RATINGS
 
 
 def get_image_url(series):

@@ -1531,7 +1531,9 @@ def _lookup_by_numeric_id(media_type, query, source, user=None):
         if source == Sources.MANGAUPDATES.value:
             return mangaupdates.manga(query)
         if source == Sources.MANGABAKA.value:
-            return mangabaka.manga(n)
+            # Direct ID lookups follow the same filters as search results.
+            metadata = mangabaka.manga(n)
+            return metadata if mangabaka.is_searchable(metadata) else None
         return mal.manga(n)
     if media_type == MediaTypes.GAME.value:
         return igdb.game(n)

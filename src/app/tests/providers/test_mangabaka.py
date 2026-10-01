@@ -196,3 +196,40 @@ class MangaBakaProviderTests(TestCase):
 
         with self.assertRaises(services.ProviderAPIError):
             mangabaka.manga("999")
+
+    @patch("app.providers.mangabaka.services.api_request")
+    def test_direct_id_lookup_follows_search_filters(self, mock_request):
+        cases = [
+            (_series(), True, False),
+            (_series(type="novel"), False, False),
+            (_series(content_rating="erotica"), False, True),
+            (_series(content_rating="pornographic"), False, True),
+            (_series(content_rating="suggestive"), True, False),
+        ]
+        for series, searchable, nsfw_unlocks in cases:
+            with self.subTest(type=series["type"], rating=series.get("content_rating")):
+                cache.clear()
+                mock_request.return_value = {"status": 200, "data": series}
+                metadata = mangabaka.manga("1")
+
+                self.assertEqual(mangabaka.is_searchable(metadata), searchable)
+                with override_settings(MANGABAKA_NSFW=True):
+                    self.assertEqual(
+                        mangabaka.is_searchable(metadata),
+                        searchable or nsfw_unlocks,
+                    )
+
+    @patch("app.providers.mangabaka.manga")
+    def test_search_by_id_hides_filtered_series(self, mock_manga):
+        mock_manga.return_value = {
+            "title": "Adult Series",
+            "details": {"format": "Manga", "content_rating": "Pornographic"},
+        }
+
+        result = services.search_by_id(
+            MediaTypes.MANGA.value,
+            "84926",
+            Sources.MANGABAKA.value,
+        )
+
+        self.assertIsNone(result)
