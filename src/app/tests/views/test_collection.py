@@ -56,7 +56,12 @@ class CollectionListViewTest(TestCase):
             password="12345",
         )
         items = {}
-        for key, location in (("nas", "NAS"), ("home", "Home"), ("none", "")):
+        for key, location in (
+            ("nas", "NAS"),
+            ("home", "Home"),
+            ("all", "all"),
+            ("none", ""),
+        ):
             items[key] = Item.objects.create(
                 media_id=f"loc-{key}",
                 source=Sources.TMDB.value,
@@ -80,10 +85,18 @@ class CollectionListViewTest(TestCase):
         entries = list(response.context["collection_entries"])
         self.assertEqual([entry.item_id for entry in entries], [items["nas"].id])
         self.assertEqual(response.context["location_filter"], "NAS")
-        self.assertEqual(response.context["available_locations"], ["Home", "NAS"])
+        self.assertEqual(
+            response.context["available_locations"],
+            ["Home", "NAS", "all"],
+        )
 
+        # A location literally called "all" filters like any other.
         response = self.client.get(reverse("collection_list"), {"location": "all"})
-        self.assertEqual(len(response.context["collection_entries"]), 3)
+        entries = list(response.context["collection_entries"])
+        self.assertEqual([entry.item_id for entry in entries], [items["all"].id])
+
+        response = self.client.get(reverse("collection_list"))
+        self.assertEqual(len(response.context["collection_entries"]), 4)
 
     def test_collection_list_filtered_by_media_type(self):
         """Test filtering by media_type parameter."""

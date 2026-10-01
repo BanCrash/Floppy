@@ -17,7 +17,7 @@
     format: '{{ format_filter|default:'all' }}',
     resolution: '{{ resolution_filter|default:'all' }}',
     hdr: '{{ hdr_filter|default:'all' }}',
-    locationFilter: '{{ location_filter|default:'all'|escapejs }}',
+    locationFilter: '{{ location_filter|escapejs }}',
     rating: '{{ rating_filter|default:'all' }}',
     completeness: '{{ completeness_filter|default:'all' }}',
     query: '{{ search_query|default:''|escapejs }}',
@@ -35,10 +35,10 @@
     completenessLabels: { 'all': '{{ media_i18n_7|escapejs }}', 'partial': '{{ media_i18n_17|escapejs }}', 'full': '{{ media_i18n_18|escapejs }}' },
     getTypeLabel() { return this.typeLabels[this.type] || this.type; },
     activeFilterCount() {
-      return [this.type, this.format, this.resolution, this.hdr, this.locationFilter, this.rating, this.completeness].filter((v) => v !== 'all').length;
+      return [this.type, this.format, this.resolution, this.hdr, this.rating, this.completeness].filter((v) => v !== 'all').length + (this.locationFilter ? 1 : 0);
     },
     clearFilters() {
-      this.type = 'all'; this.format = 'all'; this.resolution = 'all'; this.hdr = 'all'; this.locationFilter = 'all'; this.rating = 'all'; this.completeness = 'all';
+      this.type = 'all'; this.format = 'all'; this.resolution = 'all'; this.hdr = 'all'; this.locationFilter = ''; this.rating = 'all'; this.completeness = 'all';
     },
     defaultDirection(value) { return value === 'collected_at' ? 'desc' : 'asc'; },
     setSort(value) {
@@ -176,7 +176,7 @@
                           @click="filterView = 'location'"
                           type="button">
                     <span class="flex-shrink-0 mr-3">{% translate "Location" %}</span>
-                    {% translate "Any" as media_i18n_7 %}<span class="ml-auto text-xs text-[var(--color-text-muted)] block min-w-0 truncate max-w-[8rem]" x-text="locationFilter === 'all' ? '{{ media_i18n_7|escapejs }}' : locationFilter"></span>
+                    {% translate "Any" as media_i18n_7 %}<span class="ml-auto text-xs text-[var(--color-text-muted)] block min-w-0 truncate max-w-[8rem]" x-text="locationFilter === '' ? '{{ media_i18n_7|escapejs }}' : locationFilter"></span>
                     <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
                   </button>
                 {% endif %}
@@ -338,10 +338,10 @@
                           hx-include="#filter-form"
                           hx-indicator="#collection-loading-indicator"
                           class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]"
-                          @click="locationFilter = 'all'; filtersOpen = false; filterView = 'root'"
+                          @click="locationFilter = ''; filtersOpen = false; filterView = 'root'"
                           type="button">
                     <span>{% translate "Any location" %}</span>
-                    <span class="ml-auto" x-show="locationFilter === 'all'">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+                    <span class="ml-auto" x-show="locationFilter === ''">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
                   </button>
                   {% for value in available_locations %}
                     <button hx-get="{% url 'collection_list' %}"

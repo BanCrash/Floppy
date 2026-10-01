@@ -129,9 +129,8 @@ def collection_list(request, media_type=None):
     hdr_filter = request.GET.get("hdr", "")
     if hdr_filter == "all":
         hdr_filter = ""
+    # Free text, so no value ("all" included) can double as "any location".
     location_filter = request.GET.get("location", "")
-    if location_filter == "all":
-        location_filter = ""
     rating_filter = request.GET.get("rating", "all")
     if rating_filter not in COLLECTION_RATING_CHOICES:
         rating_filter = "all"
