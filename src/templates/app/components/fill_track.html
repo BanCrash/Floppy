@@ -152,6 +152,16 @@
             {% endfor %}
           {% if general_fields|length > 1 %}</div>{% endif %}
 
+          {% if other_release_dates %}
+            <div class="mb-4 sm:mb-5 text-xs sm:text-sm text-[var(--color-text-muted)]"
+                 data-other-release-dates>
+              <span class="font-medium text-[var(--color-text-secondary)]">{% translate "Also released" %}</span>
+              {% for release in other_release_dates %}
+                <span class="ml-2">{{ release.label }} <span class="text-[var(--color-text)]">{{ release.date|date }}</span></span>
+              {% endfor %}
+            </div>
+          {% endif %}
+
           {% if show_koreader_document_field %}
             <div class="mb-4 sm:mb-5">
               <label class="block text-xs sm:text-sm font-medium mb-1 text-[var(--color-text-secondary)]"

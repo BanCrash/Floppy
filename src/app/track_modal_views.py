@@ -243,6 +243,30 @@ def _track_modal_date_suggestion(label, iso_date, runtime_minutes=""):
     }
 
 
+def _track_modal_other_release_dates(media_type, item, user):
+    """Return a movie's stored digital and physical dates for the user's region.
+
+    Read from the calendar's events, so opening the modal never calls a provider.
+    """
+    if media_type != MediaTypes.MOVIE.value or item is None:
+        return []
+
+    from events.models import Event
+
+    events = (
+        Event.objects.filter(item=item, region=user.watch_provider_region)
+        .exclude(release_type="")
+        .order_by("release_type", "datetime")
+    )
+    return [
+        {
+            "label": event.get_release_type_display(),
+            "date": event.datetime.date(),
+        }
+        for event in events
+    ]
+
+
 def _rewatch_action(media, media_type):
     """Return the rewatch action offered for a tracked show or season, if any.
 
@@ -862,6 +886,11 @@ def _render_standard_track_modal(
             else None
         ),
         "date_suggestion": date_suggestion,
+        "other_release_dates": _track_modal_other_release_dates(
+            media_type,
+            metadata_item,
+            request.user,
+        ),
         "manual_metadata_form": manual_metadata_form,
         "manual_metadata_formaction": (
             reverse("update_manual_item_metadata", args=[metadata_item.id])

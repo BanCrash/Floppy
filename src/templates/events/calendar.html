@@ -114,6 +114,28 @@
                   </div>
                 </template>
               </div>
+              <div class="border-t border-[var(--color-border)]">
+                <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--color-border)]">
+                  <div class="text-xs uppercase tracking-wide text-[var(--color-text-secondary)]">{% translate "Movie Release Dates" %}</div>
+                </div>
+                <template x-for="type in availableReleaseTypes" :key="type.value">
+                  <button type="button"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]"
+                          :class="{ 'opacity-50': !type.inMonth }"
+                          @click="toggleReleaseType(type.value)">
+                    <span x-text="type.label"></span>
+                    <span class="ml-auto" x-show="isReleaseTypeSelected(type.value)">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </template>
+                {% if region_unset %}
+                  <a href="{% url 'preferences' %}"
+                     class="block px-4 py-2 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+                    {% translate "Set your watch provider region in Preferences to see digital and physical dates." %}
+                  </a>
+                {% endif %}
+              </div>
             </div>
             <div x-show="!!statusSubmenuType" x-cloak>
               <div class="flex items-center gap-2 px-2 py-1 border-b border-[var(--color-border)]">
@@ -225,6 +247,12 @@
              '{{ status }}',
            {% endfor %}
          ],
+         selectedReleaseTypes: [
+           {% for value, label in release_type_choices %}
+             '{{ value }}',
+           {% endfor %}
+         ],
+         releaseTypeCount: {{ release_type_choices|length }},
          calendarBaseUrl: '{{ request.scheme }}://{{ request.get_host }}{% url 'download_calendar' token=user.token %}',
          get calendarExportUrl() {
            const params = new URLSearchParams();
@@ -234,6 +262,15 @@
            this.selectedStatuses.forEach((status) => {
              params.append('status', status);
            });
+           // Left out when every release date is shown, the feed's default.
+           if (this.selectedReleaseTypes.length < this.releaseTypeCount) {
+             this.selectedReleaseTypes.forEach((releaseType) => {
+               params.append('release_types', releaseType);
+             });
+             if (!this.selectedReleaseTypes.length) {
+               params.append('release_types', 'none');
+             }
+           }
            const query = params.toString();
            return query ? `${this.calendarBaseUrl}?${query}` : this.calendarBaseUrl;
          }
@@ -303,6 +340,32 @@
       </div>
     </div>
 
+    <div class="mb-4">
+      <div class="flex items-center mb-3">
+        {% include "app/icons/calendar.svg" with classes="w-5 h-5 text-[var(--color-link)] mr-2" %}
+        <h4 class="text-sm font-semibold">{% translate "Movie Release Dates" %}</h4>
+      </div>
+      <p class="text-[var(--color-text-muted)] mb-3 text-xs">
+        {% translate "Choose which digital and physical release dates to include in this calendar URL." %}
+      </p>
+      <div class="grid gap-3 md:grid-cols-3">
+        {% for value, label in release_type_choices %}
+          <div class="flex items-center justify-between p-3 bg-[var(--color-surface-strong)] rounded-md">
+            <span class="text-[var(--color-text-secondary)] text-sm">{{ label }}</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input class="sr-only peer"
+                     type="checkbox"
+                     value="{{ value }}"
+                     x-model="selectedReleaseTypes"
+                     checked>
+              <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
+              </div>
+            </label>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
     <div class="bg-[var(--color-surface-dim)] p-3 rounded-md mb-4">
       <input readonly=""
              class="w-full py-2 px-3 bg-[var(--color-surface-dim)] rounded-md text-[var(--color-text-secondary)] text-sm border-0 focus:ring-0 outline-none font-mono"
@@ -333,6 +396,20 @@
         selectedMediaTypes: [
           {% for media_type in filter_media_types %}
             '{{ media_type }}'{% if not forloop.last %},{% endif %}
+          {% endfor %}
+        ],
+        availableReleaseTypes: [
+          {% for value, label in release_type_choices %}
+            {
+              value: '{{ value }}',
+              label: '{{ label|escapejs }}',
+              inMonth: {% if value in available_release_types %}true{% else %}false{% endif %},
+            }{% if not forloop.last %},{% endif %}
+          {% endfor %}
+        ],
+        selectedReleaseTypes: [
+          {% for value, label in release_type_choices %}
+            '{{ value }}'{% if not forloop.last %},{% endif %}
           {% endfor %}
         ],
         availableStatusesByType: {
@@ -368,6 +445,10 @@
             this.applyFilter();
             this.persistFilters();
           });
+          this.$watch('selectedReleaseTypes', () => {
+            this.applyFilter();
+            this.persistFilters();
+          });
           this.$watch('selectedStatusesByType', () => {
             this.applyFilter();
             this.persistFilters();
@@ -387,6 +468,16 @@
             if (Array.isArray(saved.selectedMediaTypes)) {
               this.selectedMediaTypes = saved.selectedMediaTypes.filter(
                 mediaType => validTypes.has(mediaType),
+              );
+            }
+
+            // Saved before release dates existed: leave them all shown.
+            if (Array.isArray(saved.selectedReleaseTypes)) {
+              const validReleaseTypes = new Set(
+                this.availableReleaseTypes.map(type => type.value),
+              );
+              this.selectedReleaseTypes = saved.selectedReleaseTypes.filter(
+                value => validReleaseTypes.has(value),
               );
             }
 
@@ -421,6 +512,7 @@
           try {
             window.localStorage.setItem(this.storageKey, JSON.stringify({
               selectedMediaTypes: this.selectedMediaTypes,
+              selectedReleaseTypes: this.selectedReleaseTypes,
               selectedStatusesByType: this.selectedStatusesByType,
             }));
           } catch (error) {
@@ -437,10 +529,22 @@
           const statusMarker = this.hasPartialStatusFilter(type.value) ? ' ·' : '';
           return `${type.label}${statusMarker}`;
         },
+        isReleaseTypeSelected(value) {
+          return this.selectedReleaseTypes.includes(value);
+        },
+        toggleReleaseType(value) {
+          if (this.isReleaseTypeSelected(value)) {
+            this.selectedReleaseTypes = this.selectedReleaseTypes.filter(
+              selected => selected !== value,
+            );
+          } else {
+            this.selectedReleaseTypes = [...this.selectedReleaseTypes, value];
+          }
+        },
         dropdownLabel() {
           const statusFiltered = this.selectedMediaTypes.some(
             mediaType => this.hasPartialStatusFilter(mediaType),
-          );
+          ) || this.selectedReleaseTypes.length < this.availableReleaseTypes.length;
           const statusMarker = statusFiltered ? ' ·' : '';
           if (this.allTypesSelected()) {
             return `${gettext('All Types')}${statusMarker}`;
@@ -553,6 +657,7 @@
         },
         filterReleaseMarkup(html) {
           const selectedTypes = new Set(this.selectedMediaTypes);
+          const selectedReleaseTypes = new Set(this.selectedReleaseTypes);
           const container = document.createElement('div');
           container.innerHTML = html;
 
@@ -560,7 +665,9 @@
             const type = el.dataset.releaseMediaType;
             const status = el.dataset.releaseStatus;
             const selectedForType = this.selectedStatusesByType[type] || [];
-            const typeHidden = !selectedTypes.has(type);
+            const releaseType = el.dataset.releaseType;
+            const typeHidden = !selectedTypes.has(type)
+              || (releaseType && !selectedReleaseTypes.has(releaseType));
             const statusHidden = status && !selectedForType.includes(status);
             if (typeHidden || statusHidden) {
               el.remove();

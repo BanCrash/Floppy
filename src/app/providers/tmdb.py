@@ -47,8 +47,9 @@ TV_DETAIL_SEASON_APPEND_RESPONSES = (
     "season/{season}/watch/providers",
 )
 TMDB_SEASON_CACHE_VERSION = 4
-# Bumped when the movie payload gained provider_external_ids (issue #1066).
-TMDB_MOVIE_CACHE_VERSION = 2
+# Bumped when the movie payload gained provider_external_ids (issue #1066)
+# and again for release_types (digital and physical dates per region).
+TMDB_MOVIE_CACHE_VERSION = 3
 # Media-details carousel (trailer + photos): fetched lazily, its own cache
 # entry, independent of the movie/tv/season append_to_response payloads above.
 CAROUSEL_CACHE_TTL_SUCCESS = 60 * 60 * 24 * 7
@@ -612,6 +613,7 @@ def movie(media_id, language=None):
             "provider_external_ids": external_ids,
             "external_links": get_external_links(external_ids, media_id),
             "providers": response.get("watch/providers", {}).get("results", {}),
+            "release_types": get_movie_release_types(response.get("release_dates", {})),
         }
 
         cache.set(cache_key, data)
@@ -1731,6 +1733,42 @@ def get_movie_certification(release_dates_payload):
             if not fallback:
                 fallback = certification
     return fallback
+
+
+# TMDB release types worth a calendar entry of their own. The main release_date
+# (theatrical) is already covered, so premieres and TV airings are left out.
+MOVIE_RELEASE_TYPES = {4: "digital", 5: "physical"}
+
+
+def get_movie_release_types(release_dates_payload):
+    """Return the earliest digital and physical dates per region.
+
+    Shape: {"US": {"digital": "2027-01-20", "physical": "2027-02-14"}}. Regions
+    with neither type are left out.
+    """
+    results = []
+    if isinstance(release_dates_payload, dict):
+        results = release_dates_payload.get("results") or []
+
+    dates_by_region = {}
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        region = str(result.get("iso_3166_1") or "").upper()
+        if not region:
+            continue
+        for release in result.get("release_dates") or []:
+            if not isinstance(release, dict):
+                continue
+            release_type = MOVIE_RELEASE_TYPES.get(release.get("type"))
+            release_date = str(release.get("release_date") or "")[:10]
+            if not release_type or not release_date:
+                continue
+            region_dates = dates_by_region.setdefault(region, {})
+            if release_type not in region_dates or release_date < region_dates[release_type]:
+                region_dates[release_type] = release_date
+
+    return dates_by_region
 
 
 def get_profile_image_url(path, size="w185"):
