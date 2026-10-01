@@ -1229,6 +1229,8 @@ MAL_NSFW = config("MAL_NSFW", default=False, cast=bool)
 
 MU_NSFW = config("MU_NSFW", default=False, cast=bool)
 
+MANGABAKA_NSFW = config("MANGABAKA_NSFW", default=False, cast=bool)
+
 IGDB_ID = config(
     "IGDB_ID",
     default=secret(
