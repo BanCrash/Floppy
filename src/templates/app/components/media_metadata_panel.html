@@ -3,7 +3,7 @@
 {% load app_tags user_tags widget_tweaks %}
 
 <div class="space-y-6">
-  {% if match_item and media_type == MediaTypes.MOVIE.value or match_item and media_type == MediaTypes.TV.value or media_type == MediaTypes.TV.value and current_instance %}
+  {% if match_item and media_type == MediaTypes.MOVIE.value or match_item and media_type == MediaTypes.TV.value or media_type == MediaTypes.TV.value and current_instance or tv_provider_switch_target %}
     <section class="space-y-3">
       <div>
         <h3 class="text-xl font-semibold text-[var(--color-text)]">{% translate "Match & Ordering" %}</h3>
@@ -16,6 +16,12 @@
           <a href="{% url 'match_fix' match_item.id %}"
              class="inline-flex items-center rounded-md border border-[var(--color-surface-border)] bg-[var(--color-surface)] px-4 py-2 text-sm text-[var(--color-text)] shadow-sm transition-colors hover:bg-[var(--color-surface-muted)]">
             {% translate "Fix match" %}
+          </a>
+        {% endif %}
+        {% if tv_provider_switch_target %}
+          <a href="{% url 'switch_tv_provider' match_item.id %}"
+             class="inline-flex items-center rounded-md border border-[var(--color-surface-border)] bg-[var(--color-surface)] px-4 py-2 text-sm text-[var(--color-text)] shadow-sm transition-colors hover:bg-[var(--color-surface-muted)]">
+            {% if tv_provider_switch_target == "tvdb" %}{% translate "Move tracking to TVDB" %}{% else %}{% translate "Move tracking to TMDB" %}{% endif %}
           </a>
         {% endif %}
         {% if media_type == MediaTypes.TV.value and current_instance %}

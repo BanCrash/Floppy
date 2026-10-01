@@ -822,6 +822,11 @@ def _render_standard_track_modal(
         "metadata_tab_available": metadata_tab_available,
         "metadata_item": metadata_item,
         "match_item": metadata_item,
+        "tv_provider_switch_target": (
+            library_migration.tv_provider_switch_target(request.user, metadata_item)
+            if metadata_item is not None
+            else None
+        ),
         "current_instance": media,
         "general_hidden_fields": hidden_fields,
         "general_fields": general_fields,
