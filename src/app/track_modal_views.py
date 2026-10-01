@@ -234,13 +234,23 @@ def _track_modal_release_runtime_minutes(media_type, *candidates):
     return ""
 
 
-def _track_modal_date_suggestion(label, iso_date, runtime_minutes=""):
-    """Normalize a single labeled date suggestion for the shared date/time picker."""
+def _track_modal_date_suggestion(label, iso_date, runtime_minutes="", extras=()):
+    """Normalize a labeled date suggestion for the shared date/time picker.
+
+    ``extras`` are further ``{"label", "date"}`` quick dates offered next to it.
+    """
     return {
         "label": label,
         "date": iso_date or "",
         "runtime_minutes": runtime_minutes or "",
+        "extras": list(extras),
     }
+
+
+RELEASE_TYPE_SHORTCUT_LABELS = {
+    "digital": gettext_noop("Digital release"),
+    "physical": gettext_noop("Physical release"),
+}
 
 
 def _track_modal_other_release_dates(media_type, item, user):
@@ -260,8 +270,8 @@ def _track_modal_other_release_dates(media_type, item, user):
     )
     return [
         {
-            "label": event.get_release_type_display(),
-            "date": event.datetime.date(),
+            "label": RELEASE_TYPE_SHORTCUT_LABELS[event.release_type],
+            "date": event.datetime.date().isoformat(),
         }
         for event in events
     ]
@@ -800,10 +810,17 @@ def _render_standard_track_modal(
         ),
         base_metadata,
     )
+    other_release_dates = _track_modal_other_release_dates(
+        media_type,
+        metadata_item,
+        request.user,
+    )
     date_suggestion = _track_modal_date_suggestion(
-        "Release Date",
+        # Name the theatrical date once a digital or physical one sits beside it.
+        gettext_noop("Theatrical release") if other_release_dates else "Release Date",
         release_date_shortcut,
         release_date_runtime_minutes,
+        other_release_dates,
     )
     rewatch_action = _rewatch_action(media, media_type)
 
@@ -886,11 +903,6 @@ def _render_standard_track_modal(
             else None
         ),
         "date_suggestion": date_suggestion,
-        "other_release_dates": _track_modal_other_release_dates(
-            media_type,
-            metadata_item,
-            request.user,
-        ),
         "manual_metadata_form": manual_metadata_form,
         "manual_metadata_formaction": (
             reverse("update_manual_item_metadata", args=[metadata_item.id])

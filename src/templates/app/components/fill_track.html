@@ -141,9 +141,9 @@
                       </button>
                     </div>
                   {% elif field.name == "start_date" %}
-                    {% include "app/components/date_time_picker.html" with field_name=field.name field_value=field.value|default_if_none:"" field_id=field.id_for_label field_label=field.label mobile_label=_("Start:") track_time=TRACK_TIME suggestion_label=date_suggestion.label suggestion_date=date_suggestion.date suggestion_runtime_minutes=date_suggestion.runtime_minutes runtime_minutes=date_suggestion.runtime_minutes week_start=user.week_start_day use_12_hour=user|user_uses_12_hour_format copy_from=form.fields.end_date|yesno:"end_date," copy_from_label=_("End") quick_action_mode="start" only %}
+                    {% include "app/components/date_time_picker.html" with field_name=field.name field_value=field.value|default_if_none:"" field_id=field.id_for_label field_label=field.label mobile_label=_("Start:") track_time=TRACK_TIME suggestion_label=date_suggestion.label suggestion_date=date_suggestion.date suggestion_runtime_minutes=date_suggestion.runtime_minutes suggestion_extras=date_suggestion.extras runtime_minutes=date_suggestion.runtime_minutes week_start=user.week_start_day use_12_hour=user|user_uses_12_hour_format copy_from=form.fields.end_date|yesno:"end_date," copy_from_label=_("End") quick_action_mode="start" only %}
                   {% elif field.name == "end_date" %}
-                    {% include "app/components/date_time_picker.html" with field_name=field.name field_value=field.value|default_if_none:"" field_id=field.id_for_label field_label=field.label mobile_label=_("End:") track_time=TRACK_TIME suggestion_label=date_suggestion.label suggestion_date=date_suggestion.date suggestion_runtime_minutes=date_suggestion.runtime_minutes runtime_minutes=date_suggestion.runtime_minutes week_start=user.week_start_day use_12_hour=user|user_uses_12_hour_format copy_from=form.fields.start_date|yesno:"start_date," copy_from_label=_("Start") quick_action_mode="end" only %}
+                    {% include "app/components/date_time_picker.html" with field_name=field.name field_value=field.value|default_if_none:"" field_id=field.id_for_label field_label=field.label mobile_label=_("End:") track_time=TRACK_TIME suggestion_label=date_suggestion.label suggestion_date=date_suggestion.date suggestion_runtime_minutes=date_suggestion.runtime_minutes suggestion_extras=date_suggestion.extras runtime_minutes=date_suggestion.runtime_minutes week_start=user.week_start_day use_12_hour=user|user_uses_12_hour_format copy_from=form.fields.start_date|yesno:"start_date," copy_from_label=_("Start") quick_action_mode="end" only %}
                   {% else %}
                     {{ field|add_class:"w-full p-2 bg-[var(--color-surface-strong)] rounded-md text-[var(--color-text)] text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]" }}
                   {% endif %}
@@ -151,16 +151,6 @@
               </div>
             {% endfor %}
           {% if general_fields|length > 1 %}</div>{% endif %}
-
-          {% if other_release_dates %}
-            <div class="mb-4 sm:mb-5 text-xs sm:text-sm text-[var(--color-text-muted)]"
-                 data-other-release-dates>
-              <span class="font-medium text-[var(--color-text-secondary)]">{% translate "Also released" %}</span>
-              {% for release in other_release_dates %}
-                <span class="ml-2">{{ release.label }} <span class="text-[var(--color-text)]">{{ release.date|date }}</span></span>
-              {% endfor %}
-            </div>
-          {% endif %}
 
           {% if show_koreader_document_field %}
             <div class="mb-4 sm:mb-5">

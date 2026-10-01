@@ -3,13 +3,18 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.html import escapejs
 
 from app.models import Item, MediaTypes, Movie, Sources, Status
 from app.providers import tmdb
-from app.track_modal_views import _track_modal_other_release_dates
+from app.track_modal_views import (
+    _track_modal_date_suggestion,
+    _track_modal_other_release_dates,
+)
 from events.calendar.helpers import date_parser
 from events.calendar.main import cleanup_invalid_events, save_events
 from events.calendar.other import process_other
@@ -319,7 +324,7 @@ class ReleaseTypeSelectionTests(ReleaseTypeEventsMixin, TestCase):
 
 
 class TrackModalReleaseDatesTests(ReleaseTypeEventsMixin, TestCase):
-    """The track modal lists the other dates stored for the user's region."""
+    """The track modal date picker offers the other dates stored for the region."""
 
     def setUp(self):
         """Store dates for the user's region and for another region."""
@@ -345,9 +350,38 @@ class TrackModalReleaseDatesTests(ReleaseTypeEventsMixin, TestCase):
         )
 
         self.assertEqual(
-            [(row["label"], row["date"].isoformat()) for row in rows],
-            [("Digital", "2027-01-20"), ("Physical", "2027-02-14")],
+            [(row["label"], row["date"]) for row in rows],
+            [("Digital release", "2027-01-20"), ("Physical release", "2027-02-14")],
         )
+
+    def test_date_picker_offers_each_date_as_a_quick_button(self):
+        """The picker dropdown gets a button per date, next to the theatrical one."""
+        extras = _track_modal_other_release_dates(
+            MediaTypes.MOVIE.value,
+            self.item,
+            self.user,
+        )
+        suggestion = _track_modal_date_suggestion(
+            "Theatrical release",
+            "2026-12-12",
+            extras=extras,
+        )
+
+        html = render_to_string(
+            "app/components/date_time_picker.html",
+            {
+                "field_name": "start_date",
+                "field_id": "id_start_date",
+                "suggestion_label": suggestion["label"],
+                "suggestion_date": suggestion["date"],
+                "suggestion_extras": suggestion["extras"],
+            },
+        )
+
+        self.assertIn(f"applySuggestion('{escapejs('2027-01-20')}')", html)
+        self.assertIn(f"applySuggestion('{escapejs('2027-02-14')}')", html)
+        self.assertIn("Digital release", html)
+        self.assertIn("Physical release", html)
 
     def test_other_media_and_unset_region_have_none(self):
         """Nothing to show outside movies or without a region."""
