@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
 
 from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
@@ -16,6 +17,7 @@ from app.services.episode_ordering import (
     revert_change,
 )
 from app.services.order_resolution import resolve_incoming_episode
+from app.templatetags.app_tags import media_url
 
 
 class EpisodeOrderingTests(TestCase):
@@ -322,3 +324,142 @@ class EpisodeOrderWebhookTests(TestCase):
             )
 
         self.assertEqual([item.title for item in targets], ["Survival Instinct"])
+
+
+class EpisodeOrderingPageTests(TestCase):
+    """Verify the review page shows what to check and ends back on the show."""
+
+    def setUp(self):
+        """Seed a show and a logged-in user; provider calls are replaced."""
+        _voyager(self)
+        self.client.force_login(self.user)
+        self.url = reverse("episode_ordering_settings", args=[self.tv.pk])
+        orders = [{"provider": "tvdb", "key": "default", "label": "TVDB (Aired order)", "series_id": "74205"}]
+        for name, value in (
+            ("available_orders", (orders, [])),
+            ("selected_order", self.order),
+        ):
+            patcher = patch(f"app.episode_order_views.{name}", return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _preview(self):
+        return self.client.post(self.url, {"provider": "tvdb", "key": "default"})
+
+    def test_chooser_lists_orders_under_their_provider(self):
+        """The first step groups orders by provider and links back to the show."""
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["order_groups"][0][0], "TVDB")
+        self.assertContains(response, "TVDB (Aired order)")
+        self.assertContains(response, "Review changes")
+
+    def test_review_preselects_evidence_and_holds_back_coordinates(self):
+        """Title matches are filled in; a coordinate-only match waits for a click."""
+        item = self.watches[17].item
+        item.title = "Different name"
+        item.save()
+
+        rows = {row["id"]: row for row in self._preview().context["watches"]}
+
+        self.assertEqual(rows[self.watches[16].pk]["selected"], ["t17"])
+        self.assertEqual(rows[self.watches[16].pk]["kind"], "suggested")
+        self.assertEqual(rows[self.watches[17].pk]["selected"], [])
+        self.assertEqual(rows[self.watches[17].pk]["pending"], "t17")
+        self.assertEqual(
+            [row["episode_number"] for row in self._preview().context["watches"]],
+            [15, 16, 17],
+        )
+
+    def test_apply_returns_to_the_show_with_a_message(self):
+        """A successful apply leaves the review and reports it on the show page."""
+        preview = self._preview().context
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+
+        response = self.client.post(self.url, data)
+
+        self.assertRedirects(response, media_url(self.show), fetch_redirect_response=False)
+        self.tv.refresh_from_db()
+        self.assertEqual(self.tv.active_episode_order_id, self.order.pk)
+
+    def test_failed_apply_stays_in_the_review(self):
+        """An unresolved viewing keeps the user in the review with an error."""
+        preview = self._preview().context
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+
+        response = self.client.post(self.url, data)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("watches", response.context)
+        self.assertTrue(list(response.context["messages"]))
+
+    def test_revert_returns_to_the_show(self):
+        """Undo from the chooser restores the original numbering."""
+        preview = self._preview().context
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+        self.client.post(self.url, data)
+
+        self.assertTrue(self.client.get(self.url).context["can_revert"])
+        response = self.client.post(self.url, {"action": "revert"})
+
+        self.assertRedirects(response, media_url(self.show), fetch_redirect_response=False)
+        self.tv.refresh_from_db()
+        self.assertIsNone(self.tv.active_episode_order_id)
+
+    def test_archiving_a_combined_viewing_is_rejected(self):
+        """A viewing cannot be both archived and combined into another."""
+        preview = self._preview().context
+        first, second = preview["watches"][0]["id"], preview["watches"][1]["id"]
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+        data[f"combine_{second}"] = str(first)
+        data[f"archive_{second}"] = "on"
+
+        response = self.client.post(self.url, data)
+
+        self.assertEqual(response.status_code, 400)
+        self.tv.refresh_from_db()
+        self.assertIsNone(self.tv.active_episode_order_id)
+
+    def test_archiving_the_target_of_a_combination_is_rejected(self):
+        """Archiving a viewing others are folded into would archive them silently."""
+        preview = self._preview().context
+        first, second = preview["watches"][0]["id"], preview["watches"][1]["id"]
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+        data[f"combine_{second}"] = str(first)
+        data[f"archive_{first}"] = "on"
+
+        self.assertEqual(self.client.post(self.url, data).status_code, 400)
+
+    def test_undo_names_the_order_it_returns_to(self):
+        """After two changes, undo says it restores the first order, not the original."""
+        preview = self._preview().context
+        data = {"action": "apply", "order_id": self.order.pk, "token": preview["preview"]["token"]}
+        for row in preview["watches"]:
+            data[f"episodes_{row['id']}"] = row["selected"] or ["t15"]
+        self.client.post(self.url, data)
+
+        self.assertEqual(self.client.get(self.url).context["revert_label"], "Original numbering")
+
+        second = persist_order(
+            self.show, Sources.TVDB.value, "74205", "dvd", "TVDB (DVD order)",
+            self.order.catalogue,
+        )
+        self.tv.refresh_from_db()
+        second_preview = preview_change(self.tv, second)
+        apply_change(self.tv, second, token=second_preview["token"], resolutions=[
+            {"watch_ids": [row["id"]], "episode_ids": ["t15"], "archive": False}
+            for row in second_preview["watches"]
+        ])
+
+        context = self.client.get(self.url).context
+        self.assertEqual(context["revert_label"], "TVDB (Aired order)")
+        self.assertTrue(context["can_revert"])

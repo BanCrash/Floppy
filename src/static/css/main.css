@@ -1632,6 +1632,10 @@
     border-top-left-radius: var(--radius-2xl);
     border-top-right-radius: var(--radius-2xl);
   }
+  .rounded-t-md {
+    border-top-left-radius: var(--radius-md);
+    border-top-right-radius: var(--radius-md);
+  }
   .rounded-t-xl {
     border-top-left-radius: var(--radius-xl);
     border-top-right-radius: var(--radius-xl);
@@ -1782,6 +1786,12 @@
   .border-blue-700 {
     border-color: var(--color-blue-700);
   }
+  .border-amber-500\/50 {
+    border-color: color-mix(in srgb, oklch(76.9% 0.188 70.08) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-amber-500) 50%, transparent);
+    }
+  }
   .border-blue-700\/50 {
     border-color: color-mix(in srgb, oklch(48.8% 0.243 264.376) 50%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -1829,6 +1839,12 @@
   }
   .border-fuchsia-400 {
     border-color: var(--color-fuchsia-400);
+  }
+  .border-emerald-500\/50 {
+    border-color: color-mix(in srgb, oklch(69.6% 0.17 162.48) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-emerald-500) 50%, transparent);
+    }
   }
   .border-fuchsia-400\/18 {
     border-color: color-mix(in srgb, oklch(74% 0.238 322.16) 18%, transparent);
@@ -1930,6 +1946,12 @@
     border-color: color-mix(in srgb, oklch(58.5% 0.233 277.117) 30%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
       border-color: color-mix(in oklab, var(--color-indigo-500) 30%, transparent);
+    }
+  }
+  .border-indigo-500\/50 {
+    border-color: color-mix(in srgb, oklch(58.5% 0.233 277.117) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-indigo-500) 50%, transparent);
     }
   }
   .border-indigo-600 {
@@ -5461,6 +5483,11 @@
       width: calc(3/4 * 100%);
     }
   }
+  .md\:w-5\/12 {
+    @media (width >= 48rem) {
+      width: calc(5/12 * 100%);
+    }
+  }
   .md\:w-32 {
     @media (width >= 48rem) {
       width: calc(var(--spacing) * 32);
@@ -5555,6 +5582,11 @@
   .md\:items-start {
     @media (width >= 48rem) {
       align-items: flex-start;
+    }
+  }
+  .md\:justify-end {
+    @media (width >= 48rem) {
+      justify-content: flex-end;
     }
   }
   .md\:justify-start {
