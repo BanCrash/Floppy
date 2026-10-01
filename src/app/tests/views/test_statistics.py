@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import call, patch
 
 from dateutil.relativedelta import relativedelta
@@ -555,6 +555,11 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.context["selected_range_name"], "This Year")
         self.assertEqual(response.context["selected_range_dates_label"], "This Year")
 
+    # Pinned mid-month: on the 1st, month-to-date is a single day and is labelled "Today".
+    @patch(
+        "django.utils.timezone.now",
+        new=lambda: datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+    )
     def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()
