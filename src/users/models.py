@@ -1925,6 +1925,7 @@ class User(AbstractUser):
                 "Import from Audiobookshelf",
                 "Import from Audiobookshelf (Recurring)",
             ],
+            "kavita": ["Import from Kavita", "Import from Kavita (Recurring)"],
             "komga": ["Import from Komga", "Import from Komga (Recurring)"],
             "storyteller": [
                 "Import from Storyteller",
@@ -1952,6 +1953,7 @@ class User(AbstractUser):
             "mylar": ["Import from Mylar3 (Recurring)"],
             "kapowarr": ["Import from Kapowarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
+            "kavita": ["Import from Kavita (Recurring)"],
             "komga": ["Import from Komga (Recurring)"],
             "storyteller": ["Import from Storyteller (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
