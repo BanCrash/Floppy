@@ -3436,6 +3436,31 @@
               {% translate "Save" %}
             </button>
           </form>
+          <div class="mt-4 pt-4 border-t border-gray-600">
+            <p class="text-sm font-medium text-[var(--color-text)] mb-1">{% translate "Sync from your Hardcover account" %}</p>
+            <p class="text-sm text-[var(--color-text-muted)] mb-3">{% translate "Reads your shelves, ratings, dates and progress through Hardcover's API using your API key. Hardcover wins for status, rating, dates and progress; a Paused, Dropped or Completed status you set in Floppy stays until Hardcover shows newer activity." %}</p>
+            {% if hardcover_personal_key %}
+              <form method="post" action="{% url 'hardcover_sync' %}" class="space-y-3">
+                {% csrf_token %}
+                <div>
+                  <label class="block text-sm text-[var(--color-text-muted)] mb-2">{% translate "Repeat" %}</label>
+                  <select name="sync_interval_minutes"
+                          class="w-full py-2 px-3 bg-[var(--color-surface)] rounded-md text-[var(--color-text)] text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none">
+                    <option value="0" {% if not hardcover_sync_interval %}selected{% endif %}>{% translate "Only when I press Sync now" %}</option>
+                    <option value="60" {% if hardcover_sync_interval == 60 %}selected{% endif %}>{% translate "Every hour" %}</option>
+                    <option value="360" {% if hardcover_sync_interval == 360 %}selected{% endif %}>{% translate "Every 6 hours" %}</option>
+                    <option value="1440" {% if hardcover_sync_interval == 1440 %}selected{% endif %}>{% translate "Every day" %}</option>
+                  </select>
+                </div>
+                <button type="submit"
+                        class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                  {% translate "Sync now" %}
+                </button>
+              </form>
+            {% else %}
+              <p class="text-sm text-[var(--color-text-muted)]">{% translate "Save a Hardcover API key above to turn this on." %}</p>
+            {% endif %}
+          </div>
         </div>
           </div>
         </div>

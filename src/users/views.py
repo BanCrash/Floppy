@@ -1625,6 +1625,19 @@ def import_data(request):
                 audiobookshelf_periodic_task.interval.every
             )
 
+    from django_celery_beat.models import PeriodicTask as HardcoverPeriodicTask
+
+    hardcover_sync_task = HardcoverPeriodicTask.objects.filter(
+        task="Import from Hardcover (Recurring)",
+        enabled=True,
+        **periodic_task_user_kwargs(user.id),
+    ).first()
+    hardcover_sync_interval = (
+        hardcover_sync_task.interval.every
+        if hardcover_sync_task and hardcover_sync_task.interval
+        else 0
+    )
+
     # Get Last.fm periodic task status
     lastfm_periodic_task = None
     lastfm_poll_interval = getattr(settings, "LASTFM_POLL_INTERVAL_MINUTES", 15)
@@ -1708,6 +1721,7 @@ def import_data(request):
         "koito_history_can_start": koito_history_can_start,
         "koito_history_button_label": koito_history_button_label,
         "hardcover_personal_key": credentials.has_user_value("hardcover", user),
+        "hardcover_sync_interval": hardcover_sync_interval,
         "trakt_configured": bool(
             credentials.get("trakt", "client_id")
             and credentials.get("trakt", "client_secret"),

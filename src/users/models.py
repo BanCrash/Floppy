@@ -1941,7 +1941,10 @@ class User(AbstractUser):
                 "Import from Stremio (Recurring)",
             ],
             "lastfm": ["Import from Last.fm History"],
-            "hardcover": ["Import from Hardcover"],
+            "hardcover": [
+                "Import from Hardcover",
+                "Import from Hardcover (Recurring)",
+            ],
             "storygraph": ["Import from StoryGraph"],
             "koito": ["Import from Koito History"],
         }
@@ -1953,6 +1956,7 @@ class User(AbstractUser):
             "kapowarr": ["Import from Kapowarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
             "komga": ["Import from Komga (Recurring)"],
+            "hardcover": ["Import from Hardcover (Recurring)"],
             "storyteller": ["Import from Storyteller (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
             "gpodder": ["Import from GPodder (Recurring)"],

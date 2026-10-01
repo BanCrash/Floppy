@@ -139,6 +139,11 @@ urlpatterns = [
         name="import_audiobookshelf",
     ),
     path(
+        "import/hardcover/sync",
+        views.hardcover_sync,
+        name="hardcover_sync",
+    ),
+    path(
         "import/komga/connect",
         views.komga_connect,
         name="komga_connect",
