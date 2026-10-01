@@ -395,10 +395,11 @@ def import_hardcover(file, user_id, mode):
     return _run_file_import(hardcover.importer, file, user_id, mode)
 
 
-@shared_task(name="Import from Hardcover (Recurring)")
-def import_hardcover_recurring(user_id):
+@shared_task(name="Import from Hardcover Account")
+def import_hardcover_account(user_id, mode="new", username=None):
     """Sync the user's Hardcover library through its official API."""
-    return import_media(hardcover.sync_importer, None, user_id, "new")
+    del username
+    return import_media(hardcover.sync_importer, None, user_id, mode)
 
 
 @shared_task(name="Import from StoryGraph")

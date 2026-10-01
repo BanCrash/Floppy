@@ -4571,37 +4571,33 @@ def import_hardcover(request):
     return _integration_redirect(request, connected_slug="hardcover")
 
 
-HARDCOVER_SYNC_INTERVAL_CHOICES = (60, 360, 1440)
-
-
 @require_POST
 def hardcover_sync(request):
-    """Sync the user's Hardcover library now and set how often it repeats."""
-    from django_celery_beat.models import PeriodicTask
-
+    """Sync the user's Hardcover library now, or on the chosen import schedule."""
     if not credentials.has_user_value("hardcover", request.user):
         messages.error(request, "Save your Hardcover API key before syncing.")
         return _integration_redirect(request)
 
-    try:
-        interval = int(request.POST.get("sync_interval_minutes", 0))
-    except ValueError:
-        interval = 0
-
-    def _schedule():
-        if interval in HARDCOVER_SYNC_INTERVAL_CHOICES:
-            _ensure_recurring_import_schedule(request.user, "Hardcover", interval)
-        else:
-            PeriodicTask.objects.filter(
-                task="Import from Hardcover (Recurring)",
-                **helpers.periodic_task_user_kwargs(request.user.id),
-            ).delete()
-
-    _run_with_lock_retry("schedule Hardcover sync", _schedule)
-    if _queue_task_or_message(
-        request, tasks.import_hardcover_recurring, user_id=request.user.id
-    ) is not False:
-        messages.info(request, "Hardcover sync queued.")
+    mode = request.POST["mode"]
+    frequency = request.POST["frequency"]
+    if frequency == "once":
+        if _queue_task_or_message(
+            request,
+            tasks.import_hardcover_account,
+            user_id=request.user.id,
+            mode=mode,
+        ) is not False:
+            messages.info(request, "Hardcover sync queued.")
+    else:
+        helpers.create_import_schedule(
+            username=request.user.username,
+            request=request,
+            mode=mode,
+            frequency=frequency,
+            import_time=request.POST["time"],
+            source="Hardcover Account",
+            extra_kwargs={"user_id": request.user.id},
+        )
     return _integration_redirect(request, connected_slug="hardcover")
 
 

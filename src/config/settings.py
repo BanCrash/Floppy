@@ -1736,7 +1736,7 @@ CELERY_TASK_ROUTES = {
         "priority": CELERY_TASK_PRIORITY_FOLLOWUP,
     },
     "Import from Komga (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
-    "Import from Hardcover (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
+    "Import from Hardcover Account": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from Pocket Casts (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from GPodder (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Migrate TV shows to preferred metadata provider": {

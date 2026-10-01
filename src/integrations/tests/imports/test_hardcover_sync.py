@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -57,9 +58,9 @@ class HardcoverAccountSyncTests(TestCase):
             image="http://example.com/c.jpg",
         )
 
-    def _sync(self, entries):
+    def _sync(self, entries, mode="overwrite"):
         with patch(f"{PROVIDER}.fetch_user_books", return_value=entries):
-            return hardcover.sync_importer(None, self.user, "new")
+            return hardcover.sync_importer(None, self.user, mode)
 
     def test_creates_entry_with_status_rating_dates_and_progress(self):
         self._item(1)
@@ -140,6 +141,24 @@ class HardcoverAccountSyncTests(TestCase):
         self.assertEqual(book.score, 6)
         self.assertEqual(book.notes, "my note")
         self.assertEqual(counts["updated"], 1)
+
+    def test_new_mode_adds_missing_books_but_leaves_tracked_ones_alone(self):
+        tracked = self._item(1)
+        self._item(2)
+        Book.objects.create(user=self.user, item=tracked, status=Status.PLANNING.value)
+
+        counts, _ = self._sync([_entry(1, 3, rating=5), _entry(2, 2)], mode="new")
+
+        self.assertEqual(
+            Book.objects.get(user=self.user, item=tracked).status,
+            Status.PLANNING.value,
+        )
+        self.assertEqual(
+            Book.objects.get(user=self.user, item__media_id="2").status,
+            Status.IN_PROGRESS.value,
+        )
+        self.assertEqual(counts["created"], 1)
+        self.assertEqual(counts["unchanged"], 1)
 
     def test_missing_rating_keeps_existing_score(self):
         item = self._item(1)
@@ -282,33 +301,44 @@ class HardcoverFetchUserBooksTests(TestCase):
 
 
 class HardcoverSyncViewTests(TestCase):
-    """Test the Sync now button and its schedule."""
+    """Test the Sync now button follows the shared import frequency."""
 
     def setUp(self):
+        cache.clear()
         self.user = get_user_model().objects.create_user(
             username="hc",
             password="12345",
         )
         self.client.login(username="hc", password="12345")
-        self.task = "Import from Hardcover (Recurring)"
+        self.task = "Import from Hardcover Account"
+        self.form = {"mode": "overwrite", "frequency": "once", "time": "06:30"}
 
     def test_needs_a_personal_key(self):
-        with patch("integrations.tasks.import_hardcover_recurring.delay") as delay:
-            self.client.post(reverse("hardcover_sync"), {"sync_interval_minutes": 60})
+        with patch("integrations.tasks.import_hardcover_account.delay") as delay:
+            self.client.post(reverse("hardcover_sync"), self.form)
         delay.assert_not_called()
+
+    def test_once_queues_a_sync_with_the_chosen_mode(self):
+        credentials.set_user("hardcover", self.user, {"api_key": "token"})
+        with patch("integrations.tasks.import_hardcover_account.delay") as delay:
+            self.client.post(reverse("hardcover_sync"), self.form)
+        delay.assert_called_once_with(user_id=self.user.id, mode="overwrite")
         self.assertFalse(PeriodicTask.objects.filter(task=self.task).exists())
 
-    def test_schedules_and_queues_a_sync(self):
+    def test_daily_schedules_instead_of_queueing(self):
         credentials.set_user("hardcover", self.user, {"api_key": "token"})
-        with patch("integrations.tasks.import_hardcover_recurring.delay") as delay:
-            self.client.post(reverse("hardcover_sync"), {"sync_interval_minutes": 360})
-        delay.assert_called_once_with(user_id=self.user.id)
+        with patch("integrations.tasks.import_hardcover_account.delay") as delay:
+            self.client.post(
+                reverse("hardcover_sync"),
+                {**self.form, "frequency": "daily"},
+            )
+        delay.assert_not_called()
         task = PeriodicTask.objects.get(task=self.task)
-        self.assertEqual(task.interval.every, 360)
-
-    def test_off_removes_the_schedule(self):
-        credentials.set_user("hardcover", self.user, {"api_key": "token"})
-        with patch("integrations.tasks.import_hardcover_recurring.delay"):
-            self.client.post(reverse("hardcover_sync"), {"sync_interval_minutes": 60})
-            self.client.post(reverse("hardcover_sync"), {"sync_interval_minutes": 0})
-        self.assertFalse(PeriodicTask.objects.filter(task=self.task).exists())
+        self.assertEqual(
+            json.loads(task.kwargs),
+            {
+                "username": "hc",
+                "user_id": self.user.id,
+                "mode": "overwrite",
+            },
+        )

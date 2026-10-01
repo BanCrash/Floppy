@@ -38,7 +38,7 @@ def importer(file, user, mode):
 
 def sync_importer(identifier, user, mode):
     """Sync the user's Hardcover library through Hardcover's official API."""
-    return HardcoverAccountSync(user).import_data()
+    return HardcoverAccountSync(user, mode).import_data()
 
 
 class HardcoverImporter:
@@ -300,15 +300,16 @@ class HardcoverImporter:
 class HardcoverAccountSync(HardcoverImporter):
     """Keep books in step with the user's Hardcover library (official API).
 
-    Hardcover wins for status, rating, dates and progress of the books it
-    tracks, except that a Paused, Dropped or Completed status chosen in Floppy
-    stays until Hardcover shows later activity (``keep_held_status``). Notes are
-    only written when an entry is first created. Nothing is deleted.
+    Books Floppy doesn't track yet are always added. Books it already tracks
+    change only in "overwrite" mode, where Hardcover wins for status, rating,
+    dates and progress, except that a Paused, Dropped or Completed status chosen
+    in Floppy stays until Hardcover shows later activity (``keep_held_status``).
+    Notes are only written when an entry is first created. Nothing is deleted.
     """
 
-    def __init__(self, user):
-        """Initialize the sync for one user."""
-        super().__init__(None, user, "new")
+    def __init__(self, user, mode="new"):
+        """Initialize the sync for one user and import mode."""
+        super().__init__(None, user, mode)
 
     def import_data(self):
         """Fetch the Hardcover library and write every changed entry."""
@@ -346,6 +347,9 @@ class HardcoverAccountSync(HardcoverImporter):
 
         model = app.models.Book
         existing = model.objects.filter(user=self.user, item=item).first()
+        if existing and self.mode != "overwrite":
+            counts["unchanged"] += 1
+            return
         defaults = keep_held_status(
             existing,
             self._entry_defaults(entry, status, existing),
