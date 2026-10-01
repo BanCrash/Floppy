@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
@@ -220,3 +220,102 @@ class TvProviderSwitchTests(TestCase):
 
         self.assertContains(response, "1x2")
         self.assertContains(response, "disabled")
+
+
+@override_settings(TVDB_API_KEY="test-tvdb-key")
+class TvProviderPromptTests(TestCase):
+    """Switching the TV default asks before moving, and "leave" really leaves."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="provider-prompt",
+            password="pw12345",
+        )
+        self.client.force_login(self.user)
+
+    def _track(self, source, media_id="1396"):
+        item = Item.objects.create(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.TV.value,
+            title=f"Show {media_id}",
+        )
+        TV.objects.create(item=item, user=self.user, status=Status.IN_PROGRESS.value)
+        return item
+
+    def _switch_default(self, source):
+        return self.client.post(
+            reverse("set_media_type_provider", args=[MediaTypes.TV.value]),
+            {"source": source},
+            follow=True,
+        )
+
+    def test_prompt_appears_once_and_pauses_the_nightly_move(self):
+        self._track(Sources.TMDB.value)
+
+        response = self._switch_default(Sources.TVDB.value)
+
+        self.assertContains(response, "Move your tracked shows to")
+        self.assertContains(response, "Leave my library as it is")
+        self.assertContains(response, reverse("convert_tv_library"))
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.tv_auto_move_to_default_provider)
+        again = self.client.get(reverse("metadata_settings"))
+        self.assertNotContains(again, "Move your tracked shows to")
+
+    def test_no_prompt_and_flag_untouched_when_nothing_is_on_the_other_provider(self):
+        self._track(Sources.TVDB.value, "81189")
+
+        response = self._switch_default(Sources.TVDB.value)
+
+        self.assertNotContains(response, "Move your tracked shows to")
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.tv_auto_move_to_default_provider)
+
+    def test_leaving_the_library_keeps_it_out_of_the_nightly_job(self):
+        from app.tasks_tv_provider_migration import _migration_candidates_queryset
+
+        item = self._track(Sources.TMDB.value)
+        self._switch_default(Sources.TVDB.value)
+
+        self.assertNotIn(item, _migration_candidates_queryset())
+
+    def test_move_endpoint_queues_the_task_and_turns_nightly_back_on(self):
+        self.user.tv_auto_move_to_default_provider = False
+        self.user.save(update_fields=["tv_auto_move_to_default_provider"])
+
+        with patch(
+            "app.tasks_tv_provider_migration.move_user_tv_library_task.delay",
+        ) as mock_delay:
+            response = self.client.post(reverse("convert_tv_library"))
+
+        self.assertEqual(response.status_code, 302)
+        mock_delay.assert_called_once_with(self.user.id)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.tv_auto_move_to_default_provider)
+
+    def test_task_moves_what_it_can_and_names_what_it_leaves(self):
+        from app.tasks_tv_provider_migration import move_user_tv_library_task
+
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save(update_fields=["tv_metadata_source_default"])
+        movable = self._track(Sources.TMDB.value, "1")
+        blocked = self._track(Sources.TMDB.value, "2")
+        self._track(Sources.TVDB.value, "3")  # already on the default provider
+
+        def fake_switch(user, item):
+            if item.pk == blocked.pk:
+                raise LibraryMigrationError("missing episodes")
+            return item
+
+        with patch(
+            "app.services.library_migration.switch_tv_provider",
+            side_effect=fake_switch,
+        ) as mock_switch:
+            result = move_user_tv_library_task(self.user.id)
+
+        self.assertEqual(result, {"moved": 1, "skipped": 1, "unresolved": [blocked.title]})
+        self.assertEqual(
+            {call.args[1].pk for call in mock_switch.call_args_list},
+            {movable.pk, blocked.pk},
+        )

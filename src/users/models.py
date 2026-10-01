@@ -867,6 +867,14 @@ class User(AbstractUser):
         ],
         help_text="Default metadata provider for TV details and search tabs.",
     )
+    tv_auto_move_to_default_provider = models.BooleanField(
+        default=True,
+        help_text=(
+            "Let the nightly job move TV shows tracked on the other provider to "
+            "the default provider. Turned off when the user chooses to leave "
+            "their library as it is after switching providers."
+        ),
+    )
     anime_metadata_source_default = models.CharField(
         max_length=20,
         # TMDB by default so the Anime library gets real season/episode trees,
