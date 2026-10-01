@@ -10,6 +10,11 @@
         <p class="text-sm text-[var(--color-text-muted)] mt-1">
           {% translate "Correct which title this entry is matched to, or change how its episodes are ordered." %}
         </p>
+        {% if media_type == MediaTypes.TV.value and current_instance and current_instance.active_episode_order %}
+          <p class="text-sm text-[var(--color-text-secondary)] mt-1">
+            {% translate "Episode order:" %} <span class="font-semibold">{{ current_instance.active_episode_order.label }}</span>
+          </p>
+        {% endif %}
       </div>
       <div class="flex flex-wrap gap-2">
         {% if match_item and media_type == MediaTypes.MOVIE.value or match_item and media_type == MediaTypes.TV.value %}

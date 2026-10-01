@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import call, patch
 
 from dateutil.relativedelta import relativedelta
@@ -555,15 +555,19 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.context["selected_range_name"], "This Year")
         self.assertEqual(response.context["selected_range_dates_label"], "This Year")
 
+    # Pinned mid-month: on the 1st, month-to-date is a single day and is labelled "Today".
+    @patch(
+        "django.utils.timezone.now",
+        new=lambda: datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+    )
     def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()
         self.client.login(**self.credentials)
-        today = timezone.localdate()
-        if today.day == 1:
-            self.skipTest(
-                "Month-to-date is a single day, labelled Today, on the first of the month."
-            )
+        # On the 1st the month-to-date range is one day and is correctly
+        # labelled "Today", so pin "today" to the 15th of last month.
+        real_localdate = timezone.localdate
+        today = (timezone.localdate().replace(day=1) - timedelta(days=1)).replace(day=15)
         month_start = today.replace(day=1)
         last_year_today = today - relativedelta(years=1)
 
@@ -572,14 +576,18 @@ class StatisticsViewTests(TestCase):
             "movie-last-year-mtd", "Last Year Movie", last_year_today, 60
         )
 
-        response = self.client.get(
-            reverse("statistics")
-            + (
-                f"?start-date={month_start.isoformat()}"
-                f"&end-date={today.isoformat()}"
-                "&compare=last_year"
-            ),
-        )
+        def pinned_localdate(value=None, timezone=None):
+            return today if value is None else real_localdate(value, timezone)
+
+        with patch("django.utils.timezone.localdate", side_effect=pinned_localdate):
+            response = self.client.get(
+                reverse("statistics")
+                + (
+                    f"?start-date={month_start.isoformat()}"
+                    f"&end-date={today.isoformat()}"
+                    "&compare=last_year"
+                ),
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_range_name"], "This Month")

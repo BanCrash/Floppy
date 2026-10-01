@@ -516,8 +516,8 @@ class CollectionAddViewTest(TestCase):
         entry = CollectionEntry.objects.get(user=self.user, item=game_item)
         self.assertEqual(entry.resolution, long_platform)
 
-    def test_collection_add_creates_planning_game_when_untracked(self):
-        """Adding collection metadata for an untracked game creates a Planning tracker row."""
+    def test_collection_add_does_not_track_untracked_game(self):
+        """Collecting a game never creates a tracker row, same as every other type."""
         self.client.login(**self.credentials)
         game_item = Item.objects.create(
             media_id="game-2000",
@@ -539,9 +539,7 @@ class CollectionAddViewTest(TestCase):
         self.assertTrue(
             CollectionEntry.objects.filter(user=self.user, item=game_item).exists()
         )
-        game_tracker = Game.objects.get(user=self.user, item=game_item)
-        self.assertEqual(game_tracker.status, Status.PLANNING.value)
-        self.assertEqual(game_tracker.progress, 0)
+        self.assertFalse(Game.objects.filter(user=self.user, item=game_item).exists())
 
     def test_collection_add_does_not_change_existing_game_status(self):
         """Adding collection metadata must not overwrite an existing tracked game state."""
