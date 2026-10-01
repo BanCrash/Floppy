@@ -62,6 +62,86 @@ _TV_FAMILY_MEDIA_TYPES = {
 }
 
 
+def _custom_fields_for_list(user, media_type):
+    """Return the user's custom fields that apply to *media_type* (all when blank)."""
+    fields = CollectionField.objects.filter(group__user=user).order_by(
+        "group__position",
+        "group_id",
+        "position",
+        "id",
+    )
+    return [
+        field for field in fields if not media_type or media_type in field.media_types
+    ]
+
+
+def _custom_field_filters(fields):
+    """Return the filter menu entries: dropdown and checkbox fields only.
+
+    Text, number and date fields have no short list of values to pick from, so
+    they are reached through search and sort instead.
+    """
+    filters = []
+    for field in fields:
+        if field.field_type == CollectionFieldType.SELECT and field.options:
+            choices = [(option, option) for option in field.options]
+        elif field.field_type == CollectionFieldType.CHECKBOX:
+            choices = [("true", gettext("Yes")), ("false", gettext("No"))]
+        else:
+            continue
+        filters.append({"id": field.id, "label": field.label, "choices": choices})
+    return filters
+
+
+# Values are read in Python rather than with a JSON key lookup: keys are
+# str(field.id), and Django compiles a numeric key as an array index
+# ($[2]) on SQLite, so a database lookup silently matches nothing.
+def _custom_value_entry_ids(collection, query):
+    """Return ids of entries with a custom field value containing *query*."""
+    needle = query.casefold()
+    return [
+        entry_id
+        for entry_id, values in collection.values_list("id", "custom_field_values")
+        if any(
+            not isinstance(value, bool) and needle in str(value).casefold()
+            for value in (values or {}).values()
+        )
+    ]
+
+
+def _custom_value_matches(raw, wanted):
+    """Return whether a stored value equals the wanted filter value."""
+    return raw not in (None, "") and str(raw).casefold() == wanted.casefold()
+
+
+def _custom_sort_key(raw):
+    """Order numbers numerically, checkboxes next, then text alphabetically."""
+    if isinstance(raw, bool):
+        return (1, int(raw), "")
+    if isinstance(raw, int | float):
+        return (0, raw, "")
+    return (2, 0, str(raw).casefold())
+
+
+def _ids_ordered_by_custom_field(collection, field, direction):
+    """Return entry ids sorted by a custom field, entries with no value last.
+
+    Ties keep newest first, like the other sorts.
+    """
+    present, blank = [], []
+    for entry_id, values in collection.order_by("-id").values_list(
+        "id",
+        "custom_field_values",
+    ):
+        raw = (values or {}).get(str(field.id))
+        if raw in (None, ""):
+            blank.append(entry_id)
+        else:
+            present.append((entry_id, _custom_sort_key(raw)))
+    present.sort(key=lambda row: row[1], reverse=direction == "desc")
+    return [entry_id for entry_id, _ in present] + blank
+
+
 def _scored_item_ids(user, item_ids_by_media_type):
     """Return the ids of items (grouped by media_type) that have a user score."""
     scored_ids = set()
@@ -109,8 +189,13 @@ def collection_list(request, media_type=None):
         effective_media_type = ""
 
     search_query = request.GET.get("q", "").strip()
+    custom_fields = _custom_fields_for_list(request.user, effective_media_type)
+    custom_fields_by_id = {str(field.id): field for field in custom_fields}
     sort_by = request.GET.get("sort", "collected_at")
-    if sort_by not in COLLECTION_SORT_FIELDS:
+    custom_sort_field = None
+    if sort_by.startswith("field_") and sort_by[6:] in custom_fields_by_id:
+        custom_sort_field = custom_fields_by_id[sort_by[6:]]
+    elif sort_by not in COLLECTION_SORT_FIELDS:
         sort_by = "collected_at"
     direction = request.GET.get("direction") or (
         "desc" if sort_by == "collected_at" else "asc"
@@ -137,10 +222,31 @@ def collection_list(request, media_type=None):
     completeness_filter = request.GET.get("completeness", "all")
     if completeness_filter not in COLLECTION_COMPLETENESS_CHOICES:
         completeness_filter = "all"
+    custom_filter_field = request.GET.get("field", "")
+    custom_filter_value = request.GET.get("field_value", "")
+    if custom_filter_field not in custom_fields_by_id or not custom_filter_value:
+        custom_filter_field = custom_filter_value = ""
 
     collection = helpers.get_user_collection(request.user, effective_media_type)
     if search_query:
-        collection = collection.filter(item__title__icontains=search_query)
+        collection = collection.filter(
+            Q(item__title__icontains=search_query)
+            | Q(id__in=_custom_value_entry_ids(collection, search_query)),
+        )
+    if custom_filter_field:
+        collection = collection.filter(
+            id__in=[
+                entry_id
+                for entry_id, values in collection.values_list(
+                    "id",
+                    "custom_field_values",
+                )
+                if _custom_value_matches(
+                    (values or {}).get(custom_filter_field),
+                    custom_filter_value,
+                )
+            ],
+        )
     if format_filter:
         collection = collection.filter(media_type=format_filter)
     if resolution_filter:
@@ -198,18 +304,26 @@ def collection_list(request, media_type=None):
         else:
             collection = collection.none()
 
-    order_field = COLLECTION_SORT_FIELDS[sort_by]
-    if direction == "desc":
-        order_field = f"-{order_field}"
-    collection = collection.order_by(order_field, "-id")
-
-    paginator = Paginator(collection, 20)
+    if custom_sort_field:
+        paginator = Paginator(
+            _ids_ordered_by_custom_field(collection, custom_sort_field, direction),
+            20,
+        )
+    else:
+        order_field = COLLECTION_SORT_FIELDS[sort_by]
+        if direction == "desc":
+            order_field = f"-{order_field}"
+        paginator = Paginator(collection.order_by(order_field, "-id"), 20)
     page_number = int(request.GET.get("page", 1))
 
     try:
         page_obj = paginator.page(page_number)
     except EmptyPage:
         page_obj = paginator.page(paginator.num_pages)
+    if custom_sort_field:
+        # The page holds ids; load only those entries, in the sorted order.
+        entries_by_id = collection.in_bulk(page_obj.object_list)
+        page_obj.object_list = [entries_by_id[pk] for pk in page_obj.object_list]
 
     page_entries = list(page_obj.object_list)
     # The card shows the user's rating and status the same way the library does.
@@ -289,7 +403,13 @@ def collection_list(request, media_type=None):
         "available_resolutions": available_resolutions,
         "available_hdr": available_hdr,
         "available_locations": available_locations,
-        "sort_choices": COLLECTION_SORT_CHOICES,
+        "sort_choices": [
+            *COLLECTION_SORT_CHOICES,
+            *((f"field_{field.id}", field.label) for field in custom_fields),
+        ],
+        "custom_field_filters": _custom_field_filters(custom_fields),
+        "custom_filter_field": custom_filter_field,
+        "custom_filter_value": custom_filter_value,
         "sort_by": sort_by,
         "direction": direction,
         "layout": layout,
