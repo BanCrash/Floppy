@@ -559,7 +559,19 @@ class StatisticsViewTests(TestCase):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()
         self.client.login(**self.credentials)
-        today = timezone.localdate()
+        # Pin today mid-month: on the 1st, month-to-date is one day and the
+        # view correctly labels it "Today", which made this test fail monthly.
+        today = date(2026, 3, 15)
+        real_localdate = timezone.localdate
+
+        def pinned_localdate(value=None, timezone_arg=None):
+            if value is None:
+                return today
+            return real_localdate(value, timezone_arg)
+
+        patcher = patch("django.utils.timezone.localdate", side_effect=pinned_localdate)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         month_start = today.replace(day=1)
         last_year_today = today - relativedelta(years=1)
 
