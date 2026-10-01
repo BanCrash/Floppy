@@ -1,3 +1,4 @@
+import html
 import logging
 from decimal import Decimal, InvalidOperation
 
@@ -55,6 +56,24 @@ def _note_template_version(payload, user_id):
         cache.set(key, True, JELLYFIN_TEMPLATE_OUTDATED_TTL)
 
 
+def _decode_item_titles(payload):
+    """Undo the HTML escaping the Jellyfin template's ``{{Name}}`` applies.
+
+    Handlebars escapes the double-brace values (é arrives as ``&#233;``), and
+    the JSON template cannot use raw ``{{{Name}}}`` because a quote in a title
+    would break the JSON.
+    """
+    item = payload.get("Item")
+    if not isinstance(item, dict):
+        return payload
+    decoded = {
+        key: html.unescape(item[key])
+        for key in ("Name", "SeriesName")
+        if isinstance(item.get(key), str)
+    }
+    return {**payload, "Item": {**item, **decoded}}
+
+
 def _ticks_to_seconds(ticks) -> int | None:
     """Convert Jellyfin 100-nanosecond ticks to whole seconds."""
     if ticks is None or isinstance(ticks, bool):
@@ -83,6 +102,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
     def process_payload(self, payload, user):
         """Process the incoming Jellyfin webhook payload."""
+        payload = _decode_item_titles(payload)
         logger.debug(
             "Processing Jellyfin webhook payload keys=%s item_keys=%s",
             mapping_keys(payload),

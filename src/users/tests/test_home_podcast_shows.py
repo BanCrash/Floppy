@@ -1,5 +1,7 @@
 """Home podcast shelves list shows by default and can list episodes (#1378, #752)."""
 
+from datetime import UTC, datetime
+
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase
@@ -9,6 +11,7 @@ from app.models import (
     Item,
     MediaTypes,
     Podcast,
+    PodcastEpisode,
     PodcastShow,
     PodcastShowTracker,
     Sources,
@@ -20,6 +23,7 @@ from users.models import (
     HomeScreenRow,
     HomeScreenRowTypeChoices,
     HomeSortChoices,
+    MediaSortChoices,
 )
 
 
@@ -161,6 +165,45 @@ class HomePodcastShowShelfTests(TestCase):
             ),
             "In Progress • Shows",
         )
+
+    def test_renamed_show_updates_its_card_title(self):
+        """A show renamed after its card was first built shows the new title."""
+        row = self.row({"status": [Status.IN_PROGRESS.value]})
+        self.titles(row)
+        self.show.title = "The Show, Renamed"
+        self.show.save()
+
+        titles, _total = self.titles(row)
+
+        self.assertEqual(titles, ["The Show, Renamed"])
+
+    def test_release_date_sort_uses_first_episode_publication(self):
+        """Shows sort by when their first episode was published."""
+        older = PodcastShow.objects.create(
+            podcast_uuid="33333333-3333-3333-3333-333333333333", title="Zebra Older"
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user, show=older, status=Status.IN_PROGRESS.value
+        )
+        PodcastEpisode.objects.create(
+            show=older,
+            episode_uuid="old-1",
+            title="Old",
+            published=datetime(2019, 1, 1, tzinfo=UTC),
+        )
+        PodcastEpisode.objects.create(
+            show=self.show,
+            episode_uuid="new-1",
+            title="New",
+            published=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        row = self.row({"status": [Status.IN_PROGRESS.value]})
+        row.sort_by = MediaSortChoices.RELEASE_DATE
+        row.direction = DirectionChoices.ASC
+
+        titles, _total = self.titles(row)
+
+        self.assertEqual(titles, ["Zebra Older", "The Show"])
 
     def test_home_page_renders_one_card_per_show(self):
         """The Home page lists the show title once, not once per episode."""
