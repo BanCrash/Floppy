@@ -673,6 +673,26 @@ def release_refresh_lock(user_id: int, media_type: str, *, show_more: bool) -> N
     )
 
 
+def release_refresh_reservation(
+    user_id: int, media_type: str, *, show_more: bool
+) -> None:
+    """Drop a queued refresh's lock and scheduled marker when it will not run.
+
+    Unlike release_refresh_lock, this also clears the scheduled marker, so a later
+    request can queue a real rebuild instead of waiting out the marker's TTL.
+    """
+    media_type = _normalize_media_type(media_type)
+    release_refresh_lock(user_id, media_type, show_more=show_more)
+    _cache_delete(
+        _refresh_scheduled_key(
+            user_id,
+            media_type,
+            show_more=show_more,
+            activity_version=_get_activity_version(user_id, media_type),
+        )
+    )
+
+
 def _reserve_scheduled_refresh(
     user_id: int,
     media_type: str,

@@ -126,6 +126,11 @@ def refresh_discover_tab_cache(
         logger.warning("discover_tab_refresh_user_missing user_id=%s", user_id)
         return {"refreshed": False, "reason": "missing_user"}
     if not user.show_discover:
+        discover_tab_cache.release_refresh_reservation(
+            user_id,
+            (media_type or discover_tab_cache.ALL_MEDIA_KEY).strip().lower(),
+            show_more=show_more,
+        )
         return {"refreshed": False, "reason": "discover_disabled"}
 
     requested_media_type = (

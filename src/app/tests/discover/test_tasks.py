@@ -112,6 +112,20 @@ class DiscoverTaskTests(TestCase):
         refresh_tab.assert_not_called()
         fanout.assert_not_called()
 
+    @patch("app.discover.tab_cache._should_enqueue_refresh_tasks", return_value=False)
+    def test_skipped_tab_refresh_frees_its_reservation(self, _enqueue):
+        """Turning Discover back on must be able to queue a real rebuild."""
+        from app.discover import tab_cache
+
+        self.assertTrue(tab_cache.schedule_tab_refresh(self.user.id, "all"))
+        self.assertFalse(tab_cache.schedule_tab_refresh(self.user.id, "all"))
+
+        self.user.show_discover = False
+        self.user.save(update_fields=["show_discover"])
+        refresh_discover_tab_cache(self.user.id, "all")
+
+        self.assertTrue(tab_cache.schedule_tab_refresh(self.user.id, "all"))
+
     def test_api_cache_warm_skipped_when_nobody_uses_discover(self):
         """The shared provider warm-up has nothing to serve if Discover is off."""
         self.user.show_discover = False
