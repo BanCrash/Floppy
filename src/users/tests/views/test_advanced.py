@@ -766,4 +766,4 @@ class ExportLogsTests(TestCase):
         with override_settings(LOG_FILE=str(self.log_file)):
             response = self.client.get(reverse("advanced"))
 
-        self.assertContains(response, "Logs go back to 2026-10-01 03:42:10.")
+        self.assertContains(response, "Covers 2026-10-01 03:42:10 onward.")
