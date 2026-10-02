@@ -159,7 +159,7 @@ class MangaBakaImporter:
         """Return one page of the user's MangaBaka library."""
         url = f"{app.providers.mangabaka.base_url}/my/library"
         headers = {
-            **app.providers.mangabaka.headers,
+            **app.providers.mangabaka.HEADERS,
             "x-api-key": self.token,
         }
 
