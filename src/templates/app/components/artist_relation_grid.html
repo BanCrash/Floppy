@@ -60,7 +60,9 @@
             </span>
           {% endif %}
         </div>
-        {% tile_lines 'music' relation.artist relation.tracker %}
+        {% if relation.role %}
+          <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1 truncate" title="{{ relation.role }}">{{ relation.role }}</p>
+        {% endif %}
       </div>
     </div>
   {% endfor %}
