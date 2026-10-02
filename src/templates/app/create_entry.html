@@ -248,6 +248,7 @@
           </div>
         </div>
 
+        {% if user.ratings_enabled %}
         <!-- Score field (TV, Movie, Anime, Manga, Game, Book, Season) -->
         <div x-show="showField('score')">
           <label class="block text-sm font-medium mb-2 text-[var(--color-text-secondary)]">{% translate "Score" %}</label>
@@ -272,6 +273,7 @@
             </div>
           </div>
         </div>
+        {% endif %}
 
         <!-- Progress field (Movie, Anime, Manga, Game, Book) -->
         <div x-show="showField('progress')">

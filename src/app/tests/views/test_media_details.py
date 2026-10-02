@@ -4645,6 +4645,55 @@ class MediaDetailsViewTests(TestCase):
         )
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_hides_your_score_chip_when_ratings_disabled(
+        self, mock_get_metadata
+    ):
+        self.user.rating_scale = RatingScaleChoices.DISABLED.value
+        self.user.save(update_fields=["rating_scale"])
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        movie = Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=8,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Edit rating")
+        self.assertNotContains(response, "Add rating")
+        movie.refresh_from_db()
+        self.assertEqual(movie.score, 8)
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_five_point_scale_suffix(
         self,
         mock_get_metadata,

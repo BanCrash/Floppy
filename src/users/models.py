@@ -295,6 +295,7 @@ class RatingScaleChoices(models.TextChoices):
 
     TEN = "10", _("1-10 stars")
     FIVE = "5", _("1-5 stars")
+    DISABLED = "0", _("Disabled")
 
 
 class ActivityHistoryViewChoices(models.TextChoices):
@@ -1782,11 +1783,19 @@ class User(AbstractUser):
 
     @property
     def rating_scale_max(self):
-        """Return the max rating value for the user's configured scale."""
+        """Return the max rating value for the user's configured scale.
+
+        Disabled ratings keep the 10-point maths so stored scores still convert.
+        """
         try:
-            return int(self.rating_scale)
+            return int(self.rating_scale) or 10
         except (TypeError, ValueError):
             return 10
+
+    @property
+    def ratings_enabled(self):
+        """Return whether the user's own rating controls should be shown."""
+        return self.rating_scale != RatingScaleChoices.DISABLED
 
     def _coerce_score_decimal(self, score):
         """Coerce a score into a Decimal, returning None on failure."""

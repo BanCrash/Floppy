@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 from django.conf import settings
@@ -12,7 +13,16 @@ from app.forms import (
     SeasonForm,
     TvForm,
 )
-from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
+from app.models import (
+    TV,
+    Anime,
+    Episode,
+    Item,
+    MediaTypes,
+    Season,
+    Sources,
+    Status,
+)
 
 
 class BasicMediaForm(TestCase):
@@ -169,6 +179,59 @@ class BasicMediaForm(TestCase):
         self.assertFalse(form.is_valid())
         self.assertEqual(form.errors.as_data()["watch_operation_id"][0].code, "invalid")
         self.assertNotIn(malformed, form.errors.as_text())
+
+
+class RatingsDisabledFormTest(TestCase):
+    """With ratings disabled the track form has no score field and keeps the score."""
+
+    def setUp(self):
+        """Create a user who turned ratings off and an anime they rated 7.5."""
+        self.user = get_user_model().objects.create_user(
+            username="no-ratings",
+            password="12345",
+            rating_scale="0",
+        )
+        item = Item.objects.create(
+            media_id="1",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Test Anime",
+            image="http://example.com/image.jpg",
+        )
+        self.anime = Anime.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PAUSED.value,
+            progress=3,
+            score=7.5,
+        )
+
+    def test_score_field_is_removed_only_when_disabled(self):
+        """The score input exists on the 10-point scale and is gone when disabled."""
+        self.assertNotIn("score", AnimeForm(user=self.user, instance=self.anime).fields)
+        self.user.rating_scale = "10"
+        self.assertIn("score", AnimeForm(user=self.user, instance=self.anime).fields)
+
+    def test_saving_does_not_touch_stored_score(self):
+        """A submitted score is ignored and the stored one survives the save."""
+        form = AnimeForm(
+            data={
+                "media_id": "1",
+                "source": Sources.MAL.value,
+                "media_type": MediaTypes.ANIME.value,
+                "user": self.user.id,
+                "score": 2,
+                "progress": 5,
+                "status": Status.COMPLETED.value,
+            },
+            instance=self.anime,
+            user=self.user,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        self.anime.refresh_from_db()
+        self.assertEqual(self.anime.progress, 5)
+        self.assertEqual(self.anime.score, Decimal("7.5"))
 
 
 class BasicGameForm(TestCase):
