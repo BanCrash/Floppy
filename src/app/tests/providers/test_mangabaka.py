@@ -194,7 +194,7 @@ class MangaBakaProviderTests(TestCase):
         self.assertEqual(data["details"]["authors"], ["MIURA Kentarou"])
         # Spoiler, genre, sexual-content, victim, rare and work-info tags stay
         # out, and the most widely shared theme comes first.
-        self.assertEqual(data["details"]["themes"], ["Demons", "Dark Fantasy"])
+        self.assertEqual(data["details"]["tags"], ["Demons", "Dark Fantasy"])
         self.assertEqual(
             data["authors_full"],
             [
@@ -245,7 +245,7 @@ class MangaBakaProviderTests(TestCase):
         self.assertIsNone(data["score"])
         self.assertIsNone(data["genres"])
         self.assertIsNone(data["max_progress"])
-        self.assertIsNone(data["details"]["themes"])
+        self.assertIsNone(data["details"]["tags"])
         self.assertEqual(data["authors_full"], [])
         self.assertIsNone(data["details"]["authors"])
 

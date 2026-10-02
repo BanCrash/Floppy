@@ -200,4 +200,8 @@ indent = 2
 
 [tool.coverage.run]
 concurrency = ["multiprocessing"]
+# sysmon on 3.12 records only the first test to execute a line, so a map
+# built with it drops every later test. ctrace keeps one context per test.
+core = "ctrace"
+dynamic_context = "test_function"
 omit = ["*/migrations/*", "*/tests/*", "*/__init__.py", "*/admin.py"]
