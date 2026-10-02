@@ -1737,6 +1737,61 @@ class StatisticsViewTests(TestCase):
         self.assertTrue(timezone.is_aware(start_date))
         self.assertTrue(timezone.is_aware(end_date))
 
+    def test_activity_heatmap_counts_are_split_by_media_type(self):
+        """Each heatmap day carries per-media-type counts for the type filter."""
+        now = timezone.now()
+        movie_item = Item.objects.create(
+            media_id="heat-movie",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Heatmap Movie",
+            image="http://example.com/heat-movie.jpg",
+            runtime_minutes=100,
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=now,
+            end_date=now,
+        )
+        book_item = Item.objects.create(
+            media_id="heat-book",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Heatmap Book",
+            image="http://example.com/heat-book.jpg",
+            number_of_pages=200,
+        )
+        Book.objects.create(
+            item=book_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=200,
+            start_date=now,
+            end_date=now,
+        )
+
+        today = timezone.localdate()
+        data = statistics_cache._aggregate_statistics_from_days(
+            self.user,
+            [today],
+            start_date=None,
+            end_date=None,
+            build_missing=True,
+        )
+
+        days = [
+            day
+            for week in data["activity_data"]["calendar_weeks"]
+            for day in week
+            if day["date"] == today.isoformat()
+        ]
+        self.assertEqual(len(days), 1)
+        self.assertEqual(days[0]["by_type"], {"movie": 1, "book": 1})
+        self.assertEqual(days[0]["count"], 2)
+
     def test_statistics_view_includes_top_talent_sections(self):
         """Top cast/crew and studio sections should be present in context."""
         watched_at = timezone.now()
