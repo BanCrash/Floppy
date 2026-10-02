@@ -804,10 +804,11 @@ function initStatisticsCharts() {
       });
       cell.classList.remove(...HEATMAP_LEVEL_CLASSES);
       cell.classList.add(HEATMAP_LEVEL_CLASSES[heatmapLevel(count)]);
-      // The server rendered the translated tooltip for 1 and 2; swap in the
-      // real count first (the template has no other digits), then the date.
-      const template = count === 1 ? heatmap.dataset.titleOne : heatmap.dataset.titleOther;
-      const marker = count === 1 ? "1" : "2";
+      // The server rendered the translated tooltip for 0, 1 and 2 (the locale's
+      // plural rule decides which wording each uses); swap in the real count
+      // first (the template has no other digits), then the date.
+      const marker = count > 2 ? "2" : String(count);
+      const template = heatmap.dataset["title" + marker];
       cell.title = template.replace(marker, String(count)).replace("__DATE__", cell.dataset.heatmapDate);
     });
   }

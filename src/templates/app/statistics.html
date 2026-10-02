@@ -1152,8 +1152,9 @@
   {% if user.activity_history_view != 'stacked' %}
   {# Translated tooltip templates for the media-type filter; the script swaps in the date and count. #}
   <div id="activityHistory" class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 w-full overflow-hidden mb-4"
-       data-title-one="{% blocktranslate with date='__DATE__' count count=1 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}"
-       data-title-other="{% blocktranslate with date='__DATE__' count count=2 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}">
+       data-title-0="{% blocktranslate with date='__DATE__' count count=0 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}"
+       data-title-1="{% blocktranslate with date='__DATE__' count count=1 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}"
+       data-title-2="{% blocktranslate with date='__DATE__' count count=2 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}">
         <div class="flex items-center justify-between mb-3">
           <div>
             <h2 class="text-base font-semibold text-[var(--color-text)] mb-0.5">{% translate "Activity History" %}</h2>
