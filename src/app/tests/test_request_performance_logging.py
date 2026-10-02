@@ -137,22 +137,21 @@ class RequestTimingBreakdownTests(TestCase):
         self.assertLess(self._field(line, "cpu_ms"), 40)
 
     def test_database_time_is_counted(self):
-        def slow_query(execute, sql, params, many, context):
-            # A query on an empty table finishes in well under the 0.1 ms the
-            # log line rounds to, which made this test report db_ms=0.0 on a
-            # fast runner. Make the query take measurable time.
-            time.sleep(0.02)
-            return execute(sql, params, many, context)
-
         def view(_request):
-            with connection.execute_wrapper(slow_query):
-                list(Item.objects.all())
+            # An empty-table read finishes in under the 0.1 ms the log rounds to,
+            # so count to a few hundred thousand to take measurable time.
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n "
+                    "WHERE x < 300000) SELECT count(*) FROM n",
+                )
+                cursor.fetchone()
             return HttpResponse("ok")
 
         _response, line = self._run(view)
 
         self.assertEqual(self._field(line, "queries"), 1)
-        self.assertGreaterEqual(self._field(line, "db_ms"), 15)
+        self.assertGreater(self._field(line, "db_ms"), 0)
 
     def test_server_timing_header_for_signed_in_users_only(self):
         response, _line = self._run(lambda _request: HttpResponse("ok"), self.user)

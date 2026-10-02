@@ -484,8 +484,8 @@ if (!window.__floppyDateTimePickerBound) {
       return this.suggestionLabel || gettext("Suggested date");
     },
 
-    applySuggestion() {
-      const iso = this.resolvedSuggestionDate();
+    applySuggestion(date) {
+      const iso = date || this.resolvedSuggestionDate();
       if (!iso) {
         return;
       }

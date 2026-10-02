@@ -188,6 +188,12 @@
             <span x-text="resolvedSuggestionLabel()"></span>
           </button>
         </template>
+        {% for extra in suggestion_extras %}
+          <button type="button" @click="applySuggestion('{{ extra.date|escapejs }}')" class="date-picker-common-time-button">
+            {% include "app/icons/calendar.svg" with classes="w-3.5 h-3.5" %}
+            {% translate extra.label %}
+          </button>
+        {% endfor %}
         {% if copy_from %}
         <button type="button"
                 @click="copyFromOther()"

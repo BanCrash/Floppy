@@ -1229,6 +1229,8 @@ MAL_NSFW = config("MAL_NSFW", default=False, cast=bool)
 
 MU_NSFW = config("MU_NSFW", default=False, cast=bool)
 
+MANGABAKA_NSFW = config("MANGABAKA_NSFW", default=False, cast=bool)
+
 IGDB_ID = config(
     "IGDB_ID",
     default=secret(
@@ -1733,7 +1735,9 @@ CELERY_TASK_ROUTES = {
     "Import from Audiobookshelf (Recurring)": {
         "priority": CELERY_TASK_PRIORITY_FOLLOWUP,
     },
+    "Import from Kavita (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from Komga (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
+    "Import from Hardcover Account": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from Pocket Casts (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from GPodder (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Migrate TV shows to preferred metadata provider": {

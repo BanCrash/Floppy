@@ -93,6 +93,11 @@ urlpatterns = [
         views.convert_anime_library,
         name="convert_anime_library",
     ),
+    path(
+        "settings/metadata/convert-tv-library",
+        views.convert_tv_library,
+        name="convert_tv_library",
+    ),
     path("settings/integrations", views.integrations, name="integrations"),
     path(
         "settings/integrations/stremio-catalog-status",

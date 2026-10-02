@@ -1150,7 +1150,11 @@
 
   <!-- Activity History Section -->
   {% if user.activity_history_view != 'stacked' %}
-  <div id="activityHistory" class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 w-full overflow-hidden mb-4">
+  {# Translated tooltip templates for the media-type filter; the script swaps in the date and count. #}
+  <div id="activityHistory" class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 w-full overflow-hidden mb-4"
+       data-title-0="{% blocktranslate with date='__DATE__' count count=0 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}"
+       data-title-1="{% blocktranslate with date='__DATE__' count count=1 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}"
+       data-title-2="{% blocktranslate with date='__DATE__' count count=2 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}">
         <div class="flex items-center justify-between mb-3">
           <div>
             <h2 class="text-base font-semibold text-[var(--color-text)] mb-0.5">{% translate "Activity History" %}</h2>
@@ -1169,11 +1173,12 @@
         <div class="w-full overflow-x-auto overflow-y-hidden scrollbar-hidden">
 
           <div class="w-full" x-ref="graphContainer">
-            <!-- Months row: proportional flex to track responsive column widths -->
-            <div class="flex mb-2 pl-[37px] gap-1">
+            <!-- Months row: same grid tracks as the weeks grid below, so each label sits on its first week column -->
+            <div class="grid gap-1 mb-2 pl-[37px]"
+                 style="grid-template-columns: repeat({{ activity_data.calendar_weeks|length }}, minmax(1rem, 20px))">
               {% for month, week_count in activity_data.months %}
-                <div class="text-xs text-[var(--color-text-muted)] min-w-0 overflow-hidden"
-                     style="flex: {{ week_count }} {{ week_count }} 0; min-width: calc({{ week_count }} * 1rem)">{{ month }}</div>
+                <div class="text-xs text-[var(--color-text-muted)] min-w-0 whitespace-nowrap {% if not forloop.first %}border-l{% endif %}"
+                     style="grid-column: span {{ week_count }}{% if not forloop.first %}; border-color: var(--color-border); padding-left: 0.25rem{% endif %}">{{ month }}</div>
               {% endfor %}
             </div>
 
@@ -1190,12 +1195,14 @@
                 {% endfor %}
               </div>
 
-              <!-- Weeks grid: flex-1 columns grow to fill width, capped at 20px -->
-              <div class="flex gap-1 flex-1 min-w-0">
+              <!-- Weeks grid: columns grow to fill width, capped at 20px -->
+              <div class="grid gap-1 flex-1 min-w-0"
+                   style="grid-template-columns: repeat({{ activity_data.calendar_weeks|length }}, minmax(1rem, 20px))">
                 {% for week in activity_data.calendar_weeks %}
-                  <div class="flex flex-col gap-1 flex-1 min-w-4" style="max-width:20px">
+                  <div class="flex flex-col gap-1 min-w-4">
                     {% for day in week %}
-                      <div class="aspect-square w-full rounded-sm transition-colors duration-200 {% if day.future %}bg-[var(--color-surface-muted)] cursor-default{% else %}hover:ring-2 hover:ring-white {% if day.level == 0 %}bg-[var(--color-surface-muted)]{% elif day.level == 1 %}bg-indigo-700{% elif day.level == 2 %}bg-indigo-600{% elif day.level == 3 %}bg-indigo-500{% elif day.level == 4 %}bg-indigo-400{% endif %}{% endif %}"
+                      <div {% if not day.future and day.by_type %}data-heatmap-date="{{ day.date }}" data-heatmap-counts="{% for media_type, n in day.by_type.items %}{{ media_type }}:{{ n }}{% if not forloop.last %},{% endif %}{% endfor %}"{% endif %}
+                           class="aspect-square w-full rounded-sm transition-colors duration-200 {% if day.future %}bg-[var(--color-surface-muted)] cursor-default{% else %}hover:ring-2 hover:ring-white {% if day.level == 0 %}bg-[var(--color-surface-muted)]{% elif day.level == 1 %}bg-indigo-700{% elif day.level == 2 %}bg-indigo-600{% elif day.level == 3 %}bg-indigo-500{% elif day.level == 4 %}bg-indigo-400{% endif %}{% endif %}"
                            title="{% if day.future %}{{ day.date }}{% else %}{% blocktranslate with date=day.date count count=day.count %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}{% endif %}"></div>
                     {% endfor %}
                   </div>

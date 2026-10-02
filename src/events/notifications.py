@@ -325,6 +325,10 @@ def get_user_releases(users, target_events, skip_alerted_for_instant_users=False
             ):
                 continue
 
+            # Digital and physical dates only apply to the user's own region
+            if event.release_type and event.region != user.watch_provider_region:
+                continue
+
             # Check if a preferred cross-provider/cross-bucket duplicate exists
             if event.item.id in hidden_item_ids:
                 continue

@@ -875,6 +875,14 @@ class User(AbstractUser):
         ],
         help_text="Default metadata provider for TV details and search tabs.",
     )
+    tv_auto_move_to_default_provider = models.BooleanField(
+        default=True,
+        help_text=(
+            "Let the nightly job move TV shows tracked on the other provider to "
+            "the default provider. Turned off when the user chooses to leave "
+            "their library as it is after switching providers."
+        ),
+    )
     anime_metadata_source_default = models.CharField(
         max_length=20,
         # TMDB by default so the Anime library gets real season/episode trees,
@@ -1933,6 +1941,7 @@ class User(AbstractUser):
                 "Import from Audiobookshelf",
                 "Import from Audiobookshelf (Recurring)",
             ],
+            "kavita": ["Import from Kavita", "Import from Kavita (Recurring)"],
             "komga": ["Import from Komga", "Import from Komga (Recurring)"],
             "storyteller": [
                 "Import from Storyteller",
@@ -1949,7 +1958,10 @@ class User(AbstractUser):
                 "Import from Stremio (Recurring)",
             ],
             "lastfm": ["Import from Last.fm History"],
-            "hardcover": ["Import from Hardcover"],
+            "hardcover": [
+                "Import from Hardcover",
+                "Import from Hardcover Account",
+            ],
             "storygraph": ["Import from StoryGraph"],
             "koito": ["Import from Koito History"],
         }
@@ -1960,7 +1972,9 @@ class User(AbstractUser):
             "mylar": ["Import from Mylar3 (Recurring)"],
             "kapowarr": ["Import from Kapowarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
+            "kavita": ["Import from Kavita (Recurring)"],
             "komga": ["Import from Komga (Recurring)"],
+            "hardcover": ["Import from Hardcover Account"],
             "storyteller": ["Import from Storyteller (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
             "gpodder": ["Import from GPodder (Recurring)"],
@@ -2445,17 +2459,25 @@ class HomeScreenRow(models.Model):
         return f"{self.user_id}:{self.media_type}:{self.row_type}:{self.position}"
 
 
+# Saved views of the History page live beside the media list ones, keyed by
+# this pseudo media type.
+HISTORY_VIEW_TYPE = "history"
+
+
 class SavedView(models.Model):
-    """A named media list view (filters, sort, layout) pinned under the sidebar."""
+    """A named media list or History view (filters, sort, layout) in the sidebar."""
 
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="saved_views",
     )
-    media_type = models.CharField(max_length=16, choices=MediaTypes.choices)
+    media_type = models.CharField(
+        max_length=16,
+        choices=[*MediaTypes.choices, (HISTORY_VIEW_TYPE, "History")],
+    )
     name = models.CharField(max_length=100)
-    # The media list query string, e.g. "sort=score&direction=desc&status=Completed".
+    # The media list (or History) query string, e.g. "sort=score&direction=desc&status=Completed".
     query = models.TextField(blank=True, default="")
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -2471,6 +2493,9 @@ class SavedView(models.Model):
         return f"{self.user_id}:{self.media_type}:{self.name}"
 
     def get_absolute_url(self):
-        """Return the media list URL that reproduces this view."""
-        base = reverse("medialist", args=[self.media_type])
+        """Return the media list or History URL that reproduces this view."""
+        if self.media_type == HISTORY_VIEW_TYPE:
+            base = reverse("history")
+        else:
+            base = reverse("medialist", args=[self.media_type])
         return f"{base}?{self.query}" if self.query else base

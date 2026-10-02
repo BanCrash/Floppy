@@ -2658,6 +2658,42 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(state["view_offset_seconds"], 1447)
 
     @patch("app.providers.tmdb.find")
+    def test_play_event_decodes_html_entities_in_titles(self, mock_find):
+        """The template HTML-escapes titles (#1387); live playback shows them decoded."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {"show_id": 1668, "season_number": 1, "episode_number": 1},
+            ],
+            "tv_results": [],
+        }
+        payload = {
+            "Event": "Play",
+            "Item": {
+                "Type": "Episode",
+                "Name": "Caf&#233; de Paris &amp; &quot;Co&quot;",
+                "Id": "jf-episode-1",
+                "SeriesName": "Caf&#233; Society",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "RunTimeTicks": 26660000000,
+                "ProviderIds": {"Tvdb": "303821", "Imdb": "tt0583459"},
+                "UserData": {"Played": False},
+            },
+            "PlaybackPositionTicks": 14470000000,
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertEqual(state["episode_title"], 'Café de Paris & "Co"')
+        self.assertEqual(state["series_title"], "Café Society")
+
+    @patch("app.providers.tmdb.find")
     def test_pause_and_stop_events_update_live_playback_state(self, mock_find):
         """Pause should keep card state; stop should transition to stopped."""
         mock_find.return_value = {
