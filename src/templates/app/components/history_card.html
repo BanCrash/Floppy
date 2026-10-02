@@ -24,9 +24,7 @@
     </a>
     {% endwith %}
 
-    {# Status chip (top-left). Shown only when the type profile includes status. #}
-    {% tile_field_on entry.media_type "status" as show_status_field %}
-    {% if show_status_field %}
+    {# Status chip (top-left) #}
     {% if entry.status or entry.media_type == MediaTypes.EPISODE.value and history_mode != "release" %}
       {% with status_value=entry.status|default:"Completed" %}
         <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1.5 shadow-md">
@@ -47,11 +45,9 @@
         </div>
       {% endwith %}
     {% endif %}
-    {% endif %}
 
-    {# Runtime chip (top-right). Shown only when the type profile includes runtime. #}
-    {% tile_field_on entry.media_type "runtime" as show_runtime_field %}
-    {% if show_runtime_field and entry.runtime_display %}
+    {# Runtime chip (top-right) #}
+    {% if entry.runtime_display %}
       <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md shadow-md">
         {{ entry.runtime_display }}
       </div>
