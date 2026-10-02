@@ -1668,7 +1668,10 @@ class MediaManager(models.Manager):
                 [
                     event
                     for event in getattr(media.item, "prefetched_events", [])
+                    # Digital and physical dates are per region, so only the
+                    # main release counts as a card's next event.
                     if event.datetime > current_time
+                    and not getattr(event, "release_type", "")
                 ],
                 key=lambda e: e.datetime,
             )

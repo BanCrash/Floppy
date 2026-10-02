@@ -4,7 +4,7 @@ from django.conf import settings
 from django.db.models import Exists, OuterRef, Q, Subquery
 from django.utils import timezone
 
-from app.models import Item, MediaTypes, Sources
+from app.models import Item, MediaTypes, Movie, Sources
 from app.providers import services, tmdb
 from events.models import Event
 
@@ -229,10 +229,32 @@ def get_movie_items_to_include(movie_items):
 
     changed_movie_ids = get_changed_tmdb_movie_ids()
 
+    # Digital and physical dates are stored per user region. A recent movie
+    # with none for a tracking user's region gets one fetch per stale window,
+    # which also picks up regions set after the movie was first scheduled.
+    # Older movies wait for TMDB's change feed.
+    region_without_events = Exists(
+        Movie.objects.filter(item=OuterRef("pk"))
+        .exclude(user__watch_provider_region__in=["", "UNSET"])
+        .exclude(
+            Exists(
+                Event.objects.filter(
+                    item=OuterRef("item"),
+                    region=OuterRef("user__watch_provider_region"),
+                ),
+            ),
+        ),
+    )
+    recent_cutoff = timezone.now() - timezone.timedelta(days=365)
+
     return list(
-        movie_items.filter(
-            Q(media_id__in=changed_movie_ids) | Q(event__isnull=True),
-        ).values_list("id", flat=True),
+        set(
+            movie_items.filter(
+                Q(media_id__in=changed_movie_ids)
+                | Q(event__isnull=True)
+                | (Q(region_without_events) & Q(event__datetime__gte=recent_cutoff)),
+            ).values_list("id", flat=True),
+        ),
     )
 
 
