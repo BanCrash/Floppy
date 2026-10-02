@@ -62,7 +62,7 @@
 
     <div class="flex flex-col sm:contents">
       {# User rating chip — shown when the issue has been tracked #}
-      {% if not public_view|default:False and current_instance %}
+      {% if not public_view|default:False and current_instance and user.ratings_enabled %}
         {% with ep_score=current_instance.score %}
           <div class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2">
             <div x-data="{

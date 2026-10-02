@@ -41,7 +41,7 @@
 
     {% include "app/components/detail_music_album_activity_subtitle.html" with album=album music_album_activity_subtitle=music_album_activity_subtitle user=user only %}
 
-    {% if album_tracker %}
+    {% if album_tracker and user.ratings_enabled %}
       <div class="mt-4 mb-5 flex flex-wrap gap-2">
         <div x-data="{ showRatingPopup: false, rating: {{ album_tracker.score|score_display:user|default:'null' }}, ratingScaleMax: {{ user|rating_scale_max }}, hoverRating: null, isHovering: false, formatRating(value) { if (value === null || value === undefined || value === '') { return ''; } return this.ratingScaleMax === 5 ? String(value) + '/5' : String(value); } }"
              class="relative">
@@ -75,7 +75,7 @@
       </div>
     {% endif %}
 
-    <div class="{% if not music_album_activity_subtitle and not album_tracker %}mt-5 {% endif %}mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+    <div class="{% if not music_album_activity_subtitle and not album_tracker %}mt-5 {% elif not music_album_activity_subtitle and not user.ratings_enabled %}mt-5 {% endif %}mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
       <div x-data="{ trackOpen: false }" class="sm:shrink-0">
         <button type="button"
                 class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if detail_primary_action.active %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"

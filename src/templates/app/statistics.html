@@ -1750,7 +1750,7 @@
       return this.weekStartDay === 'monday' ? 'Monday' : 'Sunday';
     },
     ratingScaleLabel() {
-      return this.ratingScale === '5' ? '1-5 stars' : '1-10 stars';
+      return { '5': '1-5 stars', '0': 'Disabled' }[this.ratingScale] || '1-10 stars';
     },
     {% if not user.anime_enabled and tvdb_enabled %}
     statsAnimeGenreLabel() {
@@ -1932,6 +1932,12 @@
                           :class="ratingScale === '5' ? 'text-[var(--color-text)] bg-[var(--color-surface-strong)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]'"
                           class="block w-full px-3 py-2 text-left text-sm transition-colors">
                     {% translate "1-5 stars" %}
+                  </button>
+                  <button type="button"
+                          @click="ratingScale = '0'; ratingScaleOpen = false"
+                          :class="ratingScale === '0' ? 'text-[var(--color-text)] bg-[var(--color-surface-strong)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    {% translate "Disabled" %}
                   </button>
                 </div>
               </div>
