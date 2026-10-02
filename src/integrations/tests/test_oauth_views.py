@@ -222,7 +222,11 @@ class OAuthStateViewTests(TestCase):
         with (
             patch(
                 "integrations.views.trakt.handle_oauth_callback",
-                return_value={"refresh_token": "trakt-refresh", "username": "trakt-user"},
+                return_value={
+                    "refresh_token": "trakt-refresh",
+                    "redirect_uri": "https://floppy.example.com/import/trakt/private",
+                    "username": "trakt-user",
+                },
             ) as handle_callback,
             patch("integrations.views.helpers.encrypt", return_value="encrypted-token"),
             patch("integrations.views.tasks.import_trakt.delay") as import_task,
@@ -237,9 +241,41 @@ class OAuthStateViewTests(TestCase):
 
             handle_callback.assert_called_once()
             import_task.assert_called_once()
+            self.assertEqual(
+                import_task.call_args.kwargs["redirect_uri"],
+                "https://floppy.example.com/import/trakt/private",
+            )
 
         self.assertContains(replay, "Invalid or expired Trakt authorization request.")
         self.assertNotIn(state_token, "\n".join(logs.output))
+
+    @override_settings(URLS=["https://floppy.example.com"])
+    def test_trakt_reconnect_refreshes_the_existing_schedule(self):
+        """A reconnect with the same settings must replace the schedule's dead token (#1404)."""
+        callback_uri = "https://floppy.example.com/import/trakt/private"
+        for token in ("first-token", "second-token"):
+            response = self.client.post(
+                reverse("trakt_oauth"),
+                data={"mode": "new", "frequency": "daily", "time": "04:00"},
+            )
+            state_token = parse_qs(urlparse(response["Location"]).query)["state"][0]
+            with (
+                patch(
+                    "integrations.views.trakt.handle_oauth_callback",
+                    return_value={
+                        "refresh_token": token,
+                        "redirect_uri": callback_uri,
+                        "username": "trakt-user",
+                    },
+                ),
+                patch("integrations.views.helpers.encrypt", side_effect=lambda t: f"enc-{t}"),
+            ):
+                self.client.get(self._callback_url("import_trakt_private", state_token))
+
+        task = PeriodicTask.objects.get(task="Import from Trakt")
+        task_kwargs = json.loads(task.kwargs)
+        self.assertEqual(task_kwargs["token"], "enc-second-token")
+        self.assertEqual(task_kwargs["redirect_uri"], callback_uri)
 
     def test_anilist_state_is_consumed_and_replay_is_rejected(self):
         state_token = self._start_oauth("import_anilist_oauth")
@@ -434,6 +470,7 @@ class TraktDeviceFlowViewTests(TestCase):
                 return_value={
                     "access_token": "access",
                     "refresh_token": "refresh",
+                    "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
                     "username": "trakt-user",
                 },
             ),
@@ -443,6 +480,10 @@ class TraktDeviceFlowViewTests(TestCase):
             response = self.client.get(reverse("trakt_device_poll"))
 
         import_task.assert_called_once()
+        self.assertEqual(
+            import_task.call_args.kwargs["redirect_uri"],
+            "urn:ietf:wg:oauth:2.0:oob",
+        )
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response["HX-Redirect"], reverse("import_data"))
         self.assertNotIn(TRAKT_DEVICE_SESSION_KEY, self.client.session)

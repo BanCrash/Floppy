@@ -205,12 +205,19 @@ def _queue_post_import_collection_update(user_id, importer_func):
 
 
 @shared_task(name="Import from Trakt")
-def import_trakt(user_id, mode, token=None, username=None):
+def import_trakt(user_id, mode, token=None, username=None, redirect_uri=None):
     """Celery task for importing media data from Trakt.
 
     Can import using either OAuth (token provided) or public username.
     """
-    return import_media(trakt.importer, token, user_id, mode, username)
+    return import_media(
+        trakt.importer,
+        token,
+        user_id,
+        mode,
+        username,
+        redirect_uri=redirect_uri,
+    )
 
 
 @shared_task(name="Import from MDBList")
