@@ -318,7 +318,10 @@ class IntegrationTest(SerialStaticLiveServerTestCase):
             expect(track_modal.locator("[data-track-modal-root]")).to_be_visible()
             page.keyboard.press("Escape")
             expect(track_modal).not_to_be_visible()
-            card.get_by_title("View your activity history").click()
+            card.get_by_role("button", name="View your activity history").click()
+            activity_modal = page.get_by_role("dialog", name="Activity history")
+            expect(activity_modal).to_be_visible()
+            activity_modal.get_by_role("link", name="View History").click()
             page.wait_for_url("**/history?*")
         finally:
             touch_context.close()

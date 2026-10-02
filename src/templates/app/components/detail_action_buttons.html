@@ -33,6 +33,7 @@
                 </span>
               </button>
 
+              <template x-teleport="body">
               <div x-show="trackOpen"
               @mousedown.self="trackOpen = false"
                    x-cloak
@@ -44,6 +45,7 @@
                   <div id="podcast-show-track-modal"></div>
                 </div>
               </div>
+              </template>
             {% else %}
               {% if user_medias and media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
                 <div x-data="{ editTrackOpen: false, createTrackOpen: false, trackMenuOpen: false }"
@@ -83,6 +85,7 @@
                             @click.stop="trackMenuOpen = false; createTrackOpen = true">{% translate "Add new entry" %}</button>
                   </div>
 
+                  <template x-teleport="body">
                   <div x-show="editTrackOpen"
                   @mousedown.self="editTrackOpen = false"
                        x-cloak
@@ -94,7 +97,9 @@
                       <div id="{% component_id 'track' media current_instance.id %}"></div>
                     </div>
                   </div>
+                  </template>
 
+                  <template x-teleport="body">
                   <div x-show="createTrackOpen"
                   @mousedown.self="createTrackOpen = false"
                        @keydown.escape.window="createTrackOpen = false"
@@ -105,6 +110,7 @@
                       <div id="{% component_id 'track' media %}"></div>
                     </div>
                   </div>
+                  </template>
                 </div>
               {% else %}
                 {% include "app/components/detail_track_action.html" with media=media current_instance=current_instance return_url=request.get_full_path|urlencode track_action_update=True edition_id=hardcover_edition_id %}
@@ -115,7 +121,7 @@
           <div class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap">
             {% if detail_link_sections %}
               <div x-data="{ linksOpen: false, linksPinned: false }"
-                   class="relative flex-1 sm:flex-none"
+                   class="relative z-40 flex-1 sm:flex-none"
                    @mouseenter="linksOpen = true"
                    @mouseleave="if (!linksPinned) linksOpen = false"
                    @keydown.escape.window="linksOpen = false; linksPinned = false"
@@ -136,7 +142,7 @@
                      x-transition:leave="transition ease-in duration-100"
                      x-transition:leave-start="opacity-100 translate-y-0"
                      x-transition:leave-end="opacity-0 -translate-y-1"
-                     class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-[var(--color-surface-border)] bg-[var(--color-page-bg)]/95 p-3 shadow-2xl backdrop-blur-sm">
+                     class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-[var(--color-surface-border)] bg-[var(--color-surface-strong)] p-3 shadow-2xl">
                   {% for detail_link_section in detail_link_sections %}
                     <div class="{% if not forloop.first %}mt-3 border-t border-[var(--color-surface-border)] pt-3{% endif %}">
                       <div class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
@@ -172,7 +178,7 @@
             {% component_id 'tag-preview-genres' media as detail_tag_preview_genres_id %}
             {% component_id 'tag-preview-implied-genres' media as detail_tag_preview_implied_genres_id %}
             <div x-data="{ tagsOpen: false, tagsPreviewOpen: false, hasTagPreview() { return this.$refs.tagsPreviewHost?.firstElementChild?.dataset.hasPreview === 'true' }, clampTagsPopup() { const el = this.$refs.tagsPopup; if (!el) return; el.style.left = '0'; const over = el.getBoundingClientRect().right - (window.innerWidth - 16); if (over > 0) el.style.left = (-over) + 'px'; } }"
-                 class="relative flex-1 sm:flex-none"
+                 class="relative z-40 flex-1 sm:flex-none"
                  @mouseenter="if (hasTagPreview()) tagsPreviewOpen = true"
                  @mouseleave="tagsPreviewOpen = false"
                  x-effect="if (tagsPreviewOpen) $nextTick(() => clampTagsPopup())">
@@ -202,12 +208,13 @@
                    x-transition:leave="transition ease-in duration-100"
                    x-transition:leave-start="opacity-100 translate-y-0"
                    x-transition:leave-end="opacity-0 -translate-y-1"
-                   class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-[var(--color-surface-border)] bg-[var(--color-page-bg)]/95 p-3 shadow-2xl backdrop-blur-sm">
+                   class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-[var(--color-surface-border)] bg-[var(--color-surface-strong)] p-3 shadow-2xl">
                 <div x-ref="tagsPreviewHost">
                   {% include "app/components/detail_tag_preview.html" with preview_id=detail_tag_preview_id detail_tag_sections=detail_tag_sections only %}
                 </div>
               </div>
 
+              <template x-teleport="body">
               <div x-show="tagsOpen"
               @mousedown.self="tagsOpen = false"
                    x-cloak
@@ -217,6 +224,7 @@
                   <div id="{% component_id 'tags' media %}"></div>
                 </div>
               </div>
+              </template>
             </div>
 
             <div x-data="{ listsOpen: false }" class="flex-1 sm:flex-none">
@@ -228,6 +236,7 @@
                       hx-trigger="click once"
                       @click="listsOpen = true">{% include "app/icons/list-add.svg" with classes="w-4 h-4" %}</button>
 
+              <template x-teleport="body">
               <div x-show="listsOpen"
               @mousedown.self="listsOpen = false"
                    x-cloak
@@ -237,13 +246,19 @@
                   <div id="{% component_id 'lists' media %}"></div>
                 </div>
               </div>
+              </template>
             </div>
 
-            <a class="inline-flex h-11 w-full flex-1 items-center justify-center rounded-xl border border-[var(--color-surface-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-colors duration-200 hover:bg-[var(--color-surface-muted)] cursor-pointer sm:size-11 sm:w-11 sm:flex-none"
-               title="{% translate "View your activity history" %}"
-               href="{% url 'history' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
+            <button type="button"
+                    aria-haspopup="dialog"
+                    aria-label="{% translate "View your activity history" %}"
+                    class="inline-flex h-11 w-full flex-1 items-center justify-center rounded-xl border border-[var(--color-surface-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-colors duration-200 hover:bg-[var(--color-surface-muted)] cursor-pointer sm:size-11 sm:w-11 sm:flex-none"
+                    hx-get="{% url 'activity_sessions_modal' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}"
+                    hx-target="#session-history-modal-host"
+                    hx-swap="innerHTML"
+                    @click="$dispatch('open-session-history')">
               {% include "app/icons/history.svg" with classes="w-4 h-4" %}
-            </a>
+            </button>
 
             <form method="post"
                   action="{% media_view_url 'sync_metadata' media %}"

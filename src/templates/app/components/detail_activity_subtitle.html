@@ -66,12 +66,12 @@
             hx-swap="innerHTML"
             @click="$dispatch('open-session-history')">
       {% if activity_subtitle.primary_text %}
-        <span>
+        <span class="detail-activity-progress-text">
           {{ activity_subtitle.primary_text|translate_activity_text:media_type }}
         </span>
       {% endif %}
       {% if activity_subtitle.date_start or activity_subtitle.date_end %}
-        <span class="mx-2 text-gray-600">•</span>
+          <span class="detail-activity-progress-separator mx-2 text-gray-600">•</span>
         <span>
           {% if activity_subtitle.date_start and activity_subtitle.date_end %}
             {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
@@ -87,7 +87,7 @@
         </span>
       {% endif %}
       {% if activity_subtitle.duration_text %}
-        <span class="mx-2 text-gray-600">•</span>
+        <span class="detail-activity-duration-separator {% if not activity_subtitle.date_start and not activity_subtitle.date_end %}detail-activity-duration-separator--progress-only{% endif %} mx-2 text-gray-600">•</span>
         <span>
           {% if " watched" in activity_subtitle.duration_text %}
             {{ activity_subtitle.duration_text|cut:" watched" }} {% translate "watched" %}

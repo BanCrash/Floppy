@@ -128,7 +128,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["title"], "Test Movie")
         self.assertContains(
             response,
-            'href="/history?media_type=movie&media_id=238&source=tmdb"',
+            f'hx-get="{reverse("activity_sessions_modal")}?media_type=movie&media_id=238&source=tmdb"',
             html=False,
         )
         self.assertContains(
@@ -904,7 +904,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn(
-            'class="flex flex-col-reverse md:flex-row gap-0 md:gap-10"', content
+            'class="detail-secondary-layout flex flex-col-reverse md:flex-row gap-0 md:gap-10"', content
         )
         self.assertIn('class="detail-media-grid"', content)
         self.assertIn("window.matchMedia('(max-width: 768px)').matches", content)
@@ -3422,7 +3422,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "123,456 ratings")
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
+            'class="detail-score-card-shell order-2 mt-0 mb-5 w-full sm:order-1 sm:mt-4"',
             html=False,
         )
 
@@ -3592,8 +3592,8 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         soup = BeautifulSoup(response.content, "html.parser")
-        chip = soup.find("span", class_="sr-only", string="IMDb score").parent
-        self.assertEqual(chip.name, "button")
+        source_icon = soup.find("span", class_="sr-only", string="IMDb score").parent
+        self.assertEqual(source_icon.name, "span")
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_hides_imdb_score_card_without_data(self, mock_get_metadata):
@@ -3663,7 +3663,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "42,000 votes")
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
+            'class="detail-score-card-shell order-2 mt-0 mb-5 w-full sm:order-1 sm:mt-4"',
             html=False,
         )
 
@@ -3701,6 +3701,7 @@ class MediaDetailsViewTests(TestCase):
             "media_type": MediaTypes.TV.value,
             "source": Sources.TMDB.value,
             "image": "http://example.com/image.jpg",
+            "external_links": {"trakt": "https://trakt.tv/shows/test-tv-show"},
             "details": {},
             "related": {},
         }
@@ -3724,6 +3725,10 @@ class MediaDetailsViewTests(TestCase):
         )
         self.assertContains(response, "trakt-logo.svg")
         self.assertContains(response, fragment_url)
+        self.assertContains(response, "View series graph")
+        self.assertContains(response, 'role="dialog"', html=False)
+        self.assertContains(response, 'href="https://trakt.tv/shows/test-tv-show"')
+        self.assertContains(response, "Trakt")
 
         fragment = self.client.get(fragment_url)
         self.assertEqual(fragment.status_code, 200)
@@ -3998,7 +4003,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "3h 10min watched")
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
+            'class="detail-score-card-shell order-2 mt-0 mb-5 w-full sm:order-1 sm:mt-4"',
             html=False,
         )
         self.assertContains(

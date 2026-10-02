@@ -427,6 +427,20 @@ def media_save(request):
                     request=request,
                 )
 
+            def _progress_card_fragment():
+                if media_type not in (MediaTypes.TV.value, MediaTypes.SEASON.value):
+                    return None
+                return render_to_string(
+                    "app/components/detail_progress_card_slot.html",
+                    {
+                        "media": media.item,
+                        "media_type": media_type,
+                        "current_instance": media,
+                        "progress_card_slot_oob": True,
+                    },
+                    request=request,
+                )
+
             def _card_rating_fragment():
                 return render_to_string(
                     "app/components/media_card_rating_oob.html",
@@ -489,6 +503,7 @@ def media_save(request):
             for label, build in (
                 ("activity subtitle", _activity_subtitle_fragment),
                 ("score chip", _score_chip_fragment),
+                ("progress card", _progress_card_fragment),
                 ("card rating", _card_rating_fragment),
                 ("status chip", _status_chip_fragment),
                 ("season cascade pill", _season_cascade_fragment),
@@ -1015,6 +1030,14 @@ def _write_episode_save_oob(
         ),
     )
     response.write(_render_season_progress_oob(related_season))
+    response["HX-Trigger-After-Swap"] = json.dumps(
+        {
+            "detail-progress-updated": {
+                "id": related_season.id,
+                "completed": related_season.completed_episode_count,
+            },
+        },
+    )
     response.write(
         _render_track_action_oob(request, related_season, parsed_next),
     )
@@ -1344,6 +1367,14 @@ def episode_history_poll(request, season_id):
         )
 
     response.write(_render_season_progress_oob(related_season))
+    response["HX-Trigger-After-Swap"] = json.dumps(
+        {
+            "detail-progress-updated": {
+                "id": related_season.id,
+                "completed": related_season.completed_episode_count,
+            },
+        },
+    )
     response.write(
         _render_track_action_oob(
             request,
