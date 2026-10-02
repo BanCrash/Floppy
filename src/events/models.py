@@ -38,6 +38,16 @@ def _normalize_anime_title(title: str) -> str:
     return _NON_ALNUM_RE.sub("", stripped.lower())
 
 
+class ReleaseTypes(models.TextChoices):
+    """Extra release dates a movie can have next to its main (theatrical) date.
+
+    The main release is stored with a blank release type.
+    """
+
+    DIGITAL = "digital", "Digital"
+    PHYSICAL = "physical", "Physical"
+
+
 class SentinelDatetime:
     """Sentinel time for event without a specific time."""
 
@@ -98,7 +108,9 @@ class EventManager(models.Manager):
         tv_query = self._build_tv_query(user, enabled_types, active_tv_items)
         combined_query = (user_query & active_status_query) | tv_query
 
+        # Digital and physical dates are per country: only the user's own count.
         queryset = self.filter(
+            Q(release_type="") | Q(region=user.watch_provider_region),
             combined_query,
             datetime__gte=start_datetime,
             datetime__lte=end_datetime,
@@ -372,6 +384,16 @@ class Event(models.Model):
     item = models.ForeignKey(Item, on_delete=models.CASCADE)
     content_number = models.IntegerField(null=True)
     datetime = models.DateTimeField()
+    # Blank for the item's main release date. Digital and physical dates differ
+    # per country, so those events also carry the region they apply to and only
+    # show for users whose watch provider region matches.
+    release_type = models.CharField(
+        max_length=10,
+        choices=ReleaseTypes,
+        blank=True,
+        default="",
+    )
+    region = models.CharField(max_length=5, blank=True, default="")
     notification_sent = models.BooleanField(default=False)
     # notification_sent is global, so it cannot say who was actually reached.
     # Users whose real-time alert failed are recorded here so the daily digest
@@ -393,14 +415,17 @@ class Event(models.Model):
                 name="unique_item_content_number",
             ),
             UniqueConstraint(
-                fields=["item"],
+                fields=["item", "release_type", "region"],
                 condition=Q(content_number__isnull=True),
-                name="unique_item_null_content_number",
+                name="unique_item_release_null_content_number",
             ),
         ]
 
     def __str__(self):
         """Return event title."""
+        if self.release_type:
+            return f"{self.item} ({self.get_release_type_display()} release)"
+
         if self.content_number:
             return (
                 f"{self.item.__str__()} "

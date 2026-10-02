@@ -8,12 +8,12 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import EmptyPage, Paginator
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.utils.translation import gettext
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
@@ -38,7 +38,9 @@ from app.models import (
 )
 from app.providers import services
 from app.services import metadata_resolution
+from app.templatetags import app_tags
 from integrations.models import CollectionSourceState
+from users.home_screen import get_home_configurable_media_types
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,17 @@ COLLECTION_SORT_FIELDS = {
     "title": "item__title",
     "release_date": "item__release_datetime",
 }
+COLLECTION_ROW_BATCH = 20
+# Query keys that describe one row's slice, not the filters the row inherits.
+_ROW_ONLY_PARAMS = (
+    "group",
+    "type",
+    "page",
+    "offset",
+    "seed",
+    "row_type",
+    "org.htmx.cache-buster",
+)
 COLLECTION_RATING_CHOICES = {"all", "rated", "not_rated"}
 COLLECTION_COMPLETENESS_CHOICES = {"all", "partial", "full"}
 _TV_FAMILY_MEDIA_TYPES = {
@@ -181,6 +194,107 @@ def _shows_for_keys(show_keys):
     ]
 
 
+def _decorate_collection_entries(user, entries):
+    """Attach the user's media (rating, status) and TV completeness to entries."""
+    media_by_item_id = {
+        library_entry.item.pk: library_entry.media
+        for library_entry in media_list_entries_for_items(
+            user,
+            list({entry.item_id: entry.item for entry in entries}.values()),
+        )
+    }
+    for entry in entries:
+        entry.media = media_by_item_id.get(entry.item_id)
+    badge_entries = [
+        entry
+        for entry in entries
+        if entry.item.media_type in _SEASON_OR_SHOW_MEDIA_TYPES
+    ]
+    if badge_entries:
+        badge_show_keys = {
+            (entry.item.media_id, entry.item.source) for entry in badge_entries
+        }
+        badge_completeness_map = helpers.get_collection_completeness_map(
+            user,
+            _shows_for_keys(badge_show_keys),
+        )
+        for entry in badge_entries:
+            entry.completeness = badge_completeness_map.get(entry.item_id)
+
+
+def _ordered_collection_slice(collection, sort_by, direction, custom_field, offset):
+    """Return one batch of entries in the selected sort order."""
+    end = offset + COLLECTION_ROW_BATCH
+    if custom_field:
+        ids = _ids_ordered_by_custom_field(collection, custom_field, direction)
+        ids = ids[offset:end]
+        entries_by_id = collection.in_bulk(ids)
+        return [entries_by_id[pk] for pk in ids]
+    order_field = COLLECTION_SORT_FIELDS[sort_by]
+    if direction == "desc":
+        order_field = f"-{order_field}"
+    return list(collection.order_by(order_field, "-id")[offset:end])
+
+
+def _collection_media_type_rows(
+    request,
+    collection,
+    sort_by,
+    direction,
+    custom_field,
+):
+    """Build one scrollable row per media type, in the user's Home order."""
+    totals = dict(
+        collection.order_by()
+        .values_list("item__media_type")
+        .annotate(total=Count("id")),
+    )
+    home_order = get_home_configurable_media_types(request.user)
+    ordered_types = [t for t in home_order if t in totals] + [
+        t for t in MediaTypes.values if t in totals and t not in home_order
+    ]
+    inherited = [
+        (key, value)
+        for key, values in request.GET.lists()
+        if key not in _ROW_ONLY_PARAMS
+        for value in values
+    ]
+    rows = []
+    for row_type in ordered_types:
+        entries = _ordered_collection_slice(
+            collection.filter(item__media_type=row_type),
+            sort_by,
+            direction,
+            custom_field,
+            0,
+        )
+        _decorate_collection_entries(request.user, entries)
+        load_more_query = urlencode(
+            [*inherited, ("group", "type"), ("row_type", row_type)],
+        )
+        rows.append(
+            {
+                "row_id": f"collection-{row_type}",
+                "title_main": app_tags.media_type_readable_plural(row_type),
+                "icon_svg": str(
+                    app_tags.icon(row_type, False, "w-5 h-5"),
+                ),
+                "summary": gettext("%(count)s collected") % {"count": totals[row_type]},
+                "view_all_text": gettext("View all"),
+                "view_all_url": reverse("collection_list_filtered", args=[row_type])
+                + (f"?{urlencode(inherited)}" if inherited else ""),
+                "view_all_internal": True,
+                "load_more_url": f"{reverse('collection_list')}?{load_more_query}",
+                "items": entries,
+                "total": totals[row_type],
+                "loaded_count": len(entries),
+                "card_width_class": "w-44",
+                "grid_class": "",
+            },
+        )
+    return rows
+
+
 @require_GET
 def collection_list(request, media_type=None):
     """Display user's collection, filterable by type, format, and rating."""
@@ -304,53 +418,65 @@ def collection_list(request, media_type=None):
         else:
             collection = collection.none()
 
-    if custom_sort_field:
-        paginator = Paginator(
-            _ids_ordered_by_custom_field(collection, custom_sort_field, direction),
-            20,
+    # Rows are a grid-only layout and only make sense across several types.
+    group_by_type = (
+        request.GET.get("group") == "type"
+        and not effective_media_type
+        and layout == "grid"
+    )
+    row_type = request.GET.get("row_type", "")
+    if group_by_type and row_type in MediaTypes.values:
+        try:
+            offset = max(0, int(request.GET.get("offset", 0)))
+        except ValueError:
+            offset = 0
+        entries = _ordered_collection_slice(
+            collection.filter(item__media_type=row_type),
+            sort_by,
+            direction,
+            custom_sort_field,
+            offset,
+        )
+        _decorate_collection_entries(request.user, entries)
+        return render(
+            request,
+            "app/components/collection_row_grid.html",
+            {"media_list": {"items": entries}},
+        )
+
+    page_number = int(request.GET.get("page", 1))
+    collection_rows = []
+    page_obj = []
+    if group_by_type:
+        collection_rows = _collection_media_type_rows(
+            request,
+            collection,
+            sort_by,
+            direction,
+            custom_sort_field,
         )
     else:
-        order_field = COLLECTION_SORT_FIELDS[sort_by]
-        if direction == "desc":
-            order_field = f"-{order_field}"
-        paginator = Paginator(collection.order_by(order_field, "-id"), 20)
-    page_number = int(request.GET.get("page", 1))
+        if custom_sort_field:
+            paginator = Paginator(
+                _ids_ordered_by_custom_field(collection, custom_sort_field, direction),
+                20,
+            )
+        else:
+            order_field = COLLECTION_SORT_FIELDS[sort_by]
+            if direction == "desc":
+                order_field = f"-{order_field}"
+            paginator = Paginator(collection.order_by(order_field, "-id"), 20)
+        try:
+            page_obj = paginator.page(page_number)
+        except EmptyPage:
+            page_obj = paginator.page(paginator.num_pages)
+        if custom_sort_field:
+            # The page holds ids; load only those entries, in the sorted order.
+            entries_by_id = collection.in_bulk(page_obj.object_list)
+            page_obj.object_list = [entries_by_id[pk] for pk in page_obj.object_list]
 
-    try:
-        page_obj = paginator.page(page_number)
-    except EmptyPage:
-        page_obj = paginator.page(paginator.num_pages)
-    if custom_sort_field:
-        # The page holds ids; load only those entries, in the sorted order.
-        entries_by_id = collection.in_bulk(page_obj.object_list)
-        page_obj.object_list = [entries_by_id[pk] for pk in page_obj.object_list]
-
-    page_entries = list(page_obj.object_list)
-    # The card shows the user's rating and status the same way the library does.
-    media_by_item_id = {
-        library_entry.item.pk: library_entry.media
-        for library_entry in media_list_entries_for_items(
-            request.user,
-            list({entry.item_id: entry.item for entry in page_entries}.values()),
-        )
-    }
-    for entry in page_entries:
-        entry.media = media_by_item_id.get(entry.item_id)
-    badge_entries = [
-        entry
-        for entry in page_entries
-        if entry.item.media_type in _SEASON_OR_SHOW_MEDIA_TYPES
-    ]
-    if badge_entries:
-        badge_show_keys = {
-            (entry.item.media_id, entry.item.source) for entry in badge_entries
-        }
-        badge_completeness_map = helpers.get_collection_completeness_map(
-            request.user,
-            _shows_for_keys(badge_show_keys),
-        )
-        for entry in badge_entries:
-            entry.completeness = badge_completeness_map.get(entry.item_id)
+        # The card shows the user's rating and status the same way the library does.
+        _decorate_collection_entries(request.user, list(page_obj.object_list))
 
     base_collection = CollectionEntry.objects.filter(user=request.user)
     available_media_types = set(
@@ -397,6 +523,8 @@ def collection_list(request, media_type=None):
     is_fragment = helpers.is_htmx_fragment(request)
     context = {
         "collection_entries": page_obj,
+        "collection_rows": collection_rows,
+        "group_by_type": group_by_type,
         "media_type": effective_media_type,
         "media_types": media_types,
         "available_formats": available_formats,

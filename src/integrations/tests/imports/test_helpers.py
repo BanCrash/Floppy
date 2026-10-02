@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -475,6 +476,30 @@ class HelpersTest(TestCase):
             request,
             "The same import task is already scheduled.",
         )
+
+    @patch("django.contrib.messages.success")
+    def test_create_import_schedule_replace_existing_refreshes_kwargs(
+        self,
+        _mock_success,
+    ):
+        """Reconnecting an account updates its schedule instead of keeping a dead token."""
+        request = Mock()
+        request.user = self.user
+        args = ("testuser", request, "new", "daily", "14:30", "TestSource")
+
+        helpers.create_import_schedule(*args, token="old-token")
+        helpers.create_import_schedule(
+            *args,
+            token="new-token",
+            extra_kwargs={"redirect_uri": "https://floppy.example.com/cb"},
+            replace_existing=True,
+        )
+
+        self.assertEqual(PeriodicTask.objects.count(), 1)
+        task_kwargs = json.loads(PeriodicTask.objects.get().kwargs)
+        self.assertEqual(task_kwargs["token"], "new-token")
+        self.assertEqual(task_kwargs["redirect_uri"], "https://floppy.example.com/cb")
+        self.assertEqual(task_kwargs["username"], "testuser")
 
     @patch("django.contrib.messages.error")
     def test_create_import_schedule_invalid_time(self, mock_messages):

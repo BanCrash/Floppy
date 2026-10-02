@@ -763,6 +763,7 @@ def _finish_trakt_connection(request, oauth_result, state_data):
             user_id=request.user.id,
             mode=mode,
             username=oauth_result["username"],
+            redirect_uri=oauth_result.get("redirect_uri"),
         ) is False:
             return
         messages.info(request, "The task to import media from Trakt has been queued.")
@@ -775,6 +776,8 @@ def _finish_trakt_connection(request, oauth_result, state_data):
             import_time,
             "Trakt",
             token=enc_token,
+            extra_kwargs={"redirect_uri": oauth_result.get("redirect_uri")},
+            replace_existing=True,
         )
 
 

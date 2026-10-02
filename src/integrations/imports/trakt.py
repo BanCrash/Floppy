@@ -116,6 +116,7 @@ def handle_oauth_callback(
     return {
         "access_token": token_response["access_token"],
         "refresh_token": token_response["refresh_token"],
+        "redirect_uri": redirect_uri,
         "username": get_username_from_oauth(
             token_response["access_token"],
             client_id=client_id,
@@ -243,6 +244,7 @@ def poll_device_token(device_code, client_id=None, client_secret=None):
         return {
             "access_token": access_token,
             "refresh_token": payload["refresh_token"],
+            "redirect_uri": TRAKT_OOB_REDIRECT_URI,
             "username": get_username_from_oauth(access_token, client_id=client_id),
         }
 
@@ -269,8 +271,13 @@ def poll_device_token(device_code, client_id=None, client_secret=None):
     raise MediaImportError(msg)
 
 
-def get_access_token(encrypted_refresh_token):
-    """Get access token from encrypted refresh token."""
+def get_access_token(encrypted_refresh_token, redirect_uri=None):
+    """Get access token from encrypted refresh token.
+
+    Trakt checks the redirect URI on a refresh, so send the one the connection
+    was authorized with. Connections saved before it was stored (``None``) fall
+    back to the best guess from this instance's configuration.
+    """
     url = "https://api.trakt.tv/oauth/token"
 
     decrypted_token = helpers.decrypt_or_raise(encrypted_refresh_token)
@@ -280,7 +287,7 @@ def get_access_token(encrypted_refresh_token):
         "client_secret": credentials.get("trakt", "client_secret"),
         "refresh_token": decrypted_token,
         "grant_type": "refresh_token",
-        "redirect_uri": _refresh_redirect_uri(),
+        "redirect_uri": redirect_uri or _refresh_redirect_uri(),
     }
 
     try:
@@ -294,11 +301,30 @@ def get_access_token(encrypted_refresh_token):
         if error.status_code == requests.codes.unauthorized:
             msg = "Invalid Trakt secret key."
             raise MediaImportError(msg) from error
+        if error.status_code == requests.codes.bad_request:
+            raise MediaImportError(_refresh_rejected_message(error)) from error
         raise
 
     # refresh tokens are one time use only
     update_refresh_token(encrypted_refresh_token, request["refresh_token"])
     return request["access_token"]
+
+
+def _refresh_rejected_message(error):
+    """Explain a 400 from the token endpoint, naming the OAuth error Trakt sent."""
+    try:
+        payload = error.response.json()
+        reason = payload["error"] if isinstance(payload, dict) else None
+    except (AttributeError, KeyError, ValueError):
+        reason = None
+    if not isinstance(reason, str):
+        reason = None
+    logger.warning("Trakt token refresh rejected (error=%s)", reason)
+    detail = f" ({reason})" if reason else ""
+    return (
+        f"Trakt rejected the token refresh{detail}. Check that the Redirect URI "
+        "on your Trakt app matches the one Floppy shows, then reconnect Trakt."
+    )
 
 
 def update_refresh_token(old_token, new_token):
@@ -315,7 +341,7 @@ def update_refresh_token(old_token, new_token):
         periodic_task.save()
 
 
-def importer(token, user, mode, username):
+def importer(token, user, mode, username, redirect_uri=None):
     """Import the user's data from Trakt.
 
     Can import using either OAuth (token provided) or public username.
@@ -327,8 +353,16 @@ def importer(token, user, mode, username):
         user: Django user object to import data for
         mode (str): Import mode ("new" or "overwrite")
         username (str): Trakt username to import from
+        redirect_uri (str, optional): Redirect URI the connection was authorized
+            with, sent again when the refresh token is exchanged
     """
-    trakt_importer = TraktImporter(username, user, mode, refresh_token=token)
+    trakt_importer = TraktImporter(
+        username,
+        user,
+        mode,
+        refresh_token=token,
+        redirect_uri=redirect_uri,
+    )
     return trakt_importer.import_data()
 
 
@@ -594,7 +628,7 @@ class TraktMetadataResolverMixin:
 class TraktImporter(TraktMetadataResolverMixin):
     """Class to handle importing user data from Trakt."""
 
-    def __init__(self, username, user, mode, refresh_token=None):
+    def __init__(self, username, user, mode, refresh_token=None, redirect_uri=None):
         """Initialize the importer with user details and mode.
 
         Args:
@@ -603,12 +637,14 @@ class TraktImporter(TraktMetadataResolverMixin):
             mode (str): Import mode ("new" or "overwrite")
             refresh_token (str, optional): Encrypted OAuth2 refresh token if
                 using OAuth, None for public import
+            redirect_uri (str, optional): Redirect URI used when authorizing
         """
         self.username = username
         self.user = user
         self.external_reference_integration = "trakt"
         self.mode = mode
         self.refresh_token = refresh_token
+        self.redirect_uri = redirect_uri
         self.is_oauth_import = bool(refresh_token)
         user_identifier = "me" if self.is_oauth_import else username
         self.user_base_url = f"{TRAKT_API_BASE_URL}/users/{user_identifier}"
@@ -831,7 +867,10 @@ class TraktImporter(TraktMetadataResolverMixin):
                 # already made api_request before, so access_token is set
                 headers["Authorization"] = f"Bearer {self.access_token}"
             except AttributeError:
-                self.access_token = get_access_token(self.refresh_token)
+                self.access_token = get_access_token(
+                    self.refresh_token,
+                    self.redirect_uri,
+                )
                 headers["Authorization"] = f"Bearer {self.access_token}"
         return services.api_request(
             "TRAKT",

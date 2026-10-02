@@ -957,6 +957,11 @@ that case set the Trakt app's Redirect URI to `urn:ietf:wg:oauth:2.0:oob`.
 Set `URLS=https://your_domain.com` if you would rather use the one-click browser
 flow.
 
+If scheduled Trakt imports fail with "Trakt rejected the token refresh", the
+Redirect URI on your Trakt app does not match the one Floppy used when you
+connected. Set `URLS=https://your_domain.com`, make sure the Trakt app lists
+`https://your_domain.com/import/trakt/private`, and reconnect Trakt.
+
 ### Reverse proxy setup
 
 If you are behind a reverse proxy (Nginx, Traefik, Caddy, and so on) and see a `403 Forbidden`, add your URL to the environment:

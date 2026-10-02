@@ -86,79 +86,64 @@
   
 <div class="history-page">
   {# Month-based navigation header #}
-  {# Left = toward present (newer), Right = toward past (older) #}
+  {# Left = toward past (older), Right = toward present (newer) #}
   {% if use_month_view %}
     <div class="flex items-center justify-between gap-3 sm:gap-6 mb-6">
-      {# Left side: First (current month) + Newer month #}
+      {# Left side: Last (back one year) + Older month #}
       <div class="flex items-center gap-1 sm:gap-2">
+        {# Last button - go back 1 year from current view #}
+        <a href="?year={{ view_year|add:'-1' }}&m={{ view_month }}{% if month_nav_query %}&{{ month_nav_query }}{% endif %}"
+           class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-strong)] transition-colors cursor-pointer text-sm"
+           aria-label="{% translate "Go back one year" %}"
+           title="{% translate "Go back one year" %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="m11 17-5-5 5-5"></path><path d="m18 17-5-5 5-5"></path></svg>
+          <span>{{ view_year|add:'-1' }}</span>
+        </a>
+
+        {# Older month button (toward past) #}
+        <a href="?year={{ prev_year }}&m={{ prev_month }}{% if month_nav_query %}&{{ month_nav_query }}{% endif %}"
+           class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-strong)] transition-colors cursor-pointer text-sm"
+           aria-label="{% blocktranslate trimmed with value_1=prev_month_name %}Go to {{ value_1 }}{% endblocktranslate %}">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="m15 18-6-6 6-6"></path></svg>
+          <span>{{ prev_month_name }}</span>
+        </a>
+      </div>
+
+      {# Center: Current month display #}
+      <h2 class="text-base sm:text-xl font-semibold text-[var(--color-text)] text-center whitespace-nowrap px-2 sm:px-4">{{ month_name }}</h2>
+
+      {# Right side: Newer month + First (current month) #}
+      <div class="flex items-center gap-1 sm:gap-2">
+        {# Newer month button (toward present) #}
+        {% if show_next_month %}
+          <a href="?year={{ next_year }}&m={{ next_month }}{% if month_nav_query %}&{{ month_nav_query }}{% endif %}"
+             class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-strong)] transition-colors cursor-pointer text-sm"
+             aria-label="{% blocktranslate trimmed with value_1=next_month_name %}Go to {{ value_1 }}{% endblocktranslate %}">
+            <span>{{ next_month_name }}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="m9 18 6-6-6-6"></path></svg>
+          </a>
+        {% else %}
+          <span class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface-muted)] text-[var(--color-text-muted)] cursor-not-allowed text-sm">
+            <span>{{ next_month_name }}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="m9 18 6-6-6-6"></path></svg>
+          </span>
+        {% endif %}
+
         {# First button - go to current month #}
         {% if not is_current_month %}
           <a href="?year={{ current_year }}&m={{ current_month_num }}{% if month_nav_query %}&{{ month_nav_query }}{% endif %}"
              class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-strong)] transition-colors cursor-pointer text-sm"
              aria-label="{% translate "Go to current month" %}"
              title="{% translate "Go to current month" %}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
-              <path d="m11 17-5-5 5-5"></path>
-              <path d="m18 17-5-5 5-5"></path>
-            </svg>
             <span>{{ current_year }}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="m13 17 5-5-5-5"></path><path d="m6 17 5-5-5-5"></path></svg>
           </a>
         {% else %}
           <span class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface-muted)] text-[var(--color-text-muted)] cursor-not-allowed text-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
-              <path d="m11 17-5-5 5-5"></path>
-              <path d="m18 17-5-5 5-5"></path>
-            </svg>
             <span>{{ current_year }}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="m13 17 5-5-5-5"></path><path d="m6 17 5-5-5-5"></path></svg>
           </span>
         {% endif %}
-
-        {# Newer month button (toward present) #}
-        {% if show_next_month %}
-          <a href="?year={{ next_year }}&m={{ next_month }}{% if month_nav_query %}&{{ month_nav_query }}{% endif %}"
-             class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-strong)] transition-colors cursor-pointer text-sm"
-             aria-label="{% blocktranslate trimmed with value_1=next_month_name %}Go to {{ value_1 }}{% endblocktranslate %}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
-              <path d="m15 18-6-6 6-6"></path>
-            </svg>
-            <span>{{ next_month_name }}</span>
-          </a>
-        {% else %}
-          <span class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface-muted)] text-[var(--color-text-muted)] cursor-not-allowed text-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
-              <path d="m15 18-6-6 6-6"></path>
-            </svg>
-            <span>{{ next_month_name }}</span>
-          </span>
-        {% endif %}
-      </div>
-
-      {# Center: Current month display #}
-      <h2 class="text-base sm:text-xl font-semibold text-[var(--color-text)] text-center whitespace-nowrap px-2 sm:px-4">{{ month_name }}</h2>
-
-      {# Right side: Older month + Last (earliest) #}
-      <div class="flex items-center gap-1 sm:gap-2">
-        {# Older month button (toward past) #}
-        <a href="?year={{ prev_year }}&m={{ prev_month }}{% if month_nav_query %}&{{ month_nav_query }}{% endif %}"
-           class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-strong)] transition-colors cursor-pointer text-sm"
-           aria-label="{% blocktranslate trimmed with value_1=prev_month_name %}Go to {{ value_1 }}{% endblocktranslate %}">
-          <span>{{ prev_month_name }}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
-            <path d="m9 18 6-6-6-6"></path>
-          </svg>
-        </a>
-
-        {# Last button - go back 1 year from current view #}
-        <a href="?year={{ view_year|add:'-1' }}&m={{ view_month }}{% if month_nav_query %}&{{ month_nav_query }}{% endif %}"
-           class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-strong)] transition-colors cursor-pointer text-sm"
-           aria-label="{% translate "Go back one year" %}"
-           title="{% translate "Go back one year" %}">
-          <span>{{ view_year|add:'-1' }}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
-            <path d="m13 17 5-5-5-5"></path>
-            <path d="m6 17 5-5-5-5"></path>
-          </svg>
-        </a>
       </div>
     </div>
   {% endif %}
