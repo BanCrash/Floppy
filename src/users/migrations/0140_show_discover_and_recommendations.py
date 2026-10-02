@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("users", "0137_add_gcd_source"),
+        ("users", "0139_merge_saved_view_history_and_tv_auto_move"),
     ]
 
     operations = [
