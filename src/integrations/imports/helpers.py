@@ -710,10 +710,14 @@ def create_import_schedule(
     source,
     token=None,
     extra_kwargs=None,
+    replace_existing=False,
 ):
     """Create an import schedule.
 
     extra_kwargs: Optional dictionary of additional task kwargs to persist.
+    replace_existing: When the same schedule already exists, refresh its token
+        and extra kwargs instead of refusing. Used when a connection is redone,
+        so the schedule does not keep a dead token.
     """
     try:
         import_time = (
@@ -728,7 +732,18 @@ def create_import_schedule(
         return
 
     task_name = f"Import from {source} for {username} at {import_time} {frequency}"
-    if PeriodicTask.objects.filter(name=task_name).exists():
+    existing = PeriodicTask.objects.filter(name=task_name).first()
+    if existing and replace_existing:
+        task_kwargs = json.loads(existing.kwargs)
+        if token:
+            task_kwargs["token"] = token
+        if extra_kwargs:
+            task_kwargs.update(extra_kwargs)
+        existing.kwargs = json.dumps(task_kwargs)
+        existing.save()
+        messages.success(request, f"{source} import task updated.")
+        return
+    if existing:
         messages.error(
             request,
             "The same import task is already scheduled.",

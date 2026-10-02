@@ -22,7 +22,7 @@ from app import card_surfaces, config, helpers, image_cache
 from app.models import Item, MediaTypes, Sources, Status
 from app.providers import tmdb
 from app.services import metadata_resolution
-from users.models import TimeFormatChoices
+from users.models import ALL_SEARCH_TYPE, HISTORY_VIEW_TYPE, TimeFormatChoices
 from users.templatetags.user_tags import user_date_format, user_time_format
 
 register = template.Library()
@@ -515,6 +515,8 @@ def media_type_readable(media_type):
 @register.filter
 def media_type_readable_plural(media_type):
     """Return the readable media type in plural form."""
+    if media_type == ALL_SEARCH_TYPE:
+        return _("All")
     # English suffixes do not produce correct plurals in other languages.
     return {
         MediaTypes.TV: _("TV Shows"),
@@ -985,7 +987,7 @@ def get_search_media_types(user):
         enabled_types = user.get_enabled_media_types()
 
     # Filter and format the types for search
-    return [
+    search_types = [
         {
             "display": media_type_readable_plural(media_type),
             "value": media_type,
@@ -993,6 +995,29 @@ def get_search_media_types(user):
         for media_type in enabled_types
         if media_type != MediaTypes.SEASON.value
     ]
+    if user and user.is_authenticated:
+        # Library-wide search across every enabled type (#1160).
+        search_types.insert(0, {"display": _("All"), "value": ALL_SEARCH_TYPE})
+    return search_types
+
+
+def _saved_views_by_type(user):
+    """Group the user's saved views by type, reading them once per request."""
+    if not user or not user.is_authenticated:
+        return {}
+    grouped = getattr(user, "_saved_views_by_type", None)
+    if grouped is None:
+        grouped = {}
+        for saved_view in user.saved_views.all():
+            grouped.setdefault(saved_view.media_type, []).append(saved_view)
+        user._saved_views_by_type = grouped
+    return grouped
+
+
+@register.simple_tag
+def get_history_saved_views(user):
+    """Return the user's saved History views for the sidebar."""
+    return _saved_views_by_type(user).get(HISTORY_VIEW_TYPE, [])
 
 
 @register.simple_tag
@@ -1008,12 +1033,7 @@ def get_sidebar_media_types(user):
     else:
         enabled_types = user.get_sidebar_media_types()
 
-    saved_views_by_type = {}
-    if user and user.is_authenticated:
-        for saved_view in user.saved_views.all():
-            saved_views_by_type.setdefault(saved_view.media_type, []).append(
-                saved_view,
-            )
+    saved_views_by_type = _saved_views_by_type(user)
 
     # Format the types for sidebar
     return [

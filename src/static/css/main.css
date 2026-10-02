@@ -1561,6 +1561,11 @@
       border-color: var(--color-border);
     }
   }
+  .divide-\[var\(--color-surface-border\)\] {
+    :where(& > :not(:last-child)) {
+      border-color: var(--color-surface-border);
+    }
+  }
   .divide-gray-700 {
     :where(& > :not(:last-child)) {
       border-color: var(--color-gray-700);
@@ -1631,6 +1636,10 @@
   .rounded-t-2xl {
     border-top-left-radius: var(--radius-2xl);
     border-top-right-radius: var(--radius-2xl);
+  }
+  .rounded-t-md {
+    border-top-left-radius: var(--radius-md);
+    border-top-right-radius: var(--radius-md);
   }
   .rounded-t-xl {
     border-top-left-radius: var(--radius-xl);
@@ -1782,6 +1791,12 @@
   .border-blue-700 {
     border-color: var(--color-blue-700);
   }
+  .border-amber-500\/50 {
+    border-color: color-mix(in srgb, oklch(76.9% 0.188 70.08) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-amber-500) 50%, transparent);
+    }
+  }
   .border-blue-700\/50 {
     border-color: color-mix(in srgb, oklch(48.8% 0.243 264.376) 50%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -1829,6 +1844,12 @@
   }
   .border-fuchsia-400 {
     border-color: var(--color-fuchsia-400);
+  }
+  .border-emerald-500\/50 {
+    border-color: color-mix(in srgb, oklch(69.6% 0.17 162.48) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-emerald-500) 50%, transparent);
+    }
   }
   .border-fuchsia-400\/18 {
     border-color: color-mix(in srgb, oklch(74% 0.238 322.16) 18%, transparent);
@@ -1930,6 +1951,12 @@
     border-color: color-mix(in srgb, oklch(58.5% 0.233 277.117) 30%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
       border-color: color-mix(in oklab, var(--color-indigo-500) 30%, transparent);
+    }
+  }
+  .border-indigo-500\/50 {
+    border-color: color-mix(in srgb, oklch(58.5% 0.233 277.117) 50%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-indigo-500) 50%, transparent);
     }
   }
   .border-indigo-600 {
@@ -3257,6 +3284,9 @@
   .text-\[var\(--color-link\)\] {
     color: var(--color-link);
   }
+  .text-\[var\(--color-success-text\)\] {
+    color: var(--color-success-text);
+  }
   .text-\[var\(--color-text\)\] {
     color: var(--color-text);
   }
@@ -3274,6 +3304,9 @@
     @supports (color: color-mix(in lab, red, red)) {
       color: color-mix(in oklab, var(--color-text-secondary) 90%, transparent);
     }
+  }
+  .text-\[var\(--color-success-text\)\] {
+    color: var(--color-success-text);
   }
   .text-\[var\(--color-warning-text\)\] {
     color: var(--color-warning-text);
@@ -5461,6 +5494,11 @@
       width: calc(3/4 * 100%);
     }
   }
+  .md\:w-5\/12 {
+    @media (width >= 48rem) {
+      width: calc(5/12 * 100%);
+    }
+  }
   .md\:w-32 {
     @media (width >= 48rem) {
       width: calc(var(--spacing) * 32);
@@ -5555,6 +5593,11 @@
   .md\:items-start {
     @media (width >= 48rem) {
       align-items: flex-start;
+    }
+  }
+  .md\:justify-end {
+    @media (width >= 48rem) {
+      justify-content: flex-end;
     }
   }
   .md\:justify-start {
@@ -5956,13 +5999,31 @@
     height: auto;
     min-height: 2.5rem;
   }
-  .home-settings-row-body > div, .home-settings-row-controls {
+  .home-settings-row-body > div {
     flex-wrap: wrap;
-  }
-  .home-settings-row-title, .home-settings-row-controls {
-    flex-basis: 100%;
-    min-width: 0;
     padding-block: 0.25rem;
+  }
+  .home-settings-row-title {
+    flex: 1 1 calc(100% - 2.75rem);
+    min-width: 0;
+  }
+  .home-settings-row-controls {
+    display: contents;
+  }
+  .home-settings-row-controls > button:last-child {
+    order: 1;
+  }
+  .home-settings-row-controls > :not(:last-child) {
+    order: 2;
+  }
+  .home-settings-chip {
+    border: 1px solid var(--color-surface-border);
+    background: var(--color-panel);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+  }
+  .home-settings-chip svg {
+    margin-left: 0.25rem;
   }
   .home-settings-row-controls .filter-control {
     position: static;
@@ -5973,6 +6034,13 @@
     max-width: 100%;
   }
 }
+/* Below md the settings menu collapses into a dropdown (see users/base.html). */
+@media (max-width: 47.999rem) {
+  .settings-nav-collapsed {
+    display: none;
+  }
+}
+
 :root {
   --color-surface: #2a2f35;
   --color-surface-strong: #39404b;
@@ -5991,6 +6059,7 @@
   --color-text: #f3f4f6;
   --color-text-secondary: #d1d5db;
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
@@ -6029,6 +6098,7 @@
     --color-text: #1f2937;
     --color-text-secondary: #374151;
     --color-text-muted: #4b5563;
+    --color-success-text: #047857;
     --color-warning-text: #92400e;
     --color-info-text: #3730a3;
     --color-error-text: #b91c1c;
@@ -6065,6 +6135,7 @@ html.light {
   --color-text: #1f2937;
   --color-text-secondary: #374151;
   --color-text-muted: #4b5563;
+  --color-success-text: #047857;
   --color-warning-text: #92400e;
   --color-info-text: #3730a3;
   --color-error-text: #b91c1c;
@@ -6100,6 +6171,7 @@ html.dark {
   --color-text: #f3f4f6;
   --color-text-secondary: #d1d5db;
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;

@@ -196,6 +196,10 @@ SOURCES_CONFIG = {
         "name": "Storyteller",
         "logo": static("img/storyteller-logo.svg"),
     },
+    "kavita": {
+        "name": "Kavita",
+        "logo": static("img/kavita-logo.svg"),
+    },
     "komga": {
         "name": "Komga",
         "logo": static("img/komga-logo.svg"),

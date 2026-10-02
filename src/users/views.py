@@ -7,7 +7,7 @@ from datetime import timedelta
 from io import BytesIO
 from itertools import batched
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from allauth.account.views import SignupView
 from allauth.socialaccount.views import SignupView as SocialSignupView
@@ -27,6 +27,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -51,7 +52,8 @@ from app.models import (
 )
 from app.providers import credentials, tmdb
 from app.templatetags import app_tags
-from integrations import exports, plex, stremio_catalog, tasks
+from config import run_state
+from integrations import exports, plex, seerr_api, stremio_catalog, tasks
 from integrations.imports import plex as plex_import
 from integrations.imports import trakt as trakt_imports
 from integrations.imports.helpers import periodic_task_user_kwargs
@@ -88,6 +90,7 @@ from users.home_screen import (
     toggle_home_row_direction,
 )
 from users.models import (
+    HISTORY_VIEW_TYPE,
     ActivityHistoryViewChoices,
     DateFormatChoices,
     DurationFormatChoices,
@@ -253,6 +256,7 @@ def _get_import_data_user(user):
     return user._meta.model.objects.select_related(
         "plex_account",
         "audiobookshelf_account",
+        "kavita_account",
         "komga_account",
         "pocketcasts_account",
         "lastfm_account",
@@ -725,6 +729,11 @@ def sidebar(request):
             request.user.clickable_media_cards = clickable_media_cards
             fields_to_update.append("clickable_media_cards")
 
+        show_discover = request.POST.get("show_discover") == "on"
+        if request.user.show_discover != show_discover:
+            request.user.show_discover = show_discover
+            fields_to_update.append("show_discover")
+
         # Handle media types checkboxes + order
         fields_to_update += apply_media_type_preferences(
             request.user,
@@ -1048,6 +1057,7 @@ def preferences(request):
         hide_completed_recommendations_raw = request.POST.get(
             "hide_completed_recommendations"
         )
+        show_recommendations_raw = request.POST.get("show_recommendations")
         hide_zero_rating_raw = request.POST.get("hide_zero_rating")
         progress_bar_raw = request.POST.get("progress_bar")
         # Read these as None-when-absent. The header theme toggle posts only
@@ -1221,6 +1231,12 @@ def preferences(request):
                 )
                 fields_to_update.append("hide_completed_recommendations")
 
+        if show_recommendations_raw is not None:
+            show_recommendations = show_recommendations_raw == "1"
+            if request.user.show_recommendations != show_recommendations:
+                request.user.show_recommendations = show_recommendations
+                fields_to_update.append("show_recommendations")
+
         if hide_zero_rating_raw is not None:
             hide_zero_rating = hide_zero_rating_raw == "1"
             if request.user.hide_zero_rating != hide_zero_rating:
@@ -1365,6 +1381,25 @@ def convert_anime_library(request):
         "that cannot be converted safely are left as they are.",
     )
     return redirect("preferences")
+
+
+@login_required
+@require_POST
+def convert_tv_library(request):
+    """Move this user's tracked TV shows to their default TV provider."""
+    from app.tasks_tv_provider_migration import move_user_tv_library_task
+
+    # Moving is also the user's go-ahead for the nightly job to keep new shows
+    # on their default provider.
+    request.user.tv_auto_move_to_default_provider = True
+    request.user.save(update_fields=["tv_auto_move_to_default_provider"])
+    move_user_tv_library_task.delay(request.user.id)
+    messages.success(
+        request,
+        "Moving your tracked TV shows. This runs in the background; shows that "
+        "cannot be moved safely are left as they are.",
+    )
+    return redirect("metadata_settings")
 
 
 @require_GET
@@ -1570,6 +1605,7 @@ def import_data(request):
     audiobookshelf_account = getattr(user, "audiobookshelf_account", None)
 
     komga_account = getattr(user, "komga_account", None)
+    kavita_account = getattr(user, "kavita_account", None)
 
     # Get Storyteller account and any in-progress device login
     storyteller_account = getattr(user, "storyteller_account", None)
@@ -1677,6 +1713,7 @@ def import_data(request):
         "plex_sections_json": json.dumps(plex_sections),
         "audiobookshelf_account": audiobookshelf_account,
         "komga_account": komga_account,
+        "kavita_account": kavita_account,
         "audiobookshelf_poll_interval": audiobookshelf_poll_interval,
         "storyteller_account": storyteller_account,
         "storyteller_pending": storyteller_pending,
@@ -1898,6 +1935,7 @@ def export_data(request):
 def advanced(request):
     """Render the advanced settings page."""
     image_stats = image_cache.cache_stats()
+    log_files = _log_files(Path(settings.LOG_FILE).name)
     bug_report_body = (
         f"**Floppy version:** {settings.VERSION}\n\n"
         "**Describe the issue:**\n\n\n"
@@ -1913,6 +1951,10 @@ def advanced(request):
         "bug_report_title": "[BUG] ",
         "bug_report_body": bug_report_body,
         "media_types": DELETABLE_MEDIA_TYPES,
+        "logs_since": _first_log_time(log_files[0]) if log_files else "",
+        "last_unclean_exit": parse_datetime(
+            (run_state.read_state() or {}).get("last_unclean_at") or "",
+        ),
     }
     return render(request, "users/advanced.html", context)
 
@@ -1946,29 +1988,54 @@ def clear_image_cache(request):
     return redirect("advanced")
 
 
-@require_GET
-def export_logs(request):
-    """Return recent application logs, with secrets redacted, as a text file."""
-    from pathlib import Path
-
-    from app.log_safety import redact_secrets
-
-    log_path = Path(settings.LOG_FILE)
+def _log_files(name):
+    """Return a log file in the log directory and its rotated backups, oldest first."""
+    log_path = Path(settings.LOG_FILE).parent / name
     backups = sorted(
-        log_path.parent.glob(f"{log_path.name}.*"),
+        (p for p in log_path.parent.glob(f"{name}.*") if p.suffix[1:].isdigit()),
         key=lambda p: int(p.suffix[1:]),
         reverse=True,
     )
-    raw_logs = "".join(
-        p.read_text(encoding="utf-8", errors="replace")
-        for p in [*backups, log_path]
-        if p.exists()
-    )
+    return [p for p in [*backups, log_path] if p.exists()]
 
-    sanitized_logs = redact_secrets(raw_logs)
+
+def _first_log_time(path):
+    """Return the timestamp on a log file's first line, e.g. 2026-10-02 13:39:14."""
+    try:
+        with path.open(errors="replace") as log:
+            return log.readline()[1:20]
+    except OSError:
+        return ""
+
+
+@require_GET
+def export_logs(request):
+    """Return recent application logs, with secrets redacted, as a text file.
+
+    Streamed one line at a time: the logs can be tens of megabytes and the
+    container this runs in may already be short of memory. After floppy.log come
+    the process manager's log and any crash tracebacks (see config.run_state).
+    """
+    from app.log_safety import redact_secrets
+
+    log_name = Path(settings.LOG_FILE).name
+    sections = [(log_name, _log_files(log_name))]
+    sections += [(n, _log_files(n)) for n in ("supervisord.log", "faulthandler.log")]
+
+    def lines():
+        for title, found in sections:
+            paths = [path for path in found if path.stat().st_size]
+            if not paths:
+                continue
+            if title != log_name:
+                yield f"\n===== {title} =====\n"
+            for path in paths:
+                with path.open(encoding="utf-8", errors="replace") as log:
+                    for line in log:
+                        yield redact_secrets(line)
 
     filename = f"floppy-logs-{timezone.localtime():%Y%m%d-%H%M%S}.txt"
-    response = HttpResponse(sanitized_logs, content_type="text/plain")
+    response = StreamingHttpResponse(lines(), content_type="text/plain")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
@@ -3148,17 +3215,71 @@ def update_jellyseerr_settings(request):
     else:
         allowed_usernames = ""
 
+    # Requesting from Floppy: URL + API key + Seerr user (#772).
+    from integrations.imports.helpers import (
+        MediaImportError,
+        decrypt_or_raise,
+        encrypt,
+    )
+
+    seerr_url = (request.POST.get("seerr_url") or "").strip().rstrip("/")
+    if seerr_url:
+        # Not URLValidator: it refuses bare LAN/Docker hosts like http://seerr:5055.
+        parsed = urlparse(seerr_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            messages.error(request, "Seerr URL must be an http(s) address.")
+            return redirect("integrations")
+    raw_api_key = (request.POST.get("seerr_api_key") or "").strip()
+    seerr_username = (request.POST.get("seerr_username") or "").strip()
+    seerr_user_id = None
+    # Every request is attributed to a real Seerr user, so it gets that user's
+    # permissions, quotas and approval flow instead of the API key owner's.
+    # Resolving the name here also proves the URL and key work.
+    unchanged = (
+        seerr_url == user.seerr_url
+        and seerr_username == user.seerr_username
+        and not raw_api_key
+        and user.seerr_user_id
+    )
+    if unchanged:
+        # Saving the webhook half of this form must not depend on Seerr being up.
+        seerr_user_id = user.seerr_user_id
+    elif seerr_url:
+        if not seerr_username:
+            messages.error(request, "A Seerr username is required to request from Seerr.")
+            return redirect("integrations")
+        try:
+            api_key = raw_api_key or decrypt_or_raise(user.seerr_api_key)
+            seerr_user_id = seerr_api.SeerrClient(seerr_url, api_key).find_user_id(
+                seerr_username
+            )
+        except (seerr_api.SeerrError, MediaImportError) as error:
+            messages.error(request, f"Seerr settings not saved: {error}")
+            return redirect("integrations")
+
     # Save
     user.jellyseerr_enabled = enabled
     user.jellyseerr_trigger_statuses = trigger_statuses
     user.jellyseerr_allowed_usernames = allowed_usernames
     user.jellyseerr_default_added_status = default_status
+    user.seerr_url = seerr_url
+    # A blank key keeps the stored one; clearing the URL disconnects.
+    if not seerr_url:
+        user.seerr_api_key = ""
+    elif raw_api_key:
+        user.seerr_api_key = encrypt(raw_api_key)
+    user.seerr_username = seerr_username if seerr_url else ""
+    user.seerr_user_id = seerr_user_id
     user.save(
         update_fields=[
             "jellyseerr_enabled",
             "jellyseerr_trigger_statuses",
             "jellyseerr_allowed_usernames",
             "jellyseerr_default_added_status",
+            "seerr_url",
+            "seerr_api_key",
+            "seerr_username",
+            "seerr_user_id",
         ],
     )
 
@@ -3284,6 +3405,34 @@ _SAVED_VIEW_SKIP_PARAMS = frozenset(
 )
 
 
+# The History filter window controls these; everything else in the address
+# (paging, one-off drill-downs such as an artist) is not part of a saved view.
+_HISTORY_VIEW_PARAMS = (
+    "start-date",
+    "end-date",
+    "media_type",
+    "history_mode",
+    "genre",
+    "implied_genre",
+)
+
+
+def _saved_history_query(params) -> str:
+    """Return the History query string a saved view should reopen.
+
+    The History filters arrive as one `query` string because the form's own
+    `media_type` field already names the kind of view being saved.
+    """
+    submitted = parse_qs(params.get("query", ""))
+    return urlencode(
+        [
+            (key, submitted[key][0].strip())
+            for key in _HISTORY_VIEW_PARAMS
+            if submitted.get(key) and submitted[key][0].strip()
+        ],
+    )
+
+
 def _saved_view_query(params) -> str:
     """Return the media list query string a saved view should reopen."""
     pairs = [
@@ -3311,7 +3460,8 @@ def saved_view_create(request):
         )
 
     media_type = request.POST.get("media_type", "")
-    if media_type not in request.user.get_sidebar_media_types():
+    is_history = media_type == HISTORY_VIEW_TYPE
+    if not is_history and media_type not in request.user.get_sidebar_media_types():
         return JsonResponse({"error": "Invalid media type."}, status=400)
 
     name = request.POST.get("name", "").strip()[:100]
@@ -3327,7 +3477,11 @@ def saved_view_create(request):
         user=request.user,
         media_type=media_type,
         name=name,
-        query=_saved_view_query(request.POST),
+        query=(
+            _saved_history_query(request.POST)
+            if is_history
+            else _saved_view_query(request.POST)
+        ),
         position=last.position + 1 if last else 0,
     )
     return JsonResponse({"url": saved_view.get_absolute_url()})
@@ -3347,7 +3501,7 @@ def saved_view_delete(request, view_id: int):
         allowed_hosts={request.get_host()},
         require_https=request.is_secure(),
     ):
-        next_url = reverse("medialist", args=[saved_view.media_type])
+        next_url = saved_view.get_absolute_url().split("?")[0]
     return redirect(next_url)
 
 

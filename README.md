@@ -227,8 +227,17 @@ process working directory. Use absolute paths so that each process uses the
 same location.
 
 If `SECRET` and `SECRET_FILE` are not set, the container stores its generated
-`secret_key` in `FLOPPY_DATA_DIR`. Floppy stores logs and backups in `LOG_DIR`
-and `BACKUP_DIR`. `FLOPPY_DATA_DIR` does not change those settings.
+`secret_key` in `FLOPPY_DATA_DIR`. Floppy stores backups in `BACKUP_DIR`;
+`FLOPPY_DATA_DIR` does not change that setting. Logs go to `LOG_DIR`, which
+defaults to a `logs` folder inside `FLOPPY_DATA_DIR`, so they sit on the same
+volume as the database and survive the container being recreated.
+
+If the container keeps crashing, that folder holds `floppy.log` (application
+log, with a memory line every 5 minutes and a note on the next start when the
+previous run did not shut down cleanly), `supervisord.log` (which process
+exited and how) and `faulthandler.log` (Python traceback after a segfault). It
+can be read from the host even while the container is down. Settings →
+Advanced → Download Sanitized Logs bundles all three with secrets redacted.
 
 `BACKUP_DIR` defaults to `/floppy/backups` inside the container. The
 Settings → Export page shows this path, but it is a container path, not a
@@ -483,6 +492,7 @@ The only universally required variable is `SECRET`. For Docker installs you shou
 - `GOOGLE_BOOKS_API_KEY` - optional Google Books book metadata ([Google Books API](https://developers.google.com/books/docs/v1/using)); supports `GOOGLE_BOOKS_API_KEY_FILE` for Docker secrets
 - `OPENCRITIC_API_KEY` - optional OpenCritic critic scores for games, from a [RapidAPI key](https://rapidapi.com/opencritic-opencritic-default/api/opencritic-api). The free plan (25 searches and 200 requests a day) is enough: a score is fetched when a game page is opened, and quota left over in the hour before the daily reset fills in tracked games. Supports `OPENCRITIC_API_KEY_FILE`; can also be set in Settings > Metadata
 - `COMICVINE_API` - comic metadata
+- `MANGABAKA_NSFW` - optional, set to `true` to include erotica and pornographic series in [MangaBaka](https://mangabaka.org/) manga search results. MangaBaka needs no API key and is available as a manga source next to MyAnimeList and MangaUpdates; light novels are left out
 - `GCD_USERNAME` / `GCD_PASSWORD` - optional [Grand Comics Database](https://www.comics.org/) comic metadata, as a second comic source next to Comic Vine. Use a free GCD account: GCD limits anonymous API access to 30 requests an hour, so Floppy ships no shared default and the source stays hidden until a login is set. Support `GCD_USERNAME_FILE` / `GCD_PASSWORD_FILE` for Docker secrets; can also be set in Settings > Metadata, then chosen as the default comic source there
 - `LASTFM_API_KEY` - Last.fm integration and scrobble polling
 - `MUSICBRAINZ_URL` - custom MusicBrainz-compatible API root, including `/ws/2` (defaults to `https://musicbrainz.org/ws/2`)
@@ -955,6 +965,11 @@ that case set the Trakt app's Redirect URI to `urn:ietf:wg:oauth:2.0:oob`.
 
 Set `URLS=https://your_domain.com` if you would rather use the one-click browser
 flow.
+
+If scheduled Trakt imports fail with "Trakt rejected the token refresh", the
+Redirect URI on your Trakt app does not match the one Floppy used when you
+connected. Set `URLS=https://your_domain.com`, make sure the Trakt app lists
+`https://your_domain.com/import/trakt/private`, and reconnect Trakt.
 
 ### Reverse proxy setup
 

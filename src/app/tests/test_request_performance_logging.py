@@ -5,6 +5,7 @@ import time
 from unittest import mock
 
 from django.contrib.auth.models import AnonymousUser
+from django.db import connection
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase
 from django.test.utils import override_settings
@@ -137,7 +138,14 @@ class RequestTimingBreakdownTests(TestCase):
 
     def test_database_time_is_counted(self):
         def view(_request):
-            list(Item.objects.all())
+            # An empty-table read finishes in under the 0.1 ms the log rounds to,
+            # so count to a few hundred thousand to take measurable time.
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n "
+                    "WHERE x < 300000) SELECT count(*) FROM n",
+                )
+                cursor.fetchone()
             return HttpResponse("ok")
 
         _response, line = self._run(view)

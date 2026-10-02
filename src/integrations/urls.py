@@ -139,6 +139,26 @@ urlpatterns = [
         name="import_audiobookshelf",
     ),
     path(
+        "import/hardcover/sync",
+        views.hardcover_sync,
+        name="hardcover_sync",
+    ),
+    path(
+        "import/kavita/connect",
+        views.kavita_connect,
+        name="kavita_connect",
+    ),
+    path(
+        "import/kavita/disconnect",
+        views.kavita_disconnect,
+        name="kavita_disconnect",
+    ),
+    path(
+        "import/kavita",
+        views.import_kavita,
+        name="import_kavita",
+    ),
+    path(
         "import/komga/connect",
         views.komga_connect,
         name="komga_connect",
@@ -263,6 +283,16 @@ urlpatterns = [
         "webhook/jellyseerr/<str:token>",
         views.jellyseerr_webhook,
         name="jellyseerr_webhook",
+    ),
+    path(
+        "library/<str:source>/<str:media_type>/<str:media_id>/",
+        views.library_panel,
+        name="library_panel",
+    ),
+    path(
+        "seerr/<str:media_type>/<int:media_id>/",
+        views.seerr_request,
+        name="seerr_request",
     ),
     path(
         "webhook/seerr/global/",

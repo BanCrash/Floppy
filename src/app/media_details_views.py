@@ -50,7 +50,11 @@ from app.detail_builders import (
     _build_stored_season_scores_graph,
     _build_trakt_popularity_context,
 )
-from app.detail_related import enrich_detail_related_cards, enrich_detail_seasons
+from app.detail_related import (
+    drop_recommendations_if_hidden,
+    enrich_detail_related_cards,
+    enrich_detail_seasons,
+)
 from app.log_safety import exception_summary
 from app.media_list_views import _collect_reading_activity_day_keys
 from app.metadata_sync_views import _build_flat_anime_episode_preview
@@ -1635,6 +1639,8 @@ def media_details(
         user_medias=user_medias,
         public_view=public_view,
     )
+
+    drop_recommendations_if_hidden(request, media_metadata)
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available

@@ -288,6 +288,7 @@ from app.tasks_trakt import (  # noqa: E402
 )
 from app.tasks_tv_provider_migration import (  # noqa: E402
     migrate_tv_shows_to_preferred_provider_task,
+    move_user_tv_library_task,
 )
 from app.tasks_watch_state import (  # noqa: E402
     backfill_user_watch_state,
@@ -299,6 +300,7 @@ RELEASE_BACKFILL_SOURCES = (
     Sources.TVDB.value,
     Sources.MAL.value,
     Sources.MANGAUPDATES.value,
+    Sources.MANGABAKA.value,
     Sources.IGDB.value,
     Sources.OPENLIBRARY.value,
     Sources.HARDCOVER.value,
@@ -489,9 +491,10 @@ def _schedule_discover_refresh_for_movie_items(items: list[Item]) -> None:
 
     user_ids = sorted(
         set(
-            Movie.objects.filter(item_id__in=movie_item_ids).values_list(
-                "user_id", flat=True
-            ),
+            Movie.objects.filter(
+                item_id__in=movie_item_ids,
+                user__show_discover=True,
+            ).values_list("user_id", flat=True),
         ),
     )
     if not user_ids:
@@ -1372,6 +1375,7 @@ __all__ = [
     "is_genre_backfill_reconcile_complete",
     "is_provider_backfill_reconcile_complete",
     "migrate_tv_shows_to_preferred_provider_task",
+    "move_user_tv_library_task",
     "populate_album_tracks_batch",
     "populate_credits_backfill_queue",
     "populate_credits_data_for_items",

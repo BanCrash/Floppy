@@ -26,9 +26,13 @@ PLAYBACK_WEBHOOK_SECRET_MAX_LENGTH = 128
 
 EXCLUDED_SEARCH_TYPES = [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]
 
+# Search-bar option that searches every enabled type in the user's own library
+# (tracked, collected or tagged items) instead of one provider (#1160).
+ALL_SEARCH_TYPE = "all"
+
 VALID_SEARCH_TYPES = [
     value for value in MediaTypes.values if value not in EXCLUDED_SEARCH_TYPES
-]
+] + [ALL_SEARCH_TYPE]
 
 VALID_HOME_SCREEN_MEDIA_TYPES = [
     value for value in MediaTypes.values if value != MediaTypes.EPISODE.value
@@ -291,6 +295,7 @@ class RatingScaleChoices(models.TextChoices):
 
     TEN = "10", _("1-10 stars")
     FIVE = "5", _("1-5 stars")
+    DISABLED = "0", _("Disabled")
 
 
 class ActivityHistoryViewChoices(models.TextChoices):
@@ -499,7 +504,7 @@ class User(AbstractUser):
     last_search_type = models.CharField(
         max_length=10,
         default=MediaTypes.TV.value,
-        choices=MediaTypes.choices,
+        choices=[*MediaTypes.choices, (ALL_SEARCH_TYPE, "All")],
     )
 
     last_discover_type = models.CharField(
@@ -828,6 +833,14 @@ class User(AbstractUser):
         default=False,
         help_text="Hide completed media in recommendations",
     )
+    show_recommendations = models.BooleanField(
+        default=True,
+        help_text="Show recommendations on media detail pages",
+    )
+    show_discover = models.BooleanField(
+        default=True,
+        help_text="Show the Discover page and keep its caches warm",
+    )
     hide_zero_rating = models.BooleanField(
         default=False,
         help_text="Hide zero ratings from media cards",
@@ -866,6 +879,14 @@ class User(AbstractUser):
             ),
         ],
         help_text="Default metadata provider for TV details and search tabs.",
+    )
+    tv_auto_move_to_default_provider = models.BooleanField(
+        default=True,
+        help_text=(
+            "Let the nightly job move TV shows tracked on the other provider to "
+            "the default provider. Turned off when the user chooses to leave "
+            "their library as it is after switching providers."
+        ),
     )
     anime_metadata_source_default = models.CharField(
         max_length=20,
@@ -1102,6 +1123,26 @@ class User(AbstractUser):
         choices=JellyseerrDefaultAddedStatusChoices.choices,
         default=Status.PLANNING.value,
         help_text="Status to set when adding media via Jellyseerr webhook",
+    )
+    seerr_url = models.URLField(
+        blank=True,
+        help_text="Seerr server URL, used to request movies and shows from Floppy",
+    )
+    seerr_api_key = models.TextField(
+        blank=True,
+        default="",
+        help_text="Encrypted Seerr API key",
+    )
+    seerr_username = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Seerr login (username or email) the requests are made as",
+    )
+    seerr_user_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Seerr user id resolved from seerr_username when settings are saved",
     )
     tmdb_proxy_url = models.TextField(
         blank=True,
@@ -1742,11 +1783,19 @@ class User(AbstractUser):
 
     @property
     def rating_scale_max(self):
-        """Return the max rating value for the user's configured scale."""
+        """Return the max rating value for the user's configured scale.
+
+        Disabled ratings keep the 10-point maths so stored scores still convert.
+        """
         try:
-            return int(self.rating_scale)
+            return int(self.rating_scale) or 10
         except (TypeError, ValueError):
             return 10
+
+    @property
+    def ratings_enabled(self):
+        """Return whether the user's own rating controls should be shown."""
+        return self.rating_scale != RatingScaleChoices.DISABLED
 
     def _coerce_score_decimal(self, score):
         """Coerce a score into a Decimal, returning None on failure."""
@@ -1925,6 +1974,7 @@ class User(AbstractUser):
                 "Import from Audiobookshelf",
                 "Import from Audiobookshelf (Recurring)",
             ],
+            "kavita": ["Import from Kavita", "Import from Kavita (Recurring)"],
             "komga": ["Import from Komga", "Import from Komga (Recurring)"],
             "storyteller": [
                 "Import from Storyteller",
@@ -1941,7 +1991,10 @@ class User(AbstractUser):
                 "Import from Stremio (Recurring)",
             ],
             "lastfm": ["Import from Last.fm History"],
-            "hardcover": ["Import from Hardcover"],
+            "hardcover": [
+                "Import from Hardcover",
+                "Import from Hardcover Account",
+            ],
             "storygraph": ["Import from StoryGraph"],
             "koito": ["Import from Koito History"],
         }
@@ -1952,7 +2005,9 @@ class User(AbstractUser):
             "mylar": ["Import from Mylar3 (Recurring)"],
             "kapowarr": ["Import from Kapowarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
+            "kavita": ["Import from Kavita (Recurring)"],
             "komga": ["Import from Komga (Recurring)"],
+            "hardcover": ["Import from Hardcover Account"],
             "storyteller": ["Import from Storyteller (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
             "gpodder": ["Import from GPodder (Recurring)"],
@@ -2437,17 +2492,25 @@ class HomeScreenRow(models.Model):
         return f"{self.user_id}:{self.media_type}:{self.row_type}:{self.position}"
 
 
+# Saved views of the History page live beside the media list ones, keyed by
+# this pseudo media type.
+HISTORY_VIEW_TYPE = "history"
+
+
 class SavedView(models.Model):
-    """A named media list view (filters, sort, layout) pinned under the sidebar."""
+    """A named media list or History view (filters, sort, layout) in the sidebar."""
 
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="saved_views",
     )
-    media_type = models.CharField(max_length=16, choices=MediaTypes.choices)
+    media_type = models.CharField(
+        max_length=16,
+        choices=[*MediaTypes.choices, (HISTORY_VIEW_TYPE, "History")],
+    )
     name = models.CharField(max_length=100)
-    # The media list query string, e.g. "sort=score&direction=desc&status=Completed".
+    # The media list (or History) query string, e.g. "sort=score&direction=desc&status=Completed".
     query = models.TextField(blank=True, default="")
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -2463,6 +2526,9 @@ class SavedView(models.Model):
         return f"{self.user_id}:{self.media_type}:{self.name}"
 
     def get_absolute_url(self):
-        """Return the media list URL that reproduces this view."""
-        base = reverse("medialist", args=[self.media_type])
+        """Return the media list or History URL that reproduces this view."""
+        if self.media_type == HISTORY_VIEW_TYPE:
+            base = reverse("history")
+        else:
+            base = reverse("medialist", args=[self.media_type])
         return f"{base}?{self.query}" if self.query else base

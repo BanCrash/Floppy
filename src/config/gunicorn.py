@@ -1,4 +1,5 @@
 import gc
+import logging.handlers
 import os
 import time
 
@@ -69,6 +70,32 @@ def _worker_rss_bytes():
         return None
 
 
+def _record_crash_markers(server):
+    """Leave evidence on the log volume for the next start (see run_state).
+
+    Gunicorn's own error log (worker timeouts, "Worker was sent SIGKILL!
+    Perhaps out of memory?") does not propagate to the root logger, so it never
+    reached floppy.log. Attach the root's file handler to it. Never fatal.
+    """
+    try:
+        from config import run_state
+
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, logging.handlers.RotatingFileHandler):
+                server.log.error_log.addHandler(handler)
+        run_state.enable_fault_log()
+        run_state.start()
+    except Exception:  # diagnostics must never stop the server
+        server.log.exception("[gunicorn] could not record crash markers")
+
+
+def on_exit(server):
+    """Mark a deliberate stop, so the next start can tell it from a crash."""
+    from config import run_state
+
+    run_state.stop()
+
+
 def when_ready(server):
     """Move the preloaded application out of the garbage collector's reach.
 
@@ -90,6 +117,7 @@ def when_ready(server):
     collected normally. Children inherit the frozen state through fork, so
     this runs once here rather than in each of them.
     """
+    _record_crash_markers(server)
     gc.collect()
     gc.freeze()
     server.log.info(

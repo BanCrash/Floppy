@@ -696,8 +696,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # https://docs.djangoproject.com/en/stable/topics/logging/
 
 # Recent logs are also kept on disk (in addition to stdout) so the app can
-# offer a sanitized log download from Settings > Advanced (#510).
-LOG_DIR = config("LOG_DIR", default=str(BASE_DIR / "logs"))
+# offer a sanitized log download from Settings > Advanced (#510). They default
+# to a folder inside the data directory, which Docker users already mount, so
+# they survive the container being recreated after a crash.
+LOG_DIR = config("LOG_DIR", default=str(FLOPPY_DATA_DIR / "logs"))
 Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
 LOG_FILE = str(Path(LOG_DIR) / "floppy.log")
 
@@ -732,8 +734,8 @@ LOGGING = {
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_FILE,
-            "maxBytes": 5 * 1024 * 1024,
-            "backupCount": 3,
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
             "formatter": "verbose",
             "level": "DEBUG" if DEBUG else "INFO",
         },
@@ -1228,6 +1230,8 @@ MAL_API = config(
 MAL_NSFW = config("MAL_NSFW", default=False, cast=bool)
 
 MU_NSFW = config("MU_NSFW", default=False, cast=bool)
+
+MANGABAKA_NSFW = config("MANGABAKA_NSFW", default=False, cast=bool)
 
 IGDB_ID = config(
     "IGDB_ID",
@@ -1733,7 +1737,9 @@ CELERY_TASK_ROUTES = {
     "Import from Audiobookshelf (Recurring)": {
         "priority": CELERY_TASK_PRIORITY_FOLLOWUP,
     },
+    "Import from Kavita (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from Komga (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
+    "Import from Hardcover Account": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from Pocket Casts (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Import from GPodder (Recurring)": {"priority": CELERY_TASK_PRIORITY_FOLLOWUP},
     "Migrate TV shows to preferred metadata provider": {
