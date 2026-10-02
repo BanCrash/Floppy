@@ -101,7 +101,7 @@
                             <div class="relative filter-control"
                                  @click.outside="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; }">
                               <button type="button"
-                                      class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                       :aria-expanded="openMenu === 'filter'"
                                       @click.stop="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; } else { openMenu = 'filter'; filterView = 'root'; filterSearch = ''; }">
                                 <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]" x-text="rowFilterLabel(section, row)"></span>
@@ -178,7 +178,7 @@
                           <template x-if="row.row_type === 'library_query'">
                             <div class="relative filter-control" @click.outside="if (openMenu === 'status') openMenu = null">
                               <button type="button"
-                                      class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                       :aria-expanded="openMenu === 'status'"
                                       @click.stop="openMenu = openMenu === 'status' ? null : 'status'">
                                 <span x-text="statusButtonLabel(section, row)"></span>
@@ -206,7 +206,7 @@
                           <template x-if="row.row_type !== 'recently_unrated'">
                             <div class="relative filter-control" @click.outside="if (openMenu === 'sort') openMenu = null">
                               <button type="button"
-                                      class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                       :aria-expanded="openMenu === 'sort'"
                                       @click.stop="openMenu = openMenu === 'sort' ? null : 'sort'">
                                 <span x-text="sortButtonLabel(section, row)"></span>
@@ -241,7 +241,7 @@
 
                           <template x-if="row.row_type === 'custom_list'">
                             <button type="button"
-                                    class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                    class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                     @click.stop="openMenu = null; row.editorOpen = !row.editorOpen">
                               <span x-text="row.custom_list_name || gettext('Choose List')"></span>
                               <svg xmlns="http://www.w3.org/2000/svg"
