@@ -832,6 +832,14 @@ class User(AbstractUser):
         default=False,
         help_text="Hide completed media in recommendations",
     )
+    show_recommendations = models.BooleanField(
+        default=True,
+        help_text="Show recommendations on media detail pages",
+    )
+    show_discover = models.BooleanField(
+        default=True,
+        help_text="Show the Discover page and keep its caches warm",
+    )
     hide_zero_rating = models.BooleanField(
         default=False,
         help_text="Hide zero ratings from media cards",
