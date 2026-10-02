@@ -1496,3 +1496,7 @@ msgstr "Auf dem neuesten Stand"
 #: static/js/libraryFilterState.js
 msgid "Not Caught Up"
 msgstr "Nicht auf dem neuesten Stand"
+
+#: templates/base.html
+msgid "Search your whole library..."
+msgstr "Gesamte Bibliothek durchsuchen …"

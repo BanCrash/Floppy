@@ -1487,3 +1487,7 @@ msgstr "À jour"
 #: static/js/libraryFilterState.js
 msgid "Not Caught Up"
 msgstr "Pas à jour"
+
+#: templates/base.html
+msgid "Search your whole library..."
+msgstr "Rechercher dans toute la bibliothèque..."
