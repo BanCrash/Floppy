@@ -2,6 +2,7 @@
 
 import logging
 from collections import defaultdict
+from functools import partial
 from http import HTTPStatus
 
 import requests
@@ -32,13 +33,15 @@ class RadarrClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
 
-    def _request(self, path: str):
+    def _request(self, path: str, params=None, *, method="GET", json=None, timeout=20):
         try:
             response = send_to_self_hosted(
-                requests.get,
+                partial(requests.request, method) if method != "GET" else requests.get,
                 f"{self.base_url}{path}",
                 headers={"X-Api-Key": self.api_key},
-                timeout=20,
+                params=params,
+                timeout=timeout,
+                **({"json": json} if json is not None else {}),
             )
         except requests.RequestException as error:
             msg = f"Could not reach Radarr: {error}"
@@ -49,7 +52,11 @@ class RadarrClient:
         if response.status_code >= HTTPStatus.BAD_REQUEST:
             msg = f"Radarr request failed ({response.status_code}) for {path}"
             raise MediaImportError(msg)
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as error:
+            msg = "Radarr returned a response that is not JSON"
+            raise MediaImportError(msg) from error
 
     def healthcheck(self):
         """Verify connection."""
@@ -58,6 +65,32 @@ class RadarrClient:
     def movies(self):
         """Fetch movie collection rows."""
         return self._request("/api/v3/movie")
+
+    def movie_by_tmdb_id(self, tmdb_id, timeout=8):
+        """Return the Radarr movie row for a TMDB id, or None."""
+        rows = self._request("/api/v3/movie", {"tmdbId": tmdb_id}, timeout=timeout)
+        return rows[0] if rows else None
+
+    def queue(self, movie_id, timeout=8):
+        """Return the queue rows for one movie."""
+        return self._request(
+            "/api/v3/queue/details", {"movieId": movie_id}, timeout=timeout
+        )
+
+    def history(self, movie_id, timeout=8):
+        """Return the history rows for one movie."""
+        return self._request(
+            "/api/v3/history/movie", {"movieId": movie_id}, timeout=timeout
+        )
+
+    def search_movie(self, movie_id, timeout=8):
+        """Ask Radarr to search for one movie."""
+        return self._request(
+            "/api/v3/command",
+            method="POST",
+            json={"name": "MoviesSearch", "movieIds": [movie_id]},
+            timeout=timeout,
+        )
 
 
 def importer(identifier, user, mode, instance_id=None):

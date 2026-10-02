@@ -26,9 +26,13 @@ PLAYBACK_WEBHOOK_SECRET_MAX_LENGTH = 128
 
 EXCLUDED_SEARCH_TYPES = [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]
 
+# Search-bar option that searches every enabled type in the user's own library
+# (tracked, collected or tagged items) instead of one provider (#1160).
+ALL_SEARCH_TYPE = "all"
+
 VALID_SEARCH_TYPES = [
     value for value in MediaTypes.values if value not in EXCLUDED_SEARCH_TYPES
-]
+] + [ALL_SEARCH_TYPE]
 
 VALID_HOME_SCREEN_MEDIA_TYPES = [
     value for value in MediaTypes.values if value != MediaTypes.EPISODE.value
@@ -291,6 +295,7 @@ class RatingScaleChoices(models.TextChoices):
 
     TEN = "10", _("1-10 stars")
     FIVE = "5", _("1-5 stars")
+    DISABLED = "0", _("Disabled")
 
 
 class ActivityHistoryViewChoices(models.TextChoices):
@@ -499,7 +504,7 @@ class User(AbstractUser):
     last_search_type = models.CharField(
         max_length=10,
         default=MediaTypes.TV.value,
-        choices=MediaTypes.choices,
+        choices=[*MediaTypes.choices, (ALL_SEARCH_TYPE, "All")],
     )
 
     last_discover_type = models.CharField(
@@ -828,6 +833,14 @@ class User(AbstractUser):
         default=False,
         help_text="Hide completed media in recommendations",
     )
+    show_recommendations = models.BooleanField(
+        default=True,
+        help_text="Show recommendations on media detail pages",
+    )
+    show_discover = models.BooleanField(
+        default=True,
+        help_text="Show the Discover page and keep its caches warm",
+    )
     hide_zero_rating = models.BooleanField(
         default=False,
         help_text="Hide zero ratings from media cards",
@@ -1110,6 +1123,26 @@ class User(AbstractUser):
         choices=JellyseerrDefaultAddedStatusChoices.choices,
         default=Status.PLANNING.value,
         help_text="Status to set when adding media via Jellyseerr webhook",
+    )
+    seerr_url = models.URLField(
+        blank=True,
+        help_text="Seerr server URL, used to request movies and shows from Floppy",
+    )
+    seerr_api_key = models.TextField(
+        blank=True,
+        default="",
+        help_text="Encrypted Seerr API key",
+    )
+    seerr_username = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Seerr login (username or email) the requests are made as",
+    )
+    seerr_user_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Seerr user id resolved from seerr_username when settings are saved",
     )
     tmdb_proxy_url = models.TextField(
         blank=True,
@@ -1750,11 +1783,19 @@ class User(AbstractUser):
 
     @property
     def rating_scale_max(self):
-        """Return the max rating value for the user's configured scale."""
+        """Return the max rating value for the user's configured scale.
+
+        Disabled ratings keep the 10-point maths so stored scores still convert.
+        """
         try:
-            return int(self.rating_scale)
+            return int(self.rating_scale) or 10
         except (TypeError, ValueError):
             return 10
+
+    @property
+    def ratings_enabled(self):
+        """Return whether the user's own rating controls should be shown."""
+        return self.rating_scale != RatingScaleChoices.DISABLED
 
     def _coerce_score_decimal(self, score):
         """Coerce a score into a Decimal, returning None on failure."""

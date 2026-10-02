@@ -1561,6 +1561,11 @@
       border-color: var(--color-border);
     }
   }
+  .divide-\[var\(--color-surface-border\)\] {
+    :where(& > :not(:last-child)) {
+      border-color: var(--color-surface-border);
+    }
+  }
   .divide-gray-700 {
     :where(& > :not(:last-child)) {
       border-color: var(--color-gray-700);
@@ -3278,6 +3283,9 @@
   }
   .text-\[var\(--color-link\)\] {
     color: var(--color-link);
+  }
+  .text-\[var\(--color-success-text\)\] {
+    color: var(--color-success-text);
   }
   .text-\[var\(--color-text\)\] {
     color: var(--color-text);
@@ -5991,13 +5999,31 @@
     height: auto;
     min-height: 2.5rem;
   }
-  .home-settings-row-body > div, .home-settings-row-controls {
+  .home-settings-row-body > div {
     flex-wrap: wrap;
-  }
-  .home-settings-row-title, .home-settings-row-controls {
-    flex-basis: 100%;
-    min-width: 0;
     padding-block: 0.25rem;
+  }
+  .home-settings-row-title {
+    flex: 1 1 calc(100% - 2.75rem);
+    min-width: 0;
+  }
+  .home-settings-row-controls {
+    display: contents;
+  }
+  .home-settings-row-controls > button:last-child {
+    order: 1;
+  }
+  .home-settings-row-controls > :not(:last-child) {
+    order: 2;
+  }
+  .home-settings-chip {
+    border: 1px solid var(--color-surface-border);
+    background: var(--color-panel);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+  }
+  .home-settings-chip svg {
+    margin-left: 0.25rem;
   }
   .home-settings-row-controls .filter-control {
     position: static;
@@ -6008,6 +6034,13 @@
     max-width: 100%;
   }
 }
+/* Below md the settings menu collapses into a dropdown (see users/base.html). */
+@media (max-width: 47.999rem) {
+  .settings-nav-collapsed {
+    display: none;
+  }
+}
+
 :root {
   --color-surface: #2a2f35;
   --color-surface-strong: #39404b;

@@ -19,6 +19,7 @@ Shared by Settings > Sidebar and the setup wizard's media-types step.
       Sortable.create(list, {
         animation: 150,
         handle: '.sidebar-drag-handle',
+        draggable: '[data-sidebar-media-type]',
         onEnd: updateOrder
       });
     };

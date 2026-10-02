@@ -689,6 +689,11 @@ class ExportLogsTests(TestCase):
         self.addCleanup(shutil.rmtree, log_dir, ignore_errors=True)
         self.log_file = log_dir / "floppy.log"
 
+    @staticmethod
+    def export_body(response):
+        """Read the streamed download."""
+        return b"".join(response.streaming_content).decode()
+
     def test_export_logs_includes_rotated_backups_oldest_first(self):
         """The download should span rotated backups, not just the active file."""
         (self.log_file.with_suffix(".log.2")).write_text("oldest entry\n")
@@ -698,7 +703,7 @@ class ExportLogsTests(TestCase):
         with override_settings(LOG_FILE=str(self.log_file)):
             response = self.client.get(reverse("export_logs"))
 
-        body = response.content.decode()
+        body = self.export_body(response)
         self.assertLess(body.index("oldest entry"), body.index("middle entry"))
         self.assertLess(body.index("middle entry"), body.index("newest entry"))
 
@@ -712,7 +717,7 @@ class ExportLogsTests(TestCase):
         with override_settings(LOG_FILE=str(self.log_file)):
             response = self.client.get(reverse("export_logs"))
 
-        self.assertNotIn("sk-secret-value", response.content.decode())
+        self.assertNotIn("sk-secret-value", self.export_body(response))
 
     def test_export_logs_handles_missing_backups(self):
         """A fresh install with no rotated backups should still download fine."""
@@ -722,4 +727,43 @@ class ExportLogsTests(TestCase):
             response = self.client.get(reverse("export_logs"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("only entry", response.content.decode())
+        self.assertIn("only entry", self.export_body(response))
+
+
+    def test_export_logs_appends_supervisor_log_and_crash_tracebacks(self):
+        """Process exits and fatal-signal tracebacks belong in the download."""
+        self.log_file.write_text("app entry\n")
+        (self.log_file.parent / "supervisord.log").write_text(
+            "exited: gunicorn (terminated by SIGKILL; not expected)\n"
+        )
+        (self.log_file.parent / "faulthandler.log").write_text(
+            "Fatal Python error: Segmentation fault\n"
+        )
+
+        with override_settings(LOG_FILE=str(self.log_file)):
+            response = self.client.get(reverse("export_logs"))
+
+        body = self.export_body(response)
+        self.assertIn("===== supervisord.log =====", body)
+        self.assertIn("terminated by SIGKILL", body)
+        self.assertIn("Segmentation fault", body)
+        self.assertLess(body.index("app entry"), body.index("terminated by SIGKILL"))
+
+    def test_export_logs_skips_empty_crash_traceback_file(self):
+        """faulthandler.log exists from the first start; an empty one is noise."""
+        self.log_file.write_text("app entry\n")
+        (self.log_file.parent / "faulthandler.log").write_text("")
+
+        with override_settings(LOG_FILE=str(self.log_file)):
+            response = self.client.get(reverse("export_logs"))
+
+        self.assertNotIn("faulthandler.log", self.export_body(response))
+
+    def test_advanced_page_shows_how_far_back_logs_go(self):
+        """The page should say what period the download covers."""
+        self.log_file.write_text("[2026-10-01 03:42:10 +0000] [1] [INFO] hello\n")
+
+        with override_settings(LOG_FILE=str(self.log_file)):
+            response = self.client.get(reverse("advanced"))
+
+        self.assertContains(response, "Covers 2026-10-01 03:42:10 onward.")

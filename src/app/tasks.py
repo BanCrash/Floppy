@@ -491,9 +491,10 @@ def _schedule_discover_refresh_for_movie_items(items: list[Item]) -> None:
 
     user_ids = sorted(
         set(
-            Movie.objects.filter(item_id__in=movie_item_ids).values_list(
-                "user_id", flat=True
-            ),
+            Movie.objects.filter(
+                item_id__in=movie_item_ids,
+                user__show_discover=True,
+            ).values_list("user_id", flat=True),
         ),
     )
     if not user_ids:
