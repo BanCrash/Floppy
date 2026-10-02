@@ -68,7 +68,7 @@ class KomgaImporterTests(TestCase):
 
     def _sync(self, *pages):
         with patch(
-            "integrations.imports.komga.requests.get",
+            "integrations.imports.reading_server.requests.get",
             side_effect=list(pages),
         ) as mock_get:
             result = komga.importer(None, self.user, "new")
@@ -137,7 +137,7 @@ class KomgaImporterTests(TestCase):
 
         self.assertFalse(ComicIssue.objects.exists())
         self.assertEqual(counts["skipped"], 1)
-        self.assertIn("Could not match Komga book", warnings)
+        self.assertIn("Could not match Komga item", warnings)
 
     def test_unread_book_is_ignored(self):
         counts, _warnings = self._sync(
@@ -234,7 +234,7 @@ class KomgaImporterTests(TestCase):
     def test_rejected_key_marks_connection_broken(self):
         with (
             patch(
-                "integrations.imports.komga.requests.get",
+                "integrations.imports.reading_server.requests.get",
                 return_value=_response({}, 401),
             ),
             self.assertRaises(helpers.ConnectionAuthError),
@@ -247,7 +247,7 @@ class KomgaImporterTests(TestCase):
     def test_server_error_does_not_mark_connection_broken(self):
         with (
             patch(
-                "integrations.imports.komga.requests.get",
+                "integrations.imports.reading_server.requests.get",
                 return_value=_response({}, 500),
             ),
             self.assertRaises(helpers.MediaImportError),
@@ -261,7 +261,7 @@ class KomgaImporterTests(TestCase):
     def test_timeout_is_recorded_without_leaking_the_key(self):
         with (
             patch(
-                "integrations.imports.komga.requests.get",
+                "integrations.imports.reading_server.requests.get",
                 side_effect=requests.Timeout("timeout for komga-key"),
             ),
             self.assertRaises(helpers.MediaImportError),
@@ -307,7 +307,7 @@ class KomgaViewTests(TestCase):
         mock_delay.assert_called_once_with(user_id=self.user.id, mode="new")
 
     @patch("integrations.views.tasks.import_komga.delay")
-    @patch("integrations.imports.komga.requests.get")
+    @patch("integrations.imports.reading_server.requests.get")
     def test_connect_with_bad_key_saves_nothing(self, mock_get, mock_delay):
         mock_get.return_value = _response({}, 401)
 

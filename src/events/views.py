@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from app.models import Item, MediaTypes, PodcastEpisode, Status
 from events import tasks
-from events.models import INACTIVE_TRACKING_STATUSES, Event
+from events.models import INACTIVE_TRACKING_STATUSES, Event, ReleaseTypes
 from users.models import User, WeekStartDayChoices
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,10 @@ def calendar(request):
         key=lambda media_type: MediaTypes(media_type).label,
     )
 
+    available_release_types = sorted(
+        {release.release_type for release in releases if release.release_type},
+    )
+
     item_ids_by_type = defaultdict(list)
     for release in releases:
         item_ids_by_type[release.item.media_type].append(release.item_id)
@@ -234,6 +238,9 @@ def calendar(request):
         "today": today,
         "view_type": view_type,
         "available_media_types": available_media_types,
+        "release_type_choices": ReleaseTypes.choices,
+        "available_release_types": available_release_types,
+        "region_unset": request.user.watch_provider_region == "UNSET",
         "available_statuses_by_type": available_statuses_by_type,
         "filter_media_types": filter_media_types,
         "filter_statuses_by_type": filter_statuses_by_type,
@@ -299,6 +306,15 @@ def download_calendar(request, token: str):
         if valid_media_types:
             releases = releases.filter(item__media_type__in=valid_media_types)
 
+    # No parameter means every release date; "none" leaves only main releases.
+    if "release_types" in request.GET:
+        allowed_release_types = set(request.GET.getlist("release_types")) & set(
+            ReleaseTypes.values,
+        )
+        releases = releases.filter(
+            Q(release_type="") | Q(release_type__in=allowed_release_types),
+        )
+
     selected_statuses = request.GET.getlist("status")
     if selected_statuses:
         valid_statuses = {
@@ -323,6 +339,7 @@ def download_calendar(request, token: str):
     releases = releases.only(
         "datetime",
         "content_number",
+        "release_type",
         "item__title",
         "item__media_type",
         "item__season_number",

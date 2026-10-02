@@ -435,25 +435,20 @@ class AudiobookshelfAccount(models.Model):
         return bool(self.base_url and self.api_token) and not self.connection_broken
 
 
-class KomgaAccount(models.Model):
-    """Store Komga connection settings and sync state for a user."""
+class ReadingServerAccount(models.Model):
+    """Connection settings and sync state shared by Komga and Kavita."""
 
     SYNC_INTERVAL_CHOICES = (5, 15, 30, 60)
 
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="komga_account",
-    )
-    base_url = models.URLField(help_text="Komga server URL")
-    api_key = models.TextField(help_text="Encrypted Komga API key")
+    base_url = models.URLField(help_text="Server URL")
+    api_key = models.TextField(help_text="Encrypted API key")
     create_missing = models.BooleanField(
         default=True,
-        help_text="Create Floppy items when Komga books cannot be matched",
+        help_text="Create Floppy items when server items cannot be matched",
     )
     sync_interval_minutes = models.PositiveSmallIntegerField(
         default=15,
-        help_text="How often Komga reading progress is synced",
+        help_text="How often reading progress is synced",
     )
     last_sync_at = models.DateTimeField(null=True, blank=True)
     connection_broken = models.BooleanField(default=False)
@@ -464,17 +459,32 @@ class KomgaAccount(models.Model):
     class Meta:
         """Model options."""
 
+        abstract = True
+
+    @property
+    def is_connected(self):
+        """Return True when the account appears connected."""
+        return bool(self.base_url and self.api_key) and not self.connection_broken
+
+
+class KomgaAccount(ReadingServerAccount):
+    """Store Komga connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="komga_account",
+    )
+
+    class Meta:
+        """Model options."""
+
         verbose_name = "Komga account"
         verbose_name_plural = "Komga accounts"
 
     def __str__(self):
         """Readable representation."""
         return f"KomgaAccount({self.user.username})"
-
-    @property
-    def is_connected(self):
-        """Return True when the account appears connected."""
-        return bool(self.base_url and self.api_key) and not self.connection_broken
 
 
 class KomgaBookLink(models.Model):
@@ -508,6 +518,60 @@ class KomgaBookLink(models.Model):
     def __str__(self):
         """Readable representation."""
         return f"KomgaBookLink({self.user.username}, {self.komga_book_id})"
+
+
+class KavitaAccount(ReadingServerAccount):
+    """Store Kavita connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="kavita_account",
+    )
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Kavita account"
+        verbose_name_plural = "Kavita accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"KavitaAccount({self.user.username})"
+
+
+class KavitaLink(models.Model):
+    """Remember which Floppy item a Kavita series or chapter was matched to."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="kavita_links",
+    )
+    # "series:<id>" for manga and books, "chapter:<id>" for comic issues.
+    kavita_key = models.CharField(max_length=64)
+    item = models.ForeignKey(
+        "app.Item",
+        on_delete=models.CASCADE,
+        related_name="kavita_links",
+    )
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Kavita link"
+        verbose_name_plural = "Kavita links"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "kavita_key"],
+                name="integrations_kavitalink_unique_user_key",
+            ),
+        ]
+
+    def __str__(self):
+        """Readable representation."""
+        return f"KavitaLink({self.user.username}, {self.kavita_key})"
 
 
 class LastFMAccount(models.Model):

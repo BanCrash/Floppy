@@ -1031,6 +1031,21 @@ class HistoryMonthViewTests(TestCase):
         self.assertNotContains(response, "checkCacheStatus", html=False)
         self.assertNotContains(response, "/api/cache-status/", html=False)
 
+    def test_month_nav_puts_older_months_left_and_newer_months_right(self):
+        """Past is on the left and future on the right, like the Calendar."""
+        response = self.client.get(reverse("history") + "?year=2020&m=6")
+        html = response.content.decode()
+
+        older = html.index("?year=2020&m=5")
+        newer = html.index("?year=2020&m=7")
+        back_a_year = html.index("?year=2019&m=6")
+        current_month = html.index(f"?year={response.context['current_year']}&m=")
+
+        self.assertLess(back_a_year, older)
+        self.assertLess(older, html.index("<h2", older))
+        self.assertLess(html.index("<h2", older), newer)
+        self.assertLess(newer, current_month)
+
     def test_history_passes_media_type_from_query_into_context(self):
         response = self.client.get(
             reverse("history"),

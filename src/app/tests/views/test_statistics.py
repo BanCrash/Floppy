@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import call, patch
 
 from dateutil.relativedelta import relativedelta
@@ -242,6 +242,23 @@ class StatisticsViewTests(TestCase):
         self.assertIn("status_distribution", response.context)
         self.assertIn("status_pie_chart_data", response.context)
         self.assertIn("daily_hours_by_media_type", response.context)
+
+    def test_activity_heatmap_month_labels_share_the_week_grid(self):
+        """Month labels must sit on the same grid tracks as the week columns."""
+        response = self.client.get(
+            reverse("statistics") + "?start-date=2026-07-01&end-date=2026-10-01",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        weeks = len(response.context["activity_data"]["calendar_weeks"])
+        self.assertGreater(weeks, 0)
+        html = response.content.decode()
+        tracks = f"grid-template-columns: repeat({weeks}, minmax(1rem, 20px))"
+        self.assertEqual(html.count(tracks), 2)  # months row + weeks grid
+        months_row = html.split(tracks)[1]
+        spans = [int(n) for n in re.findall(r"grid-column: span (\d+)", months_row)]
+        self.assertTrue(spans)
+        self.assertLessEqual(sum(spans), weeks)
 
     @patch("app.statistics_views.tvdb.enabled", return_value=True)
     def test_statistics_view_shows_anime_genre_preference_when_supported(
@@ -555,27 +572,31 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.context["selected_range_name"], "This Year")
         self.assertEqual(response.context["selected_range_dates_label"], "This Year")
 
+    # Pinned mid-month: on the 1st, month-to-date is a single day and is labelled "Today".
+    @patch(
+        "django.utils.timezone.now",
+        new=lambda: datetime(2026, 3, 15, 12, 0, tzinfo=UTC),
+    )
     def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()
         self.client.login(**self.credentials)
-        # A fixed mid-month day: on the 1st, month-to-date is "Today".
-        today = date(2026, 9, 15)
+        # On the 1st the month-to-date range is one day and is correctly
+        # labelled "Today", so pin "today" to the 15th of last month.
+        real_localdate = timezone.localdate
+        today = (timezone.localdate().replace(day=1) - timedelta(days=1)).replace(day=15)
         month_start = today.replace(day=1)
         last_year_today = today - relativedelta(years=1)
-        real_localdate = timezone.localdate
-
-        def localdate(value=None, *args, **kwargs):
-            if value is None:
-                return today
-            return real_localdate(value, *args, **kwargs)
 
         self._create_movie_play("movie-current-mtd", "Current Movie", today, 120)
         self._create_movie_play(
             "movie-last-year-mtd", "Last Year Movie", last_year_today, 60
         )
 
-        with patch("django.utils.timezone.localdate", side_effect=localdate):
+        def pinned_localdate(value=None, timezone=None):
+            return today if value is None else real_localdate(value, timezone)
+
+        with patch("django.utils.timezone.localdate", side_effect=pinned_localdate):
             response = self.client.get(
                 reverse("statistics")
                 + (
@@ -1732,6 +1753,61 @@ class StatisticsViewTests(TestCase):
         _, start_date, end_date = mock_top_talent.call_args.args[:3]
         self.assertTrue(timezone.is_aware(start_date))
         self.assertTrue(timezone.is_aware(end_date))
+
+    def test_activity_heatmap_counts_are_split_by_media_type(self):
+        """Each heatmap day carries per-media-type counts for the type filter."""
+        now = timezone.now()
+        movie_item = Item.objects.create(
+            media_id="heat-movie",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Heatmap Movie",
+            image="http://example.com/heat-movie.jpg",
+            runtime_minutes=100,
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=now,
+            end_date=now,
+        )
+        book_item = Item.objects.create(
+            media_id="heat-book",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Heatmap Book",
+            image="http://example.com/heat-book.jpg",
+            number_of_pages=200,
+        )
+        Book.objects.create(
+            item=book_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=200,
+            start_date=now,
+            end_date=now,
+        )
+
+        today = timezone.localdate()
+        data = statistics_cache._aggregate_statistics_from_days(
+            self.user,
+            [today],
+            start_date=None,
+            end_date=None,
+            build_missing=True,
+        )
+
+        days = [
+            day
+            for week in data["activity_data"]["calendar_weeks"]
+            for day in week
+            if day["date"] == today.isoformat()
+        ]
+        self.assertEqual(len(days), 1)
+        self.assertEqual(days[0]["by_type"], {"movie": 1, "book": 1})
+        self.assertEqual(days[0]["count"], 2)
 
     def test_statistics_view_includes_top_talent_sections(self):
         """Top cast/crew and studio sections should be present in context."""

@@ -16,16 +16,38 @@
     min-height: 2.5rem;
   }
 
-  .home-settings-row-body > div,
-  .home-settings-row-controls {
+  .home-settings-row-body > div {
     flex-wrap: wrap;
+    padding-block: 0.25rem;
   }
 
-  .home-settings-row-title,
-  .home-settings-row-controls {
-    flex-basis: 100%;
+  /* Title and delete button share the first line; the filters follow as chips. */
+  .home-settings-row-title {
+    flex: 1 1 calc(100% - 2.75rem);
     min-width: 0;
-    padding-block: 0.25rem;
+  }
+
+  .home-settings-row-controls {
+    display: contents;
+  }
+
+  .home-settings-row-controls > button:last-child {
+    order: 1;
+  }
+
+  .home-settings-row-controls > :not(:last-child) {
+    order: 2;
+  }
+
+  .home-settings-chip {
+    border: 1px solid var(--color-surface-border);
+    background: var(--color-panel);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .home-settings-chip svg {
+    margin-left: 0.25rem;
   }
 
   .home-settings-row-controls .filter-control {
@@ -36,6 +58,13 @@
     left: 0;
     width: auto;
     max-width: 100%;
+  }
+}
+
+/* Below md the settings menu collapses into a dropdown (see users/base.html). */
+@media (max-width: 47.999rem) {
+  .settings-nav-collapsed {
+    display: none;
   }
 }
 
@@ -59,6 +88,7 @@
   /* Lifted from #9ca3af: that value reached only 4.1:1 on --color-surface-strong,
      the raised surface settings cards use, so muted copy missed WCAG AA there. */
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
@@ -101,6 +131,7 @@
     --color-text: #1f2937;
     --color-text-secondary: #374151;
     --color-text-muted: #4b5563;
+    --color-success-text: #047857;
     --color-warning-text: #92400e;
     --color-info-text: #3730a3;
     --color-error-text: #b91c1c;
@@ -138,6 +169,7 @@ html.light {
   --color-text: #1f2937;
   --color-text-secondary: #374151;
   --color-text-muted: #4b5563;
+  --color-success-text: #047857;
   --color-warning-text: #92400e;
   --color-info-text: #3730a3;
   --color-error-text: #b91c1c;
@@ -174,6 +206,7 @@ html.dark {
   --color-text: #f3f4f6;
   --color-text-secondary: #d1d5db;
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;

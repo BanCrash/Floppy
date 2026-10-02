@@ -139,6 +139,10 @@ function libraryFilterState(rules = {}, filterData = {}, mediaTypes = {}) {
       const granular = this.selectedTypes.filter((type) => this.granularMediaTypes.includes(type));
       this.selectedTypes = this.allTypesSelected() ? granular : [...broadMediaTypes, ...granular];
     },
+    // The Media Types pane's row text; a page may mark types (the calendar).
+    typeLabel(type) {
+      return type.label;
+    },
     typesFiltered() {
       return !this.allTypesSelected() || this.hasGranularTypeSelected();
     },

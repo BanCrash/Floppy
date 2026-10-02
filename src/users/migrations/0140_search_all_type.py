@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ("app", "0193_add_gcd_source"),
         ("auth", "0012_alter_user_first_name_max_length"),
-        ("users", "0137_add_gcd_source"),
+        ("users", "0139_merge_saved_view_history_and_tv_auto_move"),
     ]
 
     operations = [
