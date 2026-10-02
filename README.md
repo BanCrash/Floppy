@@ -227,8 +227,17 @@ process working directory. Use absolute paths so that each process uses the
 same location.
 
 If `SECRET` and `SECRET_FILE` are not set, the container stores its generated
-`secret_key` in `FLOPPY_DATA_DIR`. Floppy stores logs and backups in `LOG_DIR`
-and `BACKUP_DIR`. `FLOPPY_DATA_DIR` does not change those settings.
+`secret_key` in `FLOPPY_DATA_DIR`. Floppy stores backups in `BACKUP_DIR`;
+`FLOPPY_DATA_DIR` does not change that setting. Logs go to `LOG_DIR`, which
+defaults to a `logs` folder inside `FLOPPY_DATA_DIR`, so they sit on the same
+volume as the database and survive the container being recreated.
+
+If the container keeps crashing, that folder holds `floppy.log` (application
+log, with a memory line every 5 minutes and a note on the next start when the
+previous run did not shut down cleanly), `supervisord.log` (which process
+exited and how) and `faulthandler.log` (Python traceback after a segfault). It
+can be read from the host even while the container is down. Settings →
+Advanced → Download Sanitized Logs bundles all three with secrets redacted.
 
 `BACKUP_DIR` defaults to `/floppy/backups` inside the container. The
 Settings → Export page shows this path, but it is a container path, not a
