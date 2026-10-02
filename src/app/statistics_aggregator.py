@@ -248,6 +248,7 @@ def _build_daily_hours_chart(day_minutes_by_type, day_list):
 
 def _build_activity_data(
     date_counts,
+    date_type_counts,
     day_minutes_by_type,
     day_list,
     start_date,
@@ -259,6 +260,7 @@ def _build_activity_data(
 
     Args:
         date_counts: Dict mapping date -> activity count (for heatmap)
+        date_type_counts: Dict mapping date -> {media_type: activity count}
         day_minutes_by_type: Dict mapping media_type -> {date_iso_str -> minutes}
         day_list: List of date objects in the filtered range
         start_date: Start of the date range
@@ -310,6 +312,8 @@ def _build_activity_data(
             "date": current_date.strftime("%Y-%m-%d"),
             "count": date_counts.get(current_date, 0),
             "level": stats.get_level(date_counts.get(current_date, 0)),
+            # Lets the page re-colour the heatmap for the selected media types.
+            "by_type": date_type_counts.get(current_date, {}),
         }
         for current_date in date_range
     ]
@@ -704,6 +708,7 @@ def _aggregate_statistics_from_days(
     }
     game_rollups = {}
     activity_counts = {}
+    activity_counts_by_type = {}
     try:
         credit_backfill_hints = int(credit_backfill_hints or 0)
     except (TypeError, ValueError):
@@ -984,12 +989,26 @@ def _aggregate_statistics_from_days(
                 day_stats.get("totals", {}).get("plays_by_type", {}).values()
             )
             activity_total = plays_total
+            # Same rule as the total, kept per media type so the heatmap can
+            # follow the media-type filter.
+            by_type = {
+                media_type: plays
+                for media_type, plays in day_stats.get("totals", {})
+                .get("plays_by_type", {})
+                .items()
+                if plays
+            }
             for media_type in non_play_activity_types:
                 if daily_minutes.get(media_type, 0):
                     activity_total += 1
+                    by_type[media_type] = by_type.get(media_type, 0) + 1
             if activity_total == 0 and sum(daily_minutes.values()) > 0:
                 activity_total = 1
+                busiest = max(daily_minutes, key=daily_minutes.get)
+                by_type[busiest] = 1
             activity_counts[day] = activity_total
+            if by_type:
+                activity_counts_by_type[day] = by_type
 
     active_types = list(getattr(user, "get_active_media_types", list)())
     if not active_types:
@@ -1330,6 +1349,7 @@ def _aggregate_statistics_from_days(
     week_start_sunday = user.week_start_day == WeekStartDayChoices.SUNDAY
     activity_data = _build_activity_data(
         activity_counts_by_date,
+        activity_counts_by_type,
         day_minutes_by_type,
         day_list,
         start_date,

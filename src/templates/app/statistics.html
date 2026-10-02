@@ -1150,7 +1150,11 @@
 
   <!-- Activity History Section -->
   {% if user.activity_history_view != 'stacked' %}
-  <div id="activityHistory" class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 w-full overflow-hidden mb-4">
+  {# Translated tooltip templates for the media-type filter; the script swaps in the date and count. #}
+  <div id="activityHistory" class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 w-full overflow-hidden mb-4"
+       data-title-0="{% blocktranslate with date='__DATE__' count count=0 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}"
+       data-title-1="{% blocktranslate with date='__DATE__' count count=1 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}"
+       data-title-2="{% blocktranslate with date='__DATE__' count count=2 %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}">
         <div class="flex items-center justify-between mb-3">
           <div>
             <h2 class="text-base font-semibold text-[var(--color-text)] mb-0.5">{% translate "Activity History" %}</h2>
@@ -1195,7 +1199,8 @@
                 {% for week in activity_data.calendar_weeks %}
                   <div class="flex flex-col gap-1 flex-1 min-w-4" style="max-width:20px">
                     {% for day in week %}
-                      <div class="aspect-square w-full rounded-sm transition-colors duration-200 {% if day.future %}bg-[var(--color-surface-muted)] cursor-default{% else %}hover:ring-2 hover:ring-white {% if day.level == 0 %}bg-[var(--color-surface-muted)]{% elif day.level == 1 %}bg-indigo-700{% elif day.level == 2 %}bg-indigo-600{% elif day.level == 3 %}bg-indigo-500{% elif day.level == 4 %}bg-indigo-400{% endif %}{% endif %}"
+                      <div {% if not day.future and day.by_type %}data-heatmap-date="{{ day.date }}" data-heatmap-counts="{% for media_type, n in day.by_type.items %}{{ media_type }}:{{ n }}{% if not forloop.last %},{% endif %}{% endfor %}"{% endif %}
+                           class="aspect-square w-full rounded-sm transition-colors duration-200 {% if day.future %}bg-[var(--color-surface-muted)] cursor-default{% else %}hover:ring-2 hover:ring-white {% if day.level == 0 %}bg-[var(--color-surface-muted)]{% elif day.level == 1 %}bg-indigo-700{% elif day.level == 2 %}bg-indigo-600{% elif day.level == 3 %}bg-indigo-500{% elif day.level == 4 %}bg-indigo-400{% endif %}{% endif %}"
                            title="{% if day.future %}{{ day.date }}{% else %}{% blocktranslate with date=day.date count count=day.count %}{{ date }}: {{ count }} activity{% plural %}{{ date }}: {{ count }} activities{% endblocktranslate %}{% endif %}"></div>
                     {% endfor %}
                   </div>
