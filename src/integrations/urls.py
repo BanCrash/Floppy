@@ -285,6 +285,16 @@ urlpatterns = [
         name="jellyseerr_webhook",
     ),
     path(
+        "library/<str:source>/<str:media_type>/<str:media_id>/",
+        views.library_panel,
+        name="library_panel",
+    ),
+    path(
+        "seerr/<str:media_type>/<int:media_id>/",
+        views.seerr_request,
+        name="seerr_request",
+    ),
+    path(
         "webhook/seerr/global/",
         views.seerr_global_webhook,
         name="seerr_global_webhook",

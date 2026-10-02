@@ -1561,6 +1561,11 @@
       border-color: var(--color-border);
     }
   }
+  .divide-\[var\(--color-surface-border\)\] {
+    :where(& > :not(:last-child)) {
+      border-color: var(--color-surface-border);
+    }
+  }
   .divide-gray-700 {
     :where(& > :not(:last-child)) {
       border-color: var(--color-gray-700);
@@ -3278,6 +3283,9 @@
   }
   .text-\[var\(--color-link\)\] {
     color: var(--color-link);
+  }
+  .text-\[var\(--color-success-text\)\] {
+    color: var(--color-success-text);
   }
   .text-\[var\(--color-text\)\] {
     color: var(--color-text);
