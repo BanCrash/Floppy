@@ -424,6 +424,20 @@ class ServicesTests(TestCase):
 
         mock_anime.assert_called_once_with("1")
 
+    @patch("app.providers.mangabaka.manga")
+    def test_get_media_metadata_manga_mangabaka(self, mock_manga):
+        """Test the get_media_metadata function for manga from MangaBaka."""
+        mock_manga.return_value = {"title": "Test Manga"}
+
+        result = services.get_media_metadata(
+            MediaTypes.MANGA.value,
+            "1",
+            Sources.MANGABAKA.value,
+        )
+
+        self.assert_metadata_title_payload(result, "Test Manga")
+        mock_manga.assert_called_once_with("1")
+
     @patch("app.providers.mangaupdates.manga")
     def test_get_media_metadata_manga_mangaupdates(self, mock_manga):
         """Test the get_media_metadata function for manga from MangaUpdates."""
@@ -937,6 +951,21 @@ class ServicesTests(TestCase):
 
         self.assertEqual(result, {"results": []})
         mock_search.assert_called_once_with(MediaTypes.ANIME.value, "test", 1, None)
+
+    @patch("app.providers.mangabaka.search")
+    def test_search_manga_mangabaka(self, mock_search):
+        """Test the search function for manga from MangaBaka."""
+        mock_search.return_value = [{"title": "Test Manga"}]
+
+        result = services.search(
+            MediaTypes.MANGA.value,
+            "test",
+            1,
+            source=Sources.MANGABAKA.value,
+        )
+
+        self.assertEqual(result, [{"title": "Test Manga"}])
+        mock_search.assert_called_once_with("test", 1)
 
     @patch("app.providers.mangaupdates.search")
     def test_search_manga_mangaupdates(self, mock_search):

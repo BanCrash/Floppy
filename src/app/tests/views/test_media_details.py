@@ -2880,6 +2880,68 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Toy Story")
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_secondary_hides_recommendations_when_turned_off(
+        self,
+        mock_get_metadata,
+    ):
+        """Turning recommendations off removes the section and its card lookups."""
+        Item.objects.create(
+            media_id="10193",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Toy Story 3",
+            image="https://images.example.com/toy-story-3.jpg",
+            metadata_fetched_at=timezone.now(),
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "10193",
+            "title": "Toy Story 3",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/movie/10193",
+            "image": "https://images.example.com/toy-story-3.jpg",
+            "synopsis": "Woody and Buzz face a new chapter.",
+            "max_progress": 1,
+            "score": 8.0,
+            "details": {"release_date": "2010-06-16"},
+            "related": {
+                "recommendations": [
+                    {
+                        "media_id": "862",
+                        "title": "Sentinel Recommendation",
+                        "media_type": MediaTypes.MOVIE.value,
+                        "source": Sources.TMDB.value,
+                        "image": "https://images.example.com/toy-story.jpg",
+                    },
+                ],
+            },
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        url = reverse(
+            "media_details",
+            kwargs={
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "media_id": "10193",
+                "title": "toy-story-3",
+            },
+        )
+
+        response = self.client.get(url, {"fragment": "secondary"})
+        self.assertContains(response, "Sentinel Recommendation")
+
+        self.user.show_recommendations = False
+        self.user.save(update_fields=["show_recommendations"])
+        with patch("app.helpers.enrich_items_with_user_data") as mock_enrich:
+            response = self.client.get(url, {"fragment": "secondary"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Sentinel Recommendation")
+        mock_enrich.assert_not_called()
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_secondary_refetches_stale_book_metadata(
         self,
         mock_get_metadata,
@@ -4867,6 +4929,55 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(
             response, "x-text=\"rating ? 'Edit rating' : 'Add rating'\"", html=False
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_hides_your_score_chip_when_ratings_disabled(
+        self, mock_get_metadata
+    ):
+        self.user.rating_scale = RatingScaleChoices.DISABLED.value
+        self.user.save(update_fields=["rating_scale"])
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        movie = Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=8,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Edit rating")
+        self.assertNotContains(response, "Add rating")
+        movie.refresh_from_db()
+        self.assertEqual(movie.score, 8)
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_five_point_scale_suffix(

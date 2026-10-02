@@ -110,6 +110,15 @@ Wishlist rows (`Collection Status`) go to a dedicated **CLZ Wishlist** list.
 No copy is created and no reading progress is inferred; their columns are
 still preserved through the custom fields.
 
+## Finding copies by imported fields
+
+On the Collection page, search also matches custom field values, dropdown and
+checkbox fields appear in **Filters**, and every field the user has appears in
+the sort menu (numbers sort numerically, copies with no value come last).
+These read `custom_field_values` in Python, not with a JSON key lookup: keys
+are `str(field.id)`, and Django compiles a numeric key as an array index
+(`$[2]`) on SQLite, so a database lookup silently matches nothing.
+
 ## Native export/import
 
 The CSV backup carries the whole picture:

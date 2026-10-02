@@ -327,7 +327,7 @@ def _smart_list_detail_response(
                 tag_url=reverse("tag_bulk_toggle"),
             )
             if can_edit
-            else {},
+            else {}
         ),
         "list_ordering_enabled": can_edit and sort_by == ListDetailSortChoices.CUSTOM,
         "is_public_view": is_public_view,

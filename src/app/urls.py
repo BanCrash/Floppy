@@ -184,6 +184,11 @@ urlpatterns = [
         name="search_library_move_candidates",
     ),
     path(
+        "details/tv-provider-switch/<int:item_id>",
+        views.switch_tv_provider,
+        name="switch_tv_provider",
+    ),
+    path(
         "details/library-move/<int:item_id>",
         views.move_library_item,
         name="move_library_item",

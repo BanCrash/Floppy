@@ -114,6 +114,18 @@ class MediaCardSurfaceContractTest(TestCase):
         self.assertIn("media-card-rate-button", content)
         self.assertIn("rating: null", content)
 
+    def test_disabled_ratings_hide_the_card_rating(self):
+        """Turning ratings off removes the rating and the rate button on every surface."""
+        self.user.rating_scale = "0"
+        self.user.save()
+        for surface in SURFACES:
+            with self.subTest(surface=surface):
+                content = self.render_card(surface)
+                self.assertNotIn("media-card-rate-button", content)
+                self.assertNotIn("8.5", content)
+        self.movie.refresh_from_db()
+        self.assertEqual(self.movie.score, 8.5)
+
     def test_picker_has_one_star_per_point_of_the_users_scale(self):
         """The picker shows 10 stars on the 10-point scale and 5 on the 5-point scale."""
         for scale, stars in (("10", 10), ("5", 5)):

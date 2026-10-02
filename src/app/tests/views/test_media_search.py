@@ -4,22 +4,27 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from app.media_list_filters import media_list_entries_for_items
 from app.models import (
+    TV,
     Album,
     AlbumTracker,
     Artist,
     ArtistTracker,
     CollectionEntry,
     Item,
+    ItemTag,
     MediaTypes,
     Movie,
     PodcastShow,
     PodcastShowTracker,
     Sources,
     Status,
+    Tag,
 )
 from app.providers import services
 from app.search_views import get_saved_suggestions
+from app.templatetags.app_tags import get_search_media_types
 from users.models import MetadataSourceDefaultChoices
 
 
@@ -525,3 +530,212 @@ class CollectedItemSearchTests(TestCase):
 
         self.assertEqual(response.context["local_results_total"], 111)
         self.assertEqual(len(response.context["local_results"]), 24)
+
+
+class AllTypeSearchTests(TestCase):
+    """The "All" search type searches the user's whole library, offline (#1160)."""
+
+    def setUp(self):
+        """Create a user and log in."""
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+    def _item(self, media_type, title, media_id, source=Sources.TMDB.value):
+        return Item.objects.create(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+            title=title,
+            image="http://example.com/i.jpg",
+        )
+
+    def _library(self):
+        """A match in several types, each reached a different way."""
+        movie = self._item(MediaTypes.MOVIE.value, "Dune Movie", "1")
+        Movie.objects.create(user=self.user, item=movie, status=Status.COMPLETED.value)
+        collected = self._item(
+            MediaTypes.BOOK.value, "Dune Novel", "2", Sources.OPENLIBRARY.value
+        )
+        CollectionEntry.objects.create(user=self.user, item=collected)
+        tagged = self._item(MediaTypes.GAME.value, "Dune Game", "3", Sources.IGDB.value)
+        tag = Tag.objects.create(user=self.user, name="sci-fi")
+        ItemTag.objects.create(tag=tag, item=tagged)
+        return movie, collected, tagged
+
+    @patch("app.providers.services.search")
+    def test_all_type_groups_library_matches_without_provider_calls(self, mock_search):
+        movie, collected, tagged = self._library()
+        self._item(MediaTypes.MOVIE.value, "Dune Untracked", "9")  # in nobody's library
+        other = get_user_model().objects.create_user(username="other")
+        Movie.objects.create(
+            user=other,
+            item=self._item(MediaTypes.MOVIE.value, "Dune Other", "8"),
+            status=Status.COMPLETED.value,
+        )
+
+        response = self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        self.assertEqual(response.status_code, 200)
+        mock_search.assert_not_called()
+        groups = {
+            group["media_type"]: [r["item"] for r in group["results"]]
+            for group in response.context["local_groups"]
+        }
+        self.assertEqual(
+            groups,
+            {
+                MediaTypes.MOVIE.value: [movie],
+                MediaTypes.BOOK.value: [collected],
+                MediaTypes.GAME.value: [tagged],
+            },
+        )
+        self.assertContains(response, "Dune Game")
+
+    @patch("app.providers.services.search")
+    def test_all_type_is_remembered_as_the_search_type(self, mock_search):
+        self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.last_search_type, "all")
+        mock_search.assert_not_called()
+
+    def test_all_type_includes_podcasts_and_music(self):
+        show = PodcastShow.objects.create(
+            podcast_uuid="p1", source=Sources.POCKETCASTS.value, title="Dune Podcast"
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user, show=show, status=Status.IN_PROGRESS.value
+        )
+        artist = Artist.objects.create(name="Dune Band")
+        ArtistTracker.objects.create(user=self.user, artist=artist)
+
+        response = self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        groups = {g["media_type"]: g for g in response.context["local_groups"]}
+        self.assertEqual(
+            groups[MediaTypes.PODCAST.value]["results"][0]["item"].title,
+            "Dune Podcast",
+        )
+        self.assertEqual(groups[MediaTypes.MUSIC.value]["artists"][0].artist, artist)
+
+    def test_all_type_skips_disabled_media_types(self):
+        self._library()
+        self.user.book_enabled = False
+        self.user.save()
+
+        response = self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        self.assertNotIn(
+            MediaTypes.BOOK.value,
+            [g["media_type"] for g in response.context["local_groups"]],
+        )
+
+    def test_all_type_with_no_match_shows_the_empty_state(self):
+        response = self.client.get(reverse("search") + "?media_type=all&q=nothing")
+
+        self.assertEqual(response.context["local_groups"], [])
+        self.assertContains(response, "Nothing in your library matches")
+
+    def test_search_type_dropdown_offers_all_first(self):
+        search_types = get_search_media_types(self.user)
+
+        self.assertEqual(search_types[0], {"display": "All", "value": "all"})
+        self.assertIn(MediaTypes.MOVIE.value, [t["value"] for t in search_types])
+
+    def test_suggestions_span_types_and_label_each_with_its_type(self):
+        self._library()
+
+        response = self.client.get(
+            reverse("search_suggestions") + "?media_type=all&q=dune",
+        )
+
+        suggestions = response.context["suggestions"]
+        self.assertEqual(
+            sorted(s["title"] for s in suggestions),
+            ["Dune Game", "Dune Movie", "Dune Novel"],
+        )
+        self.assertEqual(
+            {s["title"]: s["subtitle"] for s in suggestions}["Dune Movie"],
+            "Movie",
+        )
+        self.assertContains(response, "See all library results")
+
+    def test_tagged_untracked_item_is_found_in_a_single_type_search(self):
+        _movie, _collected, tagged = self._library()
+
+        suggestions = get_saved_suggestions(self.user, MediaTypes.GAME.value, "dune")
+
+        self.assertEqual([s["title"] for s in suggestions], [tagged.title])
+
+    def test_all_type_includes_tagged_only_podcast_shows(self):
+        item = self._item(
+            MediaTypes.PODCAST.value,
+            "Dune Cast",
+            "pc1",
+            Sources.POCKETCASTS.value,
+        )
+        ItemTag.objects.create(
+            tag=Tag.objects.create(user=self.user, name="listen"), item=item
+        )
+
+        response = self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        groups = {g["media_type"]: g for g in response.context["local_groups"]}
+        self.assertEqual(
+            [r["item"] for r in groups[MediaTypes.PODCAST.value]["results"]],
+            [item],
+        )
+
+    def test_all_type_loads_only_one_page_per_type(self):
+        """A common query must not hydrate every match in a large library."""
+        for number in range(30):
+            Movie.objects.create(
+                user=self.user,
+                item=self._item(
+                    MediaTypes.MOVIE.value, f"Dune {number:02d}", str(number)
+                ),
+                status=Status.COMPLETED.value,
+            )
+
+        with patch(
+            "app.search_views.media_list_entries_for_items",
+            wraps=media_list_entries_for_items,
+        ) as hydrate:
+            response = self.client.get(reverse("search") + "?media_type=all&q=dune")
+
+        group = response.context["local_groups"][0]
+        self.assertEqual(group["total"], 30)
+        self.assertEqual(len(group["results"]), 12)
+        self.assertEqual(
+            max(len(call.args[1]) for call in hydrate.call_args_list),
+            12,
+        )
+
+    def test_statusless_media_is_searchable(self):
+        """An imported rating with no status is in the library (#1270 gap)."""
+        item = self._item(MediaTypes.MOVIE.value, "Dune Rated", "77")
+        Movie.objects.create(user=self.user, item=item, status=None, score=7)
+
+        suggestions = get_saved_suggestions(self.user, MediaTypes.MOVIE.value, "dune")
+
+        self.assertEqual([s["title"] for s in suggestions], ["Dune Rated"])
+
+    def test_grouped_anime_is_in_the_anime_library_not_tv(self):
+        """Anime tracked as a TV show follows the user's anime library mode."""
+        item = self._item(MediaTypes.TV.value, "Dune Anime", "a1")
+        item.library_media_type = MediaTypes.ANIME.value
+        item.save()
+        TV.objects.create(user=self.user, item=item, status=Status.COMPLETED.value)
+
+        groups = {
+            g["media_type"]: g
+            for g in self.client.get(
+                reverse("search") + "?media_type=all&q=dune",
+            ).context["local_groups"]
+        }
+
+        self.assertNotIn(MediaTypes.TV.value, groups)
+        anime = groups[MediaTypes.ANIME.value]["results"][0]
+        self.assertEqual(anime["item"], item)
+        self.assertEqual(anime["media"].route_media_type, MediaTypes.ANIME.value)
