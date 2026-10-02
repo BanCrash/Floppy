@@ -26,9 +26,13 @@
           <h3 class="text-base font-medium">{% translate "Logs & Bug Reports" %}</h3>
         </div>
         <p class="text-[var(--color-text-muted)] mb-4 text-sm">
-          {% translate "Download recent application logs with tokens, passwords, and API keys automatically redacted — safe to attach to a bug report." %}
-          <br>
-          {% translate "If this Floppy instance is shared with other users, the logs may still include their activity, just not their secrets." %}
+          {% translate "Recent logs with secrets removed, safe to attach to a bug report." %}
+          {% translate "On a shared instance they may show other users' activity." %}
+          {% if logs_since or last_unclean_exit %}
+            <br>
+            {% if logs_since %}{% blocktranslate %}Covers {{ logs_since }} onward.{% endblocktranslate %}{% endif %}
+            {% if last_unclean_exit %}{% blocktranslate with when=last_unclean_exit|date:"DATETIME_FORMAT" %}Last unclean shutdown: {{ when }}{% endblocktranslate %}{% endif %}
+          {% endif %}
         </p>
         <div class="flex flex-wrap gap-3">
           <a href="{% url 'export_logs' %}"

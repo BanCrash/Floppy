@@ -6,7 +6,8 @@
       {% derived_tv_rating user media_type media as derived_tv_score %}
     {% endif %}
   {% endif %}
-  {% if user_medias and current_instance and not public_view|default:False %}
+  {% if not user.ratings_enabled %}
+  {% elif user_medias and current_instance and not public_view|default:False %}
     {% include "app/components/detail_score_chip.html" with current_instance=current_instance media_type=media_type user=user csrf_token=csrf_token derived_tv_score=derived_tv_score %}
   {% else %}
     {% include "app/components/derived_tv_rating_detail.html" with derived_tv_score=derived_tv_score only %}
