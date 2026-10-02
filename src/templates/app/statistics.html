@@ -1033,7 +1033,6 @@
                     {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
                   </button>
                   <div x-show="tooltipOpen"
-                       x-effect="tooltipOpen && $nextTick(() => window.floppyKeepInViewport($el))"
                        x-transition:enter="transition ease-out duration-200"
                        x-transition:enter-start="opacity-0 scale-95"
                        x-transition:enter-end="opacity-100 scale-100"
@@ -1075,7 +1074,6 @@
                       {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
                     </button>
                     <div x-show="tooltipOpen"
-                       x-effect="tooltipOpen && $nextTick(() => window.floppyKeepInViewport($el))"
                          x-transition:enter="transition ease-out duration-200"
                          x-transition:enter-start="opacity-0 scale-95"
                          x-transition:enter-end="opacity-100 scale-100"
@@ -1126,7 +1124,6 @@
             {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
           </button>
           <div x-show="tooltipOpen"
-                       x-effect="tooltipOpen && $nextTick(() => window.floppyKeepInViewport($el))"
                x-transition:enter="transition ease-out duration-200"
                x-transition:enter-start="opacity-0 scale-95"
                x-transition:enter-end="opacity-100 scale-100"

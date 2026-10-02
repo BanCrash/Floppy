@@ -21,39 +21,6 @@ function placeChartTooltip(tooltipEl, context) {
   tooltipEl.style.pointerEvents = "none";
 }
 
-// Nudge an info popup (centered on or right-aligned to its button) back inside the
-// viewport, and keep its arrow pointing at the button.
-window.floppyKeepInViewport = function (el) {
-  const margin = 8;
-  // Measure from far off-screen left: overflow on the right would make a phone
-  // browser zoom the page out, and it does not shrink back afterwards.
-  const parked = 10000;
-  // No sliding while we move it: the enter animation has its own transition.
-  el.style.transition = "none";
-  el.style.transform = "translateX(" + -parked + "px)";
-  const rect = el.getBoundingClientRect();
-  const viewportWidth = document.documentElement.clientWidth;
-  // The enter animation scales the popup, so use its center and unscaled width.
-  const center = (rect.left + rect.right) / 2 + parked;
-  const half = el.offsetWidth / 2;
-  let shift = 0;
-  if (center - half < margin) {
-    shift = margin - (center - half);
-  } else if (center + half > viewportWidth - margin) {
-    shift = viewportWidth - margin - (center + half);
-  }
-  el.style.transform = shift ? "translateX(" + shift + "px)" : "";
-  el.getBoundingClientRect(); // apply the move before the transition comes back
-  el.style.transition = "";
-  const arrow = el.querySelector(".stats-tooltip-arrow");
-  if (arrow) {
-    const anchor = el.parentElement.getBoundingClientRect();
-    const arrowLeft = (anchor.left + anchor.right) / 2 - (center - half + shift);
-    arrow.style.left = shift ? arrowLeft + "px" : "";
-    arrow.style.right = shift ? "auto" : "";
-    arrow.style.translate = shift ? "-50% 0" : "";
-  }
-};
 function initStatisticsCharts() {
   if (typeof Chart === "undefined") {
     return;
@@ -1239,7 +1206,7 @@ function initStatisticsCharts() {
 
       // Flip left if near right edge of viewport.
       const tipW = tooltipEl.offsetWidth || 160;
-      const left = x + 12 + tipW > window.innerWidth ? x - tipW - 12 : x + 12;
+      const left = Math.max(8, x + 12 + tipW > window.innerWidth ? x - tipW - 12 : x + 12);
 
       tooltipEl.style.left = left + "px";
       tooltipEl.style.top = (y - 16) + "px";
@@ -1439,7 +1406,7 @@ function initStatisticsCharts() {
       const x = rect.left + tooltip.caretX;
       const y = rect.top + tooltip.caretY;
       const tipW = tooltipEl.offsetWidth || 160;
-      const left = x + 12 + tipW > window.innerWidth ? x - tipW - 12 : x + 12;
+      const left = Math.max(8, x + 12 + tipW > window.innerWidth ? x - tipW - 12 : x + 12);
       tooltipEl.style.left = left + "px";
       tooltipEl.style.top = (y - 16) + "px";
       tooltipEl.style.opacity = "1";
