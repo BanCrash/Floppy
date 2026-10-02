@@ -156,6 +156,7 @@ _HISTORY_MEDIA_TYPE_ALIASES = {
     "board_games": MediaTypes.BOARDGAME.value,
     "musics": MediaTypes.MUSIC.value,
     "podcasts": MediaTypes.PODCAST.value,
+    "videos": MediaTypes.VIDEO.value,
 }
 
 

@@ -64,6 +64,7 @@ from app.models.media import (
     Movie,
     MoviePlay,
 )
+from app.models.video import Video, VideoPlay
 from app.models.music import (
     Album,
     AlbumArtist,
@@ -167,6 +168,8 @@ __all__ = [
     "MetadataProviderPreference",
     "Movie",
     "MoviePlay",
+    "Video",
+    "VideoPlay",
     "Music",
     "MusicReleasePreference",
     "Person",

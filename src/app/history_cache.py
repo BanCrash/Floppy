@@ -91,6 +91,7 @@ from app.history_entry_builders import (  # noqa: F401
     _attach_entry_score,
     _build_episode_entry,
     _build_movie_entry,
+    _build_video_play_entry,
     _build_music_album_entries,
     _format_boardgame_plays,
     _format_game_hours,
@@ -964,6 +965,7 @@ def build_history_days(
         "comics": 0,
         "manga": 0,
         "anime": 0,
+        "videos": 0,
     }
 
     # Parse date filters
@@ -1455,6 +1457,22 @@ def build_history_days(
             entry["play_count"] = play_count
             entries.append(entry)
             entry_counts["movies"] += 1
+
+    if process_all or MediaTypes.VIDEO.value in media_type_filter:
+        from app.models import VideoPlay
+
+        plays = VideoPlay.objects.filter(video__user=user).select_related("video__item")
+        if start_date:
+            plays = plays.filter(end_date__gte=start_date)
+        if end_date:
+            plays = plays.filter(end_date__lte=end_date)
+        if target_media_id:
+            plays = plays.filter(video__item__media_id=target_media_id)
+        for play in plays:
+            entry = _build_video_play_entry(play)
+            if entry:
+                entries.append(entry)
+                entry_counts["videos"] += 1
 
     reading_entries = (
         _build_reading_entries(
