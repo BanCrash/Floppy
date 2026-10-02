@@ -243,6 +243,23 @@ class StatisticsViewTests(TestCase):
         self.assertIn("status_pie_chart_data", response.context)
         self.assertIn("daily_hours_by_media_type", response.context)
 
+    def test_activity_heatmap_month_labels_share_the_week_grid(self):
+        """Month labels must sit on the same grid tracks as the week columns."""
+        response = self.client.get(
+            reverse("statistics") + "?start-date=2026-07-01&end-date=2026-10-01",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        weeks = len(response.context["activity_data"]["calendar_weeks"])
+        self.assertGreater(weeks, 0)
+        html = response.content.decode()
+        tracks = f"grid-template-columns: repeat({weeks}, minmax(1rem, 20px))"
+        self.assertEqual(html.count(tracks), 2)  # months row + weeks grid
+        months_row = html.split(tracks)[1]
+        spans = [int(n) for n in re.findall(r"grid-column: span (\d+)", months_row)]
+        self.assertTrue(spans)
+        self.assertLessEqual(sum(spans), weeks)
+
     @patch("app.statistics_views.tvdb.enabled", return_value=True)
     def test_statistics_view_shows_anime_genre_preference_when_supported(
         self, _mock_tvdb_enabled
