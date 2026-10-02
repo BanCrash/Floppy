@@ -67,7 +67,7 @@ reject_unsafe_managed_directory() {
 
 DATA_DIR_INPUT=${FLOPPY_DATA_DIR:-/floppy/db}
 DATA_DIR=$(python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$DATA_DIR_INPUT")
-LOG_DIR_INPUT=${LOG_DIR:-/floppy/logs}
+LOG_DIR_INPUT=${LOG_DIR:-${DATA_DIR}/logs}
 LOG_DIR_PATH=$(python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$LOG_DIR_INPUT")
 BACKUP_DIR_INPUT=${BACKUP_DIR:-/floppy/backups}
 BACKUP_DIR_PATH=$(python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$BACKUP_DIR_INPUT")
@@ -264,6 +264,8 @@ fi
 #
 # The log directory can be an operator-selected mount. Change only that
 # directory entry and Floppy's current log file, never unrelated content.
+mkdir -p -- "$LOG_DIR_PATH" 2>/dev/null || true
+export LOG_DIR="$LOG_DIR_PATH"
 if [ -e "$LOG_DIR_PATH" ] && ! timeout 600 chown abc:abc -- "$LOG_DIR_PATH"; then
     echo "[entrypoint] WARNING: chown of ${LOG_DIR_PATH} failed or timed out (stalled mount?); continuing" >&2
 fi
@@ -340,6 +342,15 @@ if [ "$current_nofile" = "unlimited" ] || [ "$current_nofile" -gt "$NOFILE_SOFT"
         echo "[entrypoint] WARNING: open-file soft limit is ${current_nofile} and could not be lowered; celery beat may take hours to start" >&2
     fi
 fi
+
+# supervisord reports every process exit and restart ("exited: gunicorn
+# (terminated by SIGKILL; not expected)"), which is the first thing needed when
+# the container keeps dying. Keep it on the log volume as well as in stdout.
+FLOPPY_SUPERVISORD_LOG=AUTO
+if [ -d "$LOG_DIR_PATH" ] && [ -w "$LOG_DIR_PATH" ]; then
+    FLOPPY_SUPERVISORD_LOG="${LOG_DIR_PATH}/supervisord.log"
+fi
+export FLOPPY_SUPERVISORD_LOG
 
 echo "[entrypoint] Starting services" >&2
 exec supervisord -c /etc/supervisord.conf
