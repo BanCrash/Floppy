@@ -294,6 +294,25 @@ class ListenBrainzMetadataTests(ListenBrainzTestCase):
         self.assertEqual(mock_record.call_args.args[0].origin_url, spotify_url)
 
     @patch("integrations.webhooks.listenbrainz.music_scrobble.record_music_playback")
+    def test_spotify_lookalike_url_is_not_a_play_link(self, mock_record):
+        """A URL that only mentions spotify.com in its query is not a Spotify link."""
+        mock_record.return_value = None
+        self.submit(
+            {
+                "listen_type": "single",
+                "payload": [
+                    _listen(
+                        additional_info={
+                            "spotify_id": "https://evil.example/?q=spotify.com",
+                        },
+                    ),
+                ],
+            },
+        )
+
+        self.assertEqual(mock_record.call_args.args[0].origin_url, "")
+
+    @patch("integrations.webhooks.listenbrainz.music_scrobble.record_music_playback")
     def test_duration_in_seconds_is_converted(self, mock_record):
         """Clients sending whole-second `duration` are normalised to ms."""
         mock_record.return_value = None

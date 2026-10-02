@@ -1,5 +1,6 @@
 import json
 import logging
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from django.conf import settings
@@ -230,10 +231,10 @@ def _track_play_history(music_entry):
 
 def _play_link_label(url):
     """Return the play-link label for a SoundCloud or Spotify URL."""
-    host = (url or "").lower()
-    if "soundcloud.com" in host:
+    host = (urlparse(url or "").hostname or "").lower()
+    if host == "soundcloud.com" or host.endswith(".soundcloud.com"):
         return "SoundCloud"
-    if "spotify.com" in host:
+    if host == "spotify.com" or host.endswith(".spotify.com"):
         return "Spotify"
     return ""
 
