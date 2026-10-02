@@ -92,6 +92,8 @@ def detail_promoted_facts(media_type, details):
                 suppressed_keys.add(key)
                 continue
             suppressed_keys.add(key)
+            if media_type == MediaTypes.MOVIE.value and key == "runtime":
+                suppressed_keys.add("total_runtime")
             if (
                 media_type == MediaTypes.TV.value
                 and key == "status"

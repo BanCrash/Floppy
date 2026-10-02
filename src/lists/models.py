@@ -888,6 +888,7 @@ class CustomList(models.Model):
 
         photos = []
         video = None
+        game_response = {}
         try:
             from app.providers import igdb
 

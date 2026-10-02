@@ -2053,6 +2053,11 @@ class DetailPromotedFactsTests(TestCase):
             tv_facts["fields"][-1]["value"],
             {"languages": ["English", "French"], "country": "United States of America"},
         )
+        movie_facts = app_tags.detail_promoted_facts(
+            MediaTypes.MOVIE.value,
+            {"runtime": "1h 42m", "total_runtime": "1h 42min"},
+        )
+        self.assertEqual(movie_facts["suppressed_keys"], {"runtime", "total_runtime"})
         self.assertEqual(app_tags.country_code("United States of America"), "US")
         self.assertEqual(app_tags.country_code("Canada"), "CA")
 

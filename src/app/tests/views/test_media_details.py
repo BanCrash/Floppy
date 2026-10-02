@@ -133,7 +133,7 @@ class MediaDetailsViewTests(TestCase):
         )
         self.assertContains(
             response,
-            'class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center"',
+            'class="order-1 mt-5 mb-6 flex flex-col gap-3 md:order-2 md:flex-row md:flex-wrap md:items-center"',
             html=False,
         )
 
@@ -583,14 +583,14 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn(
-            'class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center"',
+            'class="order-1 mb-6 flex flex-col gap-3 md:order-2 md:flex-row md:flex-wrap md:items-center"',
             content,
         )
         self.assertIn(
-            'class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap"', content
+            'class="flex w-full items-center gap-2 md:w-auto md:flex-wrap"', content
         )
         self.assertIn(
-            'class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-[var(--color-surface-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-colors duration-200 hover:bg-[var(--color-surface-muted)] cursor-pointer sm:size-11 sm:w-11"',
+            'class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-[var(--color-surface-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-colors duration-200 hover:bg-[var(--color-surface-muted)] cursor-pointer md:size-11 md:w-11"',
             content,
         )
         self.assertIn("Add to tracker", content)
@@ -3837,7 +3837,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            '<div class="mb-3 sm:mb-1 text-center md:text-start">',
+            '<div class="mb-3 md:mb-1 text-center md:text-start">',
             html=False,
         )
         self.assertContains(
@@ -3925,14 +3925,14 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Progress: 1/8")
         self.assertContains(response, "2026-03-01 - 2026-03-12")
         self.assertContains(response, "1h 30min watched")
-        self.assertIn('<div class="mb-3 sm:mb-1 text-center md:text-start">', content)
+        self.assertIn('<div class="mb-3 md:mb-1 text-center md:text-start">', content)
         self.assertIn(
-            'class="flex w-full items-center justify-center gap-0.5 whitespace-nowrap text-[13px] tracking-[-0.01em] sm:hidden cursor-pointer"',
+            'class="flex w-full items-center justify-center gap-0.5 whitespace-nowrap text-[13px] tracking-[-0.01em] md:hidden cursor-pointer"',
             content,
         )
         self.assertIn("1h 30min (1/8)", content)
         self.assertIn(
-            'class="hidden w-full flex-wrap items-center justify-center gap-y-1 sm:flex md:justify-start cursor-pointer"',
+            'class="hidden w-full flex-wrap items-center justify-center gap-y-1 md:flex md:justify-start cursor-pointer"',
             content,
         )
         self.assertNotContains(response, "Your History")
@@ -4008,12 +4008,12 @@ class MediaDetailsViewTests(TestCase):
         )
         self.assertContains(
             response,
-            'class="w-full sm:w-auto sm:shrink-0"',
+            'class="w-full md:w-auto md:shrink-0"',
             html=False,
         )
         self.assertContains(
             response,
-            'class="relative inline-flex w-full sm:w-auto"',
+            'class="relative inline-flex w-full md:w-auto"',
             html=False,
         )
         self.assertContains(response, 'aria-label="More tracking actions"', html=False)

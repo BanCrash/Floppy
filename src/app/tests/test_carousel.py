@@ -152,3 +152,13 @@ class IgdbCarouselOverviewTests(TestCase):
         self.assertIn("logo.image_id", mock_api.call_args_list[0].kwargs["data"])
         self.assertEqual(data["logo_image_id"], "game-logo")
         self.assertEqual(data["hero_image_id"], "game-screen")
+
+    @patch("app.providers.igdb.get_access_token", side_effect=RuntimeError("down"))
+    def test_igdb_carousel_fetch_failure_returns_empty_media(self, _mock_token):
+        from lists.models import CustomList
+
+        data = CustomList()._get_igdb_carousel_media("123")
+
+        self.assertEqual(data["photos"], [])
+        self.assertIsNone(data["logo_image_id"])
+        self.assertIsNone(data["hero_image_id"])

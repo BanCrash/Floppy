@@ -24,10 +24,10 @@
            @detail-score-row-scroll.window="graphOpen = false"
            @resize.window="graphOpen = false"
            @keydown.escape.window="graphOpen = false">
-        <div class="detail-provider-score-card detail-provider-score-card--{{ display_provider }} group inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-xl border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3">
+        <div class="detail-provider-score-card detail-provider-score-card--{{ display_provider }} group inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full md:rounded-xl border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3">
           {% if link_url %}<a href="{{ link_url }}" target="_blank" rel="noopener noreferrer" aria-label="{% blocktranslate trimmed with value_1=display_provider|source_readable %}Open {{ value_1 }} source page{% endblocktranslate %}" class="detail-provider-score-card__source">{% else %}<span class="detail-provider-score-card__source">{% endif %}
           <span class="sr-only">{% blocktranslate trimmed with value_1=display_provider|source_readable %}{{ value_1 }} score{% endblocktranslate %}</span>
-          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14">
+          <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14 sm:h-8 sm:w-8 md:m-0 md:h-9 md:w-9">
             {% if display_provider == Sources.TMDB.value %}
               <img src="{% static 'img/tmdb-logo.png' %}"
                    alt=""
@@ -72,10 +72,10 @@
            @detail-score-row-scroll.window="graphOpen = false"
            @resize.window="graphOpen = false"
            @keydown.escape.window="graphOpen = false">
-        <div class="detail-provider-score-card detail-provider-score-card--trakt group inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-xl border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-1.5 text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3">
+        <div class="detail-provider-score-card detail-provider-score-card--trakt group inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full md:rounded-xl border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-1.5 text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3">
           {% if trakt_url %}<a href="{{ trakt_url }}" target="_blank" rel="noopener noreferrer" aria-label="{% translate 'Open Trakt source page' %}" class="detail-provider-score-card__source">{% else %}<span class="detail-provider-score-card__source">{% endif %}
           <span class="sr-only">{% translate "Trakt score" %}</span>
-          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14">
+          <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14 sm:h-8 sm:w-8 md:m-0 md:h-9 md:w-9">
             <img src="{% static 'img/trakt-logo.svg' %}"
                  alt=""
                  aria-hidden="true"
@@ -139,10 +139,10 @@
            @detail-score-row-scroll.window="graphOpen = false"
            @resize.window="graphOpen = false"
            @keydown.escape.window="graphOpen = false">
-        <div class="detail-provider-score-card detail-provider-score-card--imdb group inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-xl border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3">
+        <div class="detail-provider-score-card detail-provider-score-card--imdb group inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full md:rounded-xl border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3">
           {% if link_url %}<a href="{{ link_url }}" target="_blank" rel="noopener noreferrer" aria-label="{% translate 'Open IMDb source page' %}" class="detail-provider-score-card__source">{% else %}<span class="detail-provider-score-card__source">{% endif %}
           <span class="sr-only">{% translate "IMDb score" %}</span>
-          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14">
+          <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8 md:m-0 md:h-9 md:w-9">
             <img src="{% static 'img/imdb-logo.png' %}"
                  alt=""
                  aria-hidden="true"
