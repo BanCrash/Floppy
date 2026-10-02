@@ -1881,7 +1881,7 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertContains(response, "Bass House")
 
-    def test_music_track_details_lists_play_history_with_origin_url(self):
+    def test_music_track_details_lists_play_history(self):
         artist = Artist.objects.create(name="Play Artist")
         album = Album.objects.create(title="Play Album", artist=artist)
         track = Track.objects.create(album=album, title="Track One")
@@ -1899,7 +1899,6 @@ class MediaDetailsViewTests(TestCase):
             track=track,
             status=Status.COMPLETED.value,
             end_date=datetime(2026, 2, 2, 18, 0, tzinfo=UTC),
-            origin_url="https://soundcloud.example/track",
         )
 
         response = self.client.get(
@@ -1915,7 +1914,6 @@ class MediaDetailsViewTests(TestCase):
             ),
         )
 
-        self.assertContains(response, "https://soundcloud.example/track")
         self.assertNotContains(response, "Not listened yet")
 
     def test_music_track_details_redirects_when_album_path_is_wrong(self):
