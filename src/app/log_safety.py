@@ -94,6 +94,32 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         ),
         r"\1=[REDACTED]",
     ),
+    (
+        # urllib3's connection-pool debug logging writes the literal host it
+        # dials, e.g. "Starting new HTTPS connection (1): myserver.duckdns.org".
+        # For a Plex custom server URL that host is a direct route to a
+        # self-hosted server (#1274), so it is redacted the same way a
+        # credential is, independent of the keyword-name rules above.
+        re.compile(r"(?im)(Starting new \S+ connection \(\d+\):\s*)\S+"),
+        r"\1[REDACTED]",
+    ),
+    (
+        # The matching request-line log from the same logger:
+        # 'https://myserver.duckdns.org:32400 "GET /path HTTP/1.1" 200 760'.
+        # Matched by the quoted HTTP method that follows, so this does not
+        # touch an ordinary URL logged elsewhere via safe_url().
+        re.compile(
+            r'(?im)(https?://)\S+(\s+"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s)',
+        ),
+        r"\1[REDACTED]\2",
+    ),
+    (
+        # urllib3 names the host in its error text, which reaches Celery's
+        # failure line and the traceback: "HTTPSConnectionPool(host=
+        # 'myserver.duckdns.org', port=443): Read timed out." (#1307).
+        re.compile(r"(?i)(\bHTTPS?ConnectionPool\(host=)(['\"])[^'\"]*\2"),
+        r"\1\2[REDACTED]\2",
+    ),
 ]
 
 

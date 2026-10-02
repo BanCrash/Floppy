@@ -819,7 +819,7 @@ def _episode_delete_filter(selected_episodes):
 
 
 def _inherited_scores(season_trackers, item_ids):
-    """Return the latest existing rating per item id, keyed for replay inheritance.
+    """Return the latest existing (score, scored_at) per item id for replay inheritance.
 
     A rating belongs to the episode, not to one viewing of it (see
     Episode.save()), but bulk-logged plays are written with bulk_create,
@@ -834,11 +834,11 @@ def _inherited_scores(season_trackers, item_ids):
         )
         .exclude(score__isnull=True)
         .order_by("item_id", "-end_date", "-created_at")
-        .values_list("item_id", "score")
+        .values_list("item_id", "score", "scored_at")
     )
     scores = {}
-    for item_id, score in scored_plays:
-        scores.setdefault(item_id, score)
+    for item_id, score, scored_at in scored_plays:
+        scores.setdefault(item_id, (score, scored_at))
     return scores
 
 
@@ -1159,9 +1159,11 @@ def apply_bulk_episode_plays(
                 related_season=season_tracker,
                 item=episode_item,
                 end_date=watched_at,
-                score=inherited_scores.get(episode_item.id),
+                score=inherited[0],
+                scored_at=inherited[1],
             )
             for season_tracker, episode_item, watched_at in episode_specs
+            for inherited in [inherited_scores.get(episode_item.id, (None, None))]
         ]
 
         if episodes_to_create:
@@ -1170,9 +1172,21 @@ def apply_bulk_episode_plays(
                 normalize_completed_entry(episode)
             created_count = len(episodes_to_create)
 
-    for season_tracker in touched_seasons.values():
+    # bulk_create skips Episode.save, which is what completes a season on a
+    # single play, so settle each season here with the provider's episode
+    # count, in watch order so each completion hands on to the next season.
+    for season_number in sorted(touched_seasons):
+        season_tracker = touched_seasons[season_number]
         season_tracker.refresh_from_db()
-        season_tracker._sync_status_after_episode_change()
+        season_payload = domain["season_payloads"][season_number]
+        season_tracker._sync_status_after_episode_change(
+            max_progress=(
+                season_payload.get("max_progress")
+                or len(season_payload.get("episodes") or [])
+                or None
+            ),
+            plays_added=bool(created_count),
+        )
 
     if created_count or replaced_episode_count:
         flush_media_change_side_effects(

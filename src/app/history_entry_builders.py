@@ -177,7 +177,9 @@ def _get_episode_display_title(episode, episode_title_map=None):
 
 
 def _build_episode_entry(episode, episode_title_map=None):
-    played_at_local = _localize_datetime(episode.end_date or episode.created_at)
+    played_at_local = _localize_datetime(
+        episode.end_date or episode.start_date or episode.created_at
+    )
     if not played_at_local:
         return None
 
@@ -233,6 +235,7 @@ def _build_episode_entry(episode, episode_title_map=None):
         # arbitrary order the query happened to return them in.
         "season_number": episode_item.season_number if episode_item else None,
         "episode_number": episode_item.episode_number if episode_item else None,
+        "status": episode.status,
         "played_at_local": played_at_local,
         "runtime_minutes": runtime_minutes,
         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes)
@@ -240,6 +243,7 @@ def _build_episode_entry(episode, episode_title_map=None):
         else None,
         "instance_id": episode.id,
         "entry_key": str(episode.id),
+        "entry_source": episode.entry_source,
     }
     _attach_entry_score(entry, episode)
     if genres:
@@ -277,6 +281,7 @@ def _build_movie_entry(movie):
         else None,
         "instance_id": movie.id,
         "entry_key": str(movie.id),
+        "entry_source": movie.entry_source,
     }
     _attach_entry_score(entry, movie)
     if genres:

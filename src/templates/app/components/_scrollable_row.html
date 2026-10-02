@@ -87,6 +87,7 @@
         </h3>
       {% else %}
         <h3 class="text-lg font-semibold flex items-baseline gap-x-2">
+          {% if row.icon_svg %}<span class="self-center text-[var(--color-link)]">{{ row.icon_svg|safe }}</span>{% endif %}
           {% if row.url %}
             <a href="{{ row.url }}" class="rounded-sm hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-500">{{ translated_title_main }}</a>
           {% else %}
@@ -94,8 +95,7 @@
           {% endif %}
           {% if row.view_all_url and row.view_all_text %}
             <a href="{{ row.view_all_url }}"
-               target="_blank"
-               rel="noreferrer"
+               {% if not row.view_all_internal %}target="_blank" rel="noreferrer"{% endif %}
                class="text-sm font-medium text-[var(--color-link)] hover:text-[var(--color-link-hover)] transition-colors">
               {{ row.view_all_text }}
             </a>
@@ -159,8 +159,9 @@
        data-stick-to-end="false"
        data-home-row-prefetch-distance="1152"
        data-total-count="{{ row.total }}"
+       data-seed="{{ row.seed|default:0 }}"
        hx-get="{% if hx_url %}{{ hx_url }}{% else %}{% url 'home' %}?load_row={{ row.row_id }}{% endif %}"
-       hx-vals='js:{offset: Number(event.target.dataset.loadedCount || 0)}'
+       hx-vals='js:{offset: Number(event.target.dataset.loadedCount || 0), seed: event.target.dataset.seed || ""}'
        hx-trigger="home-row-load-more"
        hx-target="this"
        hx-swap="beforeend">

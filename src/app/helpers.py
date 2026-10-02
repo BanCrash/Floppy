@@ -407,6 +407,20 @@ def enrich_items_with_user_data(
     return enriched_items
 
 
+def default_status_for_new_entry(*, has_in_progress_entry=False):
+    """Return the status to pre-select when tracking media the user has no entry for.
+
+    The model default is Completed, which only suits play-based writes. A new
+    entry made by hand starts as Planning (#1305), unless the user already has
+    an in-progress entry for the same media.
+    """
+    from app.models import Status
+
+    if has_in_progress_entry:
+        return Status.IN_PROGRESS.value
+    return Status.PLANNING.value
+
+
 MIN_VALID_RELEASE_YEAR = 1900
 
 

@@ -136,36 +136,21 @@ if [ -z "$DB_HOST" ]; then
             echo "[entrypoint] Checking SQLite storage and relationships for ${DB_FILE}" >&2
             integrity_status=0
             integrity_pid=
-            heartbeat_pid=
-            # One bound, used by the command and its operator message, so the two
-            # can never drift apart.
-            integrity_timeout=600
-            trap 'kill "$integrity_pid" 2>/dev/null || :; wait "$integrity_pid" 2>/dev/null || :; kill "$heartbeat_pid" 2>/dev/null || :; wait "$heartbeat_pid" 2>/dev/null || :; exit 0' TERM INT
-            timeout "$integrity_timeout" python -c 'from config.sqlite_recovery_policy import check_database_for_startup; import sys; check_database_for_startup(sys.argv[1])' "$DB_FILE" &
+            # The watchdog stops the check only when it stops making progress
+            # (no reads and no CPU for minutes), never because it is slow, and
+            # prints the heartbeat lines while it runs. See
+            # src/config/sqlite_startup_watchdog.py.
+            trap 'kill "$integrity_pid" 2>/dev/null || :; wait "$integrity_pid" 2>/dev/null || :; exit 0' TERM INT
+            python -m config.sqlite_startup_watchdog "$DB_FILE" python -c 'from config.sqlite_recovery_policy import check_database_for_startup; import sys; check_database_for_startup(sys.argv[1])' "$DB_FILE" &
             integrity_pid=$!
-            # Heartbeats come from the status sidecar the scan itself writes,
-            # not from polling the scanner's PID, so a missing or malformed
-            # sidecar can never take the entrypoint down under "set -e".
-            (
-                while :; do
-                    sleep 30
-                    python -c 'from config.sqlite_integrity import print_startup_heartbeat; import sys; print_startup_heartbeat(sys.argv[1])' "$DB_FILE" 2>&1 || :
-                done
-            ) &
-            heartbeat_pid=$!
             wait "$integrity_pid" || integrity_status=$?
-            kill "$heartbeat_pid" 2>/dev/null || :
-            wait "$heartbeat_pid" 2>/dev/null || :
             trap - TERM INT
             if [ "$integrity_status" -eq 0 ]; then
                 break
             fi
             case "$integrity_status" in
-                124|143)
-                    # The scanner may have been killed before it could publish
-                    # its own terminal status, so the sidecar is confirmed here.
-                    python -c 'from config.sqlite_integrity import mark_startup_status_timeout; import sys; mark_startup_status_timeout(sys.argv[1], float(sys.argv[2]))' "$DB_FILE" "$integrity_timeout" 2>&1 || :
-                    echo "[entrypoint] SQLite integrity check exceeded its ${integrity_timeout}s timeout; startup is paused before migrations and services. The container will remain unhealthy and idle." >&2
+                124)
+                    echo "[entrypoint] SQLite integrity check stopped making progress; startup is paused before migrations and services. The container will remain unhealthy and idle." >&2
                     ;;
                 *)
                     echo "[entrypoint] SQLite startup is paused because the integrity check failed; migrations and services were not started. The container will remain unhealthy and idle." >&2

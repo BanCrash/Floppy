@@ -1,13 +1,44 @@
 import gc
 import os
 
-from celery import Celery
+from celery import Celery, Task, states
+from celery.exceptions import Ignore
 from celery.signals import worker_process_init, worker_ready
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
-app = Celery("floppy")
+
+
+class FloppyTask(Task):
+    """Base task that refuses to run an import the user cancelled while queued.
+
+    ``cancel_pending_import`` marks the tracked row REVOKED, which survives a
+    worker restart that loses Celery's in-memory revoke list. Raising Ignore
+    here stops the task before it does any work and leaves that row REVOKED
+    (no success or failure signal fires), for every tracked task at once.
+    """
+
+    def __call__(self, *args, **kwargs):
+        """Skip the task when its tracked row was cancelled, else run it."""
+        from django_celery_results.models import TaskResult
+
+        from app.signals import TRACKED_TASK_NAMES
+
+        task_id = self.request.id
+        if (
+            task_id
+            and self.name in TRACKED_TASK_NAMES
+            and TaskResult.objects.filter(
+                task_id=task_id,
+                status=states.REVOKED,
+            ).exists()
+        ):
+            raise Ignore
+        return super().__call__(*args, **kwargs)
+
+
+app = Celery("floppy", task_cls=FloppyTask)
 
 app.config_from_object("django.conf:settings", namespace="CELERY")
 

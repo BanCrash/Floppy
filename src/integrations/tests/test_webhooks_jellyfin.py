@@ -222,12 +222,8 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(movie.status, Status.IN_PROGRESS.value)
         self.assertEqual(movie.progress, 1)
 
-    @patch("app.models.tv.TV._start_next_available_season")
-    def test_user_data_saved_episode_rating_updates_parent_tv(
-        self,
-        _mock_start_next_available_season,
-    ):
-        """Episode and series ratings are stored on the parent TV tracker."""
+    def _create_rated_show(self, *, with_episode_play):
+        """Track Friends S1 (optionally with a play of E1) and rate the show 6."""
         item = Item.objects.create(
             media_id="1668",
             source=Sources.TMDB.value,
@@ -244,23 +240,108 @@ class JellyfinWebhookTests(TestCase):
             item=item,
             user=self.user,
             status=Status.IN_PROGRESS.value,
+            score=6,
         )
+        if not with_episode_play:
+            return tv, None
+        season = Season.objects.create(
+            item=Item.objects.create(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title="Friends",
+                season_number=1,
+            ),
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        with patch(
+            "app.providers.services.get_media_metadata",
+            return_value={"season/1": {"episodes": [{}, {}]}},
+        ):
+            episode = Episode.objects.create(
+                item=Item.objects.create(
+                    media_id="1668",
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.EPISODE.value,
+                    title="The One Where Monica Gets a Roommate",
+                    season_number=1,
+                    episode_number=1,
+                ),
+                related_season=season,
+                end_date=datetime(2026, 9, 1, 20, 0, tzinfo=UTC),
+            )
+        return tv, episode
+
+    def _episode_rating_payload(self, rating):
+        return {
+            "Event": "UserDataSaved",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "SeriesName": "Friends",
+                "ProviderIds": {"Tvdb": "76669"},
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "UserData": {"Rating": rating},
+            },
+        }
+
+    @patch("app.models.tv.TV._start_next_available_season")
+    def test_user_data_saved_episode_rating_rates_the_episode(
+        self,
+        _mock_start_next_available_season,
+    ):
+        """An episode rating lands on the episode and leaves the show's score."""
+        tv, episode = self._create_rated_show(with_episode_play=True)
 
         JellyfinWebhookProcessor().process_payload(
-            {
-                "Event": "UserDataSaved",
-                "Item": {
-                    "Type": "Episode",
-                    "Name": "The One Where Monica Gets a Roommate",
-                    "SeriesName": "Friends",
-                    "ProviderIds": {"Tvdb": "76669"},
-                    "ParentIndexNumber": 1,
-                    "IndexNumber": 1,
-                    "UserData": {"Rating": 8.0},
-                },
-            },
+            self._episode_rating_payload(8.0),
             self.user,
         )
+
+        episode.refresh_from_db()
+        tv.refresh_from_db()
+        self.assertEqual(episode.score, 8)
+        self.assertEqual(tv.score, 6)
+        self.assertEqual(tv.status, Status.IN_PROGRESS.value)
+
+        # A second episode rating replaces the first instead of the show's.
+        JellyfinWebhookProcessor().process_payload(
+            self._episode_rating_payload(7.5),
+            self.user,
+        )
+        episode.refresh_from_db()
+        tv.refresh_from_db()
+        self.assertEqual(episode.score, 7.5)
+        self.assertEqual(tv.score, 6)
+
+    @patch("app.models.tv.TV._start_next_available_season")
+    def test_user_data_saved_rating_for_unwatched_episode_is_ignored(
+        self,
+        _mock_start_next_available_season,
+    ):
+        """Rating an episode with no play neither creates one nor rates the show."""
+        tv, _ = self._create_rated_show(with_episode_play=False)
+
+        JellyfinWebhookProcessor().process_payload(
+            self._episode_rating_payload(8.0),
+            self.user,
+        )
+
+        tv.refresh_from_db()
+        self.assertEqual(tv.score, 6)
+        self.assertFalse(Episode.objects.exists())
+
+    @patch("app.models.tv.TV._start_next_available_season")
+    def test_user_data_saved_series_rating_rates_the_show(
+        self,
+        _mock_start_next_available_season,
+    ):
+        """A series rating is still stored on the TV tracker."""
+        tv, _ = self._create_rated_show(with_episode_play=False)
+
         JellyfinWebhookProcessor().process_payload(
             {
                 "Event": "UserDataSaved",
@@ -637,9 +718,10 @@ class JellyfinWebhookTests(TestCase):
         ``_handle_anime``, which refuses it. The refusal must not fall through
         to a plain TV row, or the show accrues progress in both libraries.
         """
+        # Jellyfin sends the episode's TVDB id, which TMDB resolves to its show.
         mock_find.return_value = {
-            "tv_episode_results": [],
-            "tv_results": [{"id": 12345}],
+            "tv_episode_results": [{"show_id": 12345}],
+            "tv_results": [],
         }
         mock_tv_with_seasons.return_value = {
             "media_id": "12345",
@@ -1123,7 +1205,7 @@ class JellyfinWebhookTests(TestCase):
             # present) and both resolve to the wrong show here, exactly as
             # the real bug did. Only the missing-season recovery's
             # alt-ids-only call (no kwargs) resolves to the real show.
-            if kwargs:
+            if kwargs.get("series_title"):
                 return ("42917", None, None)
             return ("3968", None, None)
 
@@ -2352,23 +2434,23 @@ class JellyfinWebhookTests(TestCase):
                     "Type": "Movie",
                     "Id": "jellyfin-movie-1",
                     "ProviderIds": {"Tmdb": "603"},
-                    "RunTimeTicks": 100 * 10_000_000,
+                    "RunTimeTicks": 1000 * 10_000_000,
                     "UserData": {"Played": True},
                 },
                 "PlaybackPositionTicks": position * 10_000_000,
             }
 
         with patch("app.live_playback._attach_resolved_image"):
-            processor.process_payload(payload("Play", 10), self.user)
-            processor.process_payload(payload("Stop", 20), self.user)
-            processor.process_payload(payload("Play", 25), self.user)
+            processor.process_payload(payload("Play", 100), self.user)
+            processor.process_payload(payload("Stop", 200), self.user)
+            processor.process_payload(payload("Play", 250), self.user)
 
         movie = Movie.objects.get(item__media_id="603", user=self.user)
         self.assertEqual(Movie.objects.filter(user=self.user).count(), 1)
         self.assertEqual(movie.status, Status.IN_PROGRESS.value)
         self.assertIsNone(movie.end_date)
         progress = PlaybackProgress.objects.get(user=self.user, item=movie.item)
-        self.assertEqual(progress.position_seconds, 20)
+        self.assertEqual(progress.position_seconds, 200)
         self.assertFalse(progress.completed)
 
     @patch("app.providers.tmdb.movie")
@@ -2576,6 +2658,42 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(state["view_offset_seconds"], 1447)
 
     @patch("app.providers.tmdb.find")
+    def test_play_event_decodes_html_entities_in_titles(self, mock_find):
+        """The template HTML-escapes titles (#1387); live playback shows them decoded."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {"show_id": 1668, "season_number": 1, "episode_number": 1},
+            ],
+            "tv_results": [],
+        }
+        payload = {
+            "Event": "Play",
+            "Item": {
+                "Type": "Episode",
+                "Name": "Caf&#233; de Paris &amp; &quot;Co&quot;",
+                "Id": "jf-episode-1",
+                "SeriesName": "Caf&#233; Society",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "RunTimeTicks": 26660000000,
+                "ProviderIds": {"Tvdb": "303821", "Imdb": "tt0583459"},
+                "UserData": {"Played": False},
+            },
+            "PlaybackPositionTicks": 14470000000,
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertEqual(state["episode_title"], 'Café de Paris & "Co"')
+        self.assertEqual(state["series_title"], "Café Society")
+
+    @patch("app.providers.tmdb.find")
     def test_pause_and_stop_events_update_live_playback_state(self, mock_find):
         """Pause should keep card state; stop should transition to stopped."""
         mock_find.return_value = {
@@ -2680,3 +2798,294 @@ class JellyfinWebhookTests(TestCase):
             stopped_state["status"],
             live_playback.PLAYBACK_STATUS_STOPPED,
         )
+
+
+MATRIX_METADATA = {
+    "title": "The Matrix",
+    "image": "https://example.com/matrix.jpg",
+    "max_progress": 1,
+    "provider_external_ids": {},
+}
+
+FRIENDS_METADATA = {
+    "media_id": "1668",
+    "title": "Friends",
+    "image": "https://example.com/friends.jpg",
+    "tvdb_id": "79175",
+    "provider_external_ids": {"tmdb_id": "1668", "tvdb_id": "79175"},
+    "season/1": {
+        "season_number": 1,
+        "image": "https://example.com/friends-s1.jpg",
+        "episodes": [
+            {
+                "episode_number": 1,
+                "runtime": 22,
+                "air_date": None,
+                "still_path": None,
+                "name": "The Pilot",
+                "overview": "",
+            },
+            {"episode_number": 2},
+        ],
+    },
+}
+
+
+@patch("app.live_playback._attach_resolved_image")
+@patch("app.providers.tmdb.movie", return_value=MATRIX_METADATA)
+@patch.object(
+    JellyfinWebhookProcessor,
+    "_find_tv_media_id",
+    return_value=("1668", None, None),
+)
+@patch("app.providers.tmdb.get_tvdb_episode_image_map", return_value={})
+@patch("app.providers.tmdb.tv_with_seasons", return_value=FRIENDS_METADATA)
+class JellyfinWriteRulesTests(TestCase):
+    """Only Stop and the user's own watched toggle write tracking rows (#1250).
+
+    The Play/Stop gate is the shared rule in integrations/webhooks/
+    write_policy.py (contract tests in test_webhook_write_policy.py); these
+    check the real rows it leads to. UserDataSaved changes watch state only
+    when Jellyfin says the user toggled the checkmark, never for progress
+    saves, playback end, or our own watched-state push echoing back.
+    """
+
+    def setUp(self):
+        """Create a user without anime routing so episodes stay TV."""
+        self.user = get_user_model().objects.create_superuser(
+            username="rules-user",
+            token="rules-token",
+        )
+        self.user.anime_enabled = False
+        self.user.save(update_fields=["anime_enabled"])
+        self.processor = JellyfinWebhookProcessor()
+
+    def tearDown(self):
+        """Clear cached playback state created by webhook tests."""
+        live_playback.clear_user_playback_state(self.user.id)
+
+    def _enable(self, *, played=False, unplayed=False):
+        self.user.jellyfin_mark_played_enabled = played
+        self.user.jellyfin_mark_unplayed_enabled = unplayed
+        self.user.save(
+            update_fields=[
+                "jellyfin_mark_played_enabled",
+                "jellyfin_mark_unplayed_enabled",
+            ],
+        )
+
+    def _movie(self, event, *, position=None, played=False, **extra):
+        payload = {
+            "Event": event,
+            "Item": {
+                "Name": "The Matrix",
+                "Type": "Movie",
+                "Id": "jellyfin-movie-1",
+                "ProviderIds": {"Tmdb": "603"},
+                "RunTimeTicks": 1000 * 10_000_000,
+                "UserData": {
+                    "Played": played,
+                    "LastPlayedDate": "2026-09-20T20:00:00Z",
+                },
+            },
+            **extra,
+        }
+        if position is not None:
+            payload["PlaybackPositionTicks"] = position * 10_000_000
+        return payload
+
+    def _episode(self, event, *, played=False, **extra):
+        return {
+            "Event": event,
+            "Item": {
+                "Type": "Episode",
+                "Name": "The Pilot",
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "ProviderIds": {"Tmdb": "1668"},
+                "RunTimeTicks": 1000 * 10_000_000,
+                "UserData": {
+                    "Played": played,
+                    "LastPlayedDate": "2026-09-20T20:00:00Z",
+                },
+            },
+            **extra,
+        }
+
+    def _episode_plays(self):
+        return Episode.objects.filter(
+            item__media_id="1668",
+            item__season_number=1,
+            item__episode_number=1,
+            related_season__user=self.user,
+        )
+
+    # -- Play / Stop ------------------------------------------------------
+
+    def test_play_and_progress_events_never_write_rows(self, *_mocks):
+        """A Play-only client updates Now Playing and nothing else."""
+        for position in (0, 300, 900):
+            self.processor.process_payload(
+                self._movie("Play", position=position),
+                self.user,
+            )
+
+        self.assertFalse(Movie.objects.filter(user=self.user).exists())
+        self.assertFalse(PlaybackProgress.objects.filter(user=self.user).exists())
+        self.assertIsNotNone(live_playback.get_user_playback_state(self.user.id))
+
+    def test_unfinished_stop_after_a_minute_is_in_progress(self, *_mocks):
+        """Past a minute, an unfinished Stop records In Progress."""
+        self.processor.process_payload(
+            self._movie("Stop", position=60),
+            self.user,
+        )
+        movie = Movie.objects.get(user=self.user, item__media_id="603")
+        self.assertEqual(movie.status, Status.IN_PROGRESS.value)
+
+    def test_finished_stop_completes(self, *_mocks):
+        """80% or more on Stop still completes the movie."""
+        self.processor.process_payload(
+            self._movie("Stop", position=800),
+            self.user,
+        )
+        movie = Movie.objects.get(user=self.user, item__media_id="603")
+        self.assertEqual(movie.status, Status.COMPLETED.value)
+
+    # -- UserDataSaved watched toggle ------------------------------------
+
+    def test_toggle_played_marks_movie_watched_when_enabled(self, *_mocks):
+        """Clicking watched in Jellyfin completes the movie at LastPlayedDate."""
+        self._enable(played=True)
+        self.processor.process_payload(
+            self._movie("UserDataSaved", played=True, SaveReason="TogglePlayed"),
+            self.user,
+        )
+        movie = Movie.objects.get(user=self.user, item__media_id="603")
+        self.assertEqual(movie.status, Status.COMPLETED.value)
+        self.assertEqual(movie.end_date, datetime(2026, 9, 20, 20, 0, tzinfo=UTC))
+
+    def test_toggle_played_marks_episode_watched_when_enabled(self, *_mocks):
+        """Clicking watched on an episode records one play."""
+        self._enable(played=True)
+        self.processor.process_payload(
+            self._episode("UserDataSaved", played=True, SaveReason="TogglePlayed"),
+            self.user,
+        )
+        self.assertEqual(self._episode_plays().count(), 1)
+
+    def test_toggle_played_ignored_when_disabled(self, *_mocks):
+        """The checkmark only syncs once the user opts in."""
+        self.processor.process_payload(
+            self._movie("UserDataSaved", played=True, SaveReason="TogglePlayed"),
+            self.user,
+        )
+        self.processor.process_payload(
+            self._episode("UserDataSaved", played=True, SaveReason="TogglePlayed"),
+            self.user,
+        )
+        self.assertFalse(Movie.objects.filter(user=self.user).exists())
+        self.assertFalse(self._episode_plays().exists())
+
+    def test_other_save_reasons_never_change_watch_state(self, *_mocks):
+        """Progress saves, playback end and old templates are not a toggle."""
+        self._enable(played=True, unplayed=True)
+        for reason in ("PlaybackProgress", "PlaybackFinished", "UpdateUserRating"):
+            with self.subTest(reason=reason):
+                self.processor.process_payload(
+                    self._movie("UserDataSaved", played=True, SaveReason=reason),
+                    self.user,
+                )
+        # A template from before SaveReason existed.
+        self.processor.process_payload(
+            self._movie("UserDataSaved", played=True),
+            self.user,
+        )
+        self.assertFalse(Movie.objects.filter(user=self.user).exists())
+
+    def test_toggle_unplayed_retracts_only_when_enabled(self, *_mocks):
+        """Unchecking watched reverts state only with the unplayed opt-in."""
+        self._enable(played=True)
+        self.processor.process_payload(
+            self._episode("UserDataSaved", played=True, SaveReason="TogglePlayed"),
+            self.user,
+        )
+        unmark = self._episode(
+            "UserDataSaved",
+            played=False,
+            SaveReason="TogglePlayed",
+        )
+
+        self.processor.process_payload(unmark, self.user)
+        self.assertEqual(self._episode_plays().count(), 1)
+
+        self._enable(played=True, unplayed=True)
+        self.processor.process_payload(unmark, self.user)
+        self.assertEqual(self._episode_plays().count(), 0)
+
+    def test_rating_and_toggle_in_one_save_both_apply(self, *_mocks):
+        """A save carrying a rating and a toggle applies both."""
+        self._enable(played=True)
+        payload = self._movie(
+            "UserDataSaved",
+            played=True,
+            SaveReason="TogglePlayed",
+        )
+        payload["Item"]["UserData"]["Rating"] = 8
+        self.processor.process_payload(payload, self.user)
+
+        movie = Movie.objects.get(user=self.user, item__media_id="603")
+        self.assertEqual(movie.status, Status.COMPLETED.value)
+        self.assertEqual(movie.score, 8)
+
+    # -- Echo guard -----------------------------------------------------
+
+    def test_toggle_on_watched_movie_adds_no_play(self, *_mocks):
+        """Our push echoing back as a toggle is agreement, not a rewatch."""
+        self._enable(played=True)
+        self.processor.process_payload(
+            self._movie("Stop", position=900),
+            self.user,
+        )
+        echo = self._movie("UserDataSaved", played=True, SaveReason="TogglePlayed")
+        echo["Item"]["UserData"]["LastPlayedDate"] = "2026-09-25T09:00:00Z"
+        self.processor.process_payload(echo, self.user)
+
+        self.assertEqual(Movie.objects.filter(user=self.user).count(), 1)
+
+    def test_toggle_on_watched_episode_adds_no_play(self, *_mocks):
+        """An echo days later, outside the dedupe window, adds no play."""
+        self._enable(played=True)
+        self.processor.process_payload(
+            self._episode("UserDataSaved", played=True, SaveReason="TogglePlayed"),
+            self.user,
+        )
+        echo = self._episode("UserDataSaved", played=True, SaveReason="TogglePlayed")
+        echo["Item"]["UserData"]["LastPlayedDate"] = "2026-09-25T09:00:00Z"
+        self.processor.process_payload(echo, self.user)
+
+        self.assertEqual(self._episode_plays().count(), 1)
+
+    def test_unofficial_mark_played_on_watched_movie_adds_no_play(self, *_mocks):
+        """The same guard covers the unofficial plugin's MarkPlayed."""
+        self._enable(played=True)
+        self.processor.process_payload(
+            self._movie("Stop", position=900),
+            self.user,
+        )
+        mark = self._movie("MarkPlayed", played=True)
+        mark["Item"]["UserData"]["LastPlayedDate"] = "2026-09-25T09:00:00Z"
+        self.processor.process_payload(mark, self.user)
+
+        self.assertEqual(Movie.objects.filter(user=self.user).count(), 1)
+
+    def test_finished_stop_rewatch_still_counts(self, *_mocks):
+        """The guard is for manual marks only; a real second play still logs."""
+        first = self._movie("Stop", position=900)
+        self.processor.process_payload(first, self.user)
+        second = self._movie("Stop", position=900, played=True)
+        second["Item"]["UserData"]["LastPlayedDate"] = "2026-09-25T09:00:00Z"
+        self.processor.process_payload(second, self.user)
+
+        self.assertEqual(Movie.objects.filter(user=self.user).count(), 2)

@@ -72,6 +72,9 @@ enforce these rules.
 | List value | `{'password': ['pw']}` | `{'password': [REDACTED]}` |
 | Quoted value | `{"api_key": "two words"}` | `{"api_key": "[REDACTED]"}` |
 | Unquoted value | `?X-Plex-Token=abc&size=10` | `?X-Plex-Token=[REDACTED]&size=10` |
+| urllib3 connection host | `Starting new HTTPS connection (1): my.duckdns.org:32400` | `Starting new HTTPS connection (1): [REDACTED]` |
+| urllib3 request-line host | `https://my.duckdns.org:32400 "GET /x HTTP/1.1" 200 760` | `https://[REDACTED] "GET /x HTTP/1.1" 200 760` |
+| urllib3 error host | `HTTPSConnectionPool(host='my.duckdns.org', port=443): Read timed out.` | `HTTPSConnectionPool(host='[REDACTED]', port=443): Read timed out.` |
 
 A value is a credential when its name **ends** with one of these keywords:
 `token`, `secret`, `password`, `passwd`, `apikey`, `api_key`, `api-key`,
@@ -111,6 +114,23 @@ event the log line exists to diagnose. A text rule cannot tell `Account.title`
 The scrubber returns a copy, so the payload the processor handles is unchanged.
 It runs before `redact_secrets()`, which still applies to the dumped text as a
 second boundary.
+
+## Third-party debug logging
+
+`requests`/`plexapi` connect straight to a user's Plex server, and the
+`urllib3` connection-pool logger writes the literal host it dials at DEBUG
+level: `Starting new HTTPS connection (1): my.duckdns.org:32400` and the
+matching `https://my.duckdns.org:32400 "GET /path HTTP/1.1" 200 760` request
+line. For a custom Plex server URL that host is a direct route to the user's
+self-hosted server ([#1274](https://github.com/dannyvfilms/Floppy/issues/1274)),
+so two more rules in `_SECRET_PATTERNS` strip it independent of the
+keyword-name rules above. Both match only urllib3's own line shape (the
+literal `Starting new ... connection (N):` prefix, or a URL immediately
+followed by a quoted HTTP method), so an ordinary URL an app log line builds
+with `safe_url()` is untouched. The same host also appears in urllib3's own error
+text (`HTTPSConnectionPool(host='...', port=...)`), which reaches Celery's
+task-failure line and every traceback, so a third rule strips the quoted
+`host=` value there ([#1307](https://github.com/dannyvfilms/Floppy/issues/1307)).
 
 ## What the rules do not cover
 

@@ -291,9 +291,20 @@ def _read_cgroup():
                 for line in (root / "memory.events").read_text().splitlines()
             )
         }
+        cpu_stat_path = root / "cpu.stat"
+        cpu_stat = (
+            dict(line.split() for line in cpu_stat_path.read_text().splitlines())
+            if cpu_stat_path.exists()
+            else {}
+        )
         return {
             "current_bytes": int(pre_sampler_current or observed_current),
             "current_observed_bytes": observed_current,
+            # Cumulative CPU time; the delta between two samples is the CPU
+            # the container spent in between (idle cost, #1158).
+            "cpu_usage_usec": (
+                int(cpu_stat["usage_usec"]) if "usage_usec" in cpu_stat else None
+            ),
             "peak_bytes": int(peak_path.read_text()) if peak_path.exists() else None,
             "oom": events["oom"],
             "oom_kill": events["oom_kill"],
@@ -317,6 +328,7 @@ def _read_cgroup():
         return {
             "current_bytes": None,
             "current_observed_bytes": None,
+            "cpu_usage_usec": None,
             "peak_bytes": None,
             "oom": None,
             "oom_kill": None,
@@ -327,6 +339,7 @@ def _read_cgroup():
     return {
         "current_bytes": int(pre_sampler_current or observed_current),
         "current_observed_bytes": observed_current,
+        "cpu_usage_usec": None,
         "peak_bytes": int((root / "memory.max_usage_in_bytes").read_text()),
         # v1 failcnt counts failed charges, not OOM kills. Do not mislabel it.
         "oom": None,
@@ -334,6 +347,29 @@ def _read_cgroup():
         "events": None,
         "memory_stat": {},
     }
+
+
+def _capture_warning(measured, rss_only, processes):
+    """Explain why a capture is not usable, or return None if it is.
+
+    Note `smaps_detail` reports "full" when nothing was measured at all, since
+    there are then no rss-only processes to report. That is the one case a
+    reader is most likely to mistake for success, so it is named separately.
+    """
+    if not processes:
+        return "no processes found; this is not a capture of a running container"
+    if not measured:
+        return (
+            "no process could be measured via smaps_rollup; re-run with "
+            "`docker exec --privileged -u 0` (CAP_SYS_PTRACE is required to "
+            "read another uid's smaps_rollup, and Docker drops it by default)"
+        )
+    if rss_only:
+        return (
+            f"PSS unavailable for {len(rss_only)} of {len(processes)} "
+            "processes; re-run with `docker exec --privileged -u 0`"
+        )
+    return None
 
 
 def _sum_or_none(processes, key):
@@ -411,6 +447,14 @@ def sample():
         "smaps_detail": (
             "full" if not rss_only else ("none" if not measured else "partial")
         ),
+        # A capture that silently fell back to VmRSS reports no PSS for the
+        # processes it could not read, and a reader who does not notice will
+        # compare a partial number against a full one. Docker drops
+        # CAP_SYS_PTRACE by default, so `docker exec --user root` is not
+        # enough: smaps_rollup for a process owned by another uid still fails
+        # the ptrace access check. Re-run with `docker exec --privileged -u 0`.
+        "capture_valid": not rss_only and bool(measured),
+        "capture_warning": _capture_warning(measured, rss_only, processes),
         "pss_breakdown_available": bool(measured)
         and measured[0]["pss_anon_kib"] is not None,
         "clock_ticks_per_second": clock_ticks,

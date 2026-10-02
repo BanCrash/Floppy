@@ -137,6 +137,9 @@ SpecialModels = [
     "WatchStateSequence",
     "EpisodeOrder",
     "EpisodeOrderChange",
+    "StatisticsDirtyDay",
+    "StatisticsSnapshot",
+    "StatisticsSyncState",
 ]
 for model in app_models:
     if (

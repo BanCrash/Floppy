@@ -18,6 +18,7 @@ from app.models import (
     Podcast,
     PodcastEpisode,
     PodcastShow,
+    PodcastShowTracker,
     ProviderMetadataStatus,
     Season,
     Sources,
@@ -352,6 +353,11 @@ class HomeViewTests(TestCase):
             episode=podcast_episode,
             status=Status.IN_PROGRESS.value,
             progress=300,
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user,
+            show=podcast_show,
+            status=Status.IN_PROGRESS.value,
         )
 
         response = self._get_hydrated_home()
@@ -773,7 +779,7 @@ class HomeViewTests(TestCase):
         )
         self.assertContains(
             initial_response,
-            "hx-vals='js:{offset: Number(event.target.dataset.loadedCount || 0)}'",
+            "hx-vals='js:{offset: Number(event.target.dataset.loadedCount || 0), seed: event.target.dataset.seed || \"\"}'",
             html=False,
         )
 
@@ -870,9 +876,13 @@ class HomeViewTests(TestCase):
         season_row = self._get_first_row(initial_response, MediaTypes.SEASON.value)
         duplicate_entry = season_row["items"][0]
 
+        duplicates = [duplicate_entry] * 37
         with patch(
-            "users.home_screen._library_query_entries",
-            return_value=[duplicate_entry] * 37,
+            "users.home_screen._library_row_window",
+            side_effect=lambda _user, _row, offset, limit, **_kw: (
+                duplicates[offset : offset + limit],
+                len(duplicates),
+            ),
         ):
             response = self.client.get(
                 reverse("home") + f"?load_row={season_row['row_id']}&offset=14",
@@ -978,7 +988,7 @@ class HomeRowCacheTests(TestCase):
         self.assertTrue(first.context["home_groups"])
 
         with patch(
-            "users.home_screen._library_query_entries",
+            "users.home_screen._library_row_window",
         ) as mock_entries:
             second = self.client.get(reverse("home"))
         self.assertEqual(second.status_code, 200)
@@ -1010,8 +1020,8 @@ class HomeRowCacheTests(TestCase):
             )
 
         with patch(
-            "users.home_screen._library_query_entries",
-            return_value=[],
+            "users.home_screen._library_row_window",
+            return_value=([], 0),
         ) as mock_entries:
             self.client.get(reverse("home"))
         mock_entries.assert_called()

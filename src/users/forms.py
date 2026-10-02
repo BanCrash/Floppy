@@ -135,7 +135,7 @@ class NotificationSettingsForm(forms.ModelForm):
                 },
             ),
             "playback_webhook_url": forms.URLInput(
-                attrs={"placeholder": "https://example.com/playback"},
+                attrs={"placeholder": _("https://example.com/playback")},
             ),
             # `render_value=False`: the whole point of moving the credential out
             # of the URL is that the page stops showing it, so a screenshot or a
@@ -143,7 +143,7 @@ class NotificationSettingsForm(forms.ModelForm):
             # into the HTML, not even masked.
             "playback_webhook_secret": forms.PasswordInput(
                 render_value=False,
-                attrs={"placeholder": "Leave blank to keep the current secret"},
+                attrs={"placeholder": _("Leave blank to keep the current secret")},
             ),
         }
 

@@ -96,6 +96,33 @@ class BasicMediaForm(TestCase):
         form = EpisodeForm(data=form_data)
         self.assertTrue(form.is_valid())
 
+    def test_media_form_saves_entry_source(self):
+        """entry_source (how the entry was created) round-trips through the form."""
+        form_data = {
+            "media_id": "1",
+            "source": Sources.MAL.value,
+            "media_type": MediaTypes.ANIME.value,
+            "user": self.user.id,
+            "status": Status.PAUSED.value,
+            "progress": 0,
+            "entry_source": "Theatre",
+        }
+        form = AnimeForm(data=form_data, user=self.user)
+        self.assertTrue(form.is_valid(), form.errors)
+        media = form.save(commit=False)
+        self.assertEqual(media.entry_source, "Theatre")
+
+    def test_episode_form_saves_entry_source(self):
+        """Episode's own edit form also accepts entry_source."""
+        form_data = {
+            "end_date": "2023-06-01",
+            "entry_source": "jellyfin",
+        }
+        form = EpisodeForm(data=form_data)
+        self.assertTrue(form.is_valid(), form.errors)
+        episode = form.save(commit=False)
+        self.assertEqual(episode.entry_source, "jellyfin")
+
     def test_valid_episode_datetime_form(self):
         """Test the episode form with valid data."""
         form_data = {

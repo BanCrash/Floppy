@@ -36,7 +36,7 @@
             <a href="{% if media.album %}{{ media.album|music_album_url }}{% elif media.artist %}{{ media.artist|music_artist_url }}{% elif use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_list_reference %}{{ item|media_url }}?public_view=1&amp;public_list={{ public_list_reference|urlencode }}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}"
                {% if enable_bulk_select %}@click="if (selectMode) { $event.preventDefault(); toggleItemSelected({{ item.id }}) }"{% endif %}>
               {% if enable_bulk_select %}
-                <div class="absolute top-2 left-2 z-10" x-cloak x-show="selectMode" @click.stop.prevent>
+                <div class="absolute top-2 left-2 z-10" x-cloak x-show="selectMode" @click.stop>
                   <input type="checkbox"
                          class="cursor-pointer w-5 h-5"
                          :checked="isItemSelected({{ item.id }})"
@@ -83,52 +83,6 @@
           {% endif %}
 
           {% if media %}
-            {% if show_progress_chip|default_if_none:True %}
-              {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
-                {% if aggregated_progress and resolved_media_type != MediaTypes.MOVIE.value and resolved_media_type != MediaTypes.GAME.value %}
-                  {# Don't show progress chip for Seasons - progress is shown in hover subtitle #}
-                  {% if resolved_media_type != MediaTypes.SEASON.value %}
-                    <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-                      <span class="text-sm text-[var(--color-text)]">
-                        {{ media.formatted_aggregated_progress }}
-                        {% if media.max_progress and not media.progress_is_percentage %}/ {{ media.formatted_max_progress }}{% endif %}
-                      </span>
-                    </div>
-                  {% endif %}
-                {% elif media.progress and resolved_media_type != MediaTypes.MOVIE.value %}
-                  {% if resolved_media_type != MediaTypes.GAME.value or not aggregated_progress %}
-                    {# Don't show progress chip for Seasons - progress is shown in hover subtitle #}
-                    {% if resolved_media_type != MediaTypes.SEASON.value %}
-                      <div class="media-progress-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                           data-progress-chip-mode="{{ progress_chip_mode|default:'always' }}"
-                           data-mobile-show="{% if current_sort_value == 'progress' %}true{% else %}false{% endif %}">
-                        <span class="text-sm text-[var(--color-text)]">
-                          {{ media.formatted_progress }}
-                          {% if media.max_progress and not media.progress_is_percentage %}/ {{ media.formatted_max_progress }}{% endif %}
-                        </span>
-                      </div>
-                    {% endif %}
-                  {% endif %}
-                {% endif %}
-              {% endwith %}
-            {% endif %}
-
-            {# Time Left display for time_left sort #}
-            {# Hide chip in media grid (shown in context row instead when sorted by time_left) #}
-            {% if media and media.episodes_left > 0 %}
-              {% if resolved_media_type == MediaTypes.TV.value or resolved_media_type == MediaTypes.SEASON.value %}
-                {% if not from_grid %}
-                  <div class="media-time-left-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                       data-time-left-mode="{{ time_left_chip_mode|default:'always' }}"
-                       data-mobile-show="{% if current_sort_value == 'time_left' %}true{% else %}false{% endif %}">
-                    <span class="text-sm text-[var(--color-text)]">{{ media.time_left_display|default:media.formatted_time_left }}</span>
-                  </div>
-                {% endif %}
-              {% endif %}
-            {% endif %}
-
-            {# Repeat chip removed from poster grid cards to reduce crowding. #}
-
             {# Next-episode quick-link — shown when preference includes "next_episode" or "both" #}
             {% if not recommend_mode and not public_view|default:False and user.is_authenticated %}
               {% if user.quick_season_update_mobile == 'next_episode' or user.quick_season_update_mobile == 'both' %}
@@ -226,7 +180,7 @@
                           title="{% translate "Add to custom lists" %}"
                           hx-get="{% media_view_url 'lists_modal' item %}"
                           hx-vals='{"return_url": "{{ card_return_url|urlencode }}"}'
-                          hx-target="#{% component_id 'lists' item %}"
+                          hx-target="#{% component_id 'lists' item %}{% if card_uid %}-{{ card_uid }}{% endif %}"
                           hx-trigger="click once"
                           @click="listsOpen = true">
                     {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
@@ -246,7 +200,7 @@
                           title="{% if media %}Watched{% else %}Mark watched{% endif %}"
                           hx-get="{% url 'track_modal' source=item.source media_type='episode' media_id=item.media_id season_number=item.season_number %}"
                           hx-vals='{"return_url": "{{ card_return_url|urlencode }}", "episode_number": "{{ item.episode_number }}"{% if media %}, "instance_id": "{{ media.id }}"{% else %}, "is_create": "1"{% endif %}}'
-                          hx-target="#{% component_id 'track' item media.id %}"
+                          hx-target="#{% component_id 'track' item media.id %}{% if card_uid %}-{{ card_uid }}{% endif %}"
                           hx-trigger="click once"
                           @click="trackOpen = true">
                     {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
@@ -261,7 +215,7 @@
                           title="{% translate "Add to custom lists" %}"
                           hx-get="{% media_view_url 'lists_modal' item %}"
                           hx-vals='{"return_url": "{{ card_return_url|urlencode }}"}'
-                          hx-target="#{% component_id 'lists' item %}"
+                          hx-target="#{% component_id 'lists' item %}{% if card_uid %}-{{ card_uid }}{% endif %}"
                           hx-trigger="click once"
                           @click="listsOpen = true">
                     {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
@@ -280,7 +234,7 @@
                             title="{% translate "Edit tracking" %}"
                             hx-get="{% url 'podcast_show_track_modal' podcast_show.id %}"
                             hx-vals='{"return_url": "{{ card_return_url|urlencode }}"{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
-                            hx-target="#podcast-show-track-modal-{{ podcast_show.id }}-{{ media.id }}"
+                            hx-target="#podcast-show-track-modal-{{ podcast_show.id }}-{{ media.id }}{% if home_row_id %}-home-{{ home_row_id }}{% endif %}"
                             hx-trigger="click once"
                             @click="trackOpen = true">
                       {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
@@ -290,7 +244,7 @@
                             title="{% translate "Edit tracking" %}"
                             hx-get="{% url 'album_track_modal' media.album.id %}"
                             hx-vals='{"return_url": "{{ card_return_url|urlencode }}"{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
-                            hx-target="#album-track-modal-{{ media.album.id }}"
+                            hx-target="#album-track-modal-{{ media.album.id }}{% if home_row_id %}-home-{{ home_row_id }}{% endif %}"
                             hx-trigger="click once"
                             @click="trackOpen = true">
                       {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
@@ -300,7 +254,7 @@
                             title="{% translate "Edit tracking" %}"
                             hx-get="{% url 'artist_track_modal' media.artist.id %}"
                             hx-vals='{"return_url": "{{ card_return_url|urlencode }}"{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
-                            hx-target="#artist-track-modal-{{ media.artist.id }}"
+                            hx-target="#artist-track-modal-{{ media.artist.id }}{% if home_row_id %}-home-{{ home_row_id }}{% endif %}"
                             hx-trigger="click once"
                             @click="trackOpen = true">
                       {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
@@ -309,8 +263,8 @@
                     <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
                             title="{% translate "Add to tracker" %}"
                             hx-get="{% media_view_url 'track_modal' item %}"
-                            hx-vals='{"return_url": "{{ card_return_url|urlencode }}", "instance_id": "{{ media.id }}"{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
-                            hx-target="#{% component_id 'track' item media.id %}"
+                            hx-vals='{"return_url": "{{ card_return_url|urlencode }}"{% if media %}, "instance_id": "{{ media.id }}"{% endif %}{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
+                            hx-target="#{% component_id 'track' item media.id %}{% if card_uid %}-{{ card_uid }}{% endif %}"
                             hx-trigger="click once"
                             @click="trackOpen = true">
                       {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
@@ -321,7 +275,7 @@
                           title="{% translate "Add to custom lists" %}"
                           hx-get="{% media_view_url 'lists_modal' item %}"
                           hx-vals='{"return_url": "{{ card_return_url|urlencode }}"}'
-                          hx-target="#{% component_id 'lists' item %}"
+                          hx-target="#{% component_id 'lists' item %}{% if card_uid %}-{{ card_uid }}{% endif %}"
                           hx-trigger="click once"
                           @click="listsOpen = true">
                     {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
@@ -485,7 +439,10 @@
               {% endif %}
               {% if media %}
                 <span id="media-card-rating-{{ media.id }}">
-                  {% include "app/components/media_card_rating.html" %}
+                  {% if not public_view|default:False and not recommend_mode and not use_podcast_show|default:False %}
+                    {% url 'update_media_score' item.media_type media.id as card_rate_url %}
+                  {% endif %}
+                  {% include "app/components/media_card_rating.html" with rate_url=card_rate_url|default:"" %}
                 </span>
               {% else %}
                 {% include "app/components/media_card_rating.html" %}
@@ -675,7 +632,6 @@
               {% endif %}
             {% endif %}
           {% endwith %}
-          {% if duration %}<p class="text-xs text-[var(--color-text-muted)] mt-1">{{ duration }}</p>{% endif %}
 
           {# Aggregated chips already cover repeats; no extra text block. #}
         </div>
@@ -689,13 +645,13 @@
           <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
                style="width: min(96vw, 72rem);">
             {% if use_podcast_show|default:False and podcast_show %}
-              <div id="podcast-show-track-modal-{{ podcast_show.id }}-{{ media.id }}"></div>
+              <div id="podcast-show-track-modal-{{ podcast_show.id }}-{{ media.id }}{% if home_row_id %}-home-{{ home_row_id }}{% endif %}"></div>
             {% elif media|safe_attr:"home_music_card" and media.album %}
-              <div id="album-track-modal-{{ media.album.id }}"></div>
+              <div id="album-track-modal-{{ media.album.id }}{% if home_row_id %}-home-{{ home_row_id }}{% endif %}"></div>
             {% elif media|safe_attr:"home_music_card" and media.artist %}
-              <div id="artist-track-modal-{{ media.artist.id }}"></div>
+              <div id="artist-track-modal-{{ media.artist.id }}{% if home_row_id %}-home-{{ home_row_id }}{% endif %}"></div>
             {% else %}
-              <div id="{% component_id 'track' item media.id %}"></div>
+              <div id="{% component_id 'track' item media.id %}{% if card_uid %}-{{ card_uid }}{% endif %}"></div>
             {% endif %}
           </div>
         </div>
@@ -707,7 +663,7 @@
              @mousedown.self="listsOpen = false"
              class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60">
-            <div id="{% component_id 'lists' item %}"></div>
+            <div id="{% component_id 'lists' item %}{% if card_uid %}-{{ card_uid }}{% endif %}"></div>
           </div>
         </div>
 

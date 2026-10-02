@@ -249,7 +249,7 @@ class PocketCastsRepeatPollTests(TestCase):
         )
         return stack
 
-    def _run_import(self):
+    def _run_import(self, play_states=None):
         with (
             self._artwork_patches(),
             patch.object(PocketCastsImporter, "_ensure_valid_token"),
@@ -261,7 +261,7 @@ class PocketCastsRepeatPollTests(TestCase):
             patch.object(
                 PocketCastsImporter,
                 "_fetch_show_play_states",
-                return_value={},
+                return_value=play_states or {},
             ),
             patch.object(
                 PocketCastsImporter,
@@ -270,8 +270,40 @@ class PocketCastsRepeatPollTests(TestCase):
             ),
             CaptureQueriesContext(connection) as queries,
         ):
-            PocketCastsImporter(self.user, "new").import_data()
+            importer = PocketCastsImporter(self.user, "new")
+            importer.import_data()
+        self.last_counters = importer._catalog_counters
         return len(queries)
+
+    def test_listened_episodes_with_their_own_duration_stop_being_rewritten(self):
+        """The user's play state differs from the public feed; polls must settle.
+
+        Production (2026-09-29): eight recurring runs that imported nothing
+        each reported ~5,300 episodes changed and ~4,300 rows written. The
+        catalog pass wrote the feed's duration and isDeleted, then the
+        listened-episode pass wrote the play state's over it, so the next poll
+        saw the difference again.
+        """
+        play_states = {
+            f"uuid-{index}": {
+                "uuid": f"uuid-{index}",
+                "playingStatus": 3,
+                "playedUpTo": 1795,
+                "duration": 1797,
+                "isDeleted": True,
+            }
+            for index in range(10)
+        }
+
+        self._run_import(play_states)
+        self._run_import(play_states)
+
+        self.assertEqual(self.last_counters["changed"], 0)
+        self.assertEqual(self.last_counters["written"], 0)
+        stored = PodcastEpisode.objects.get(episode_uuid="uuid-0")
+        self.assertEqual(stored.duration, 1797)
+        self.assertTrue(stored.is_deleted)
+        self.assertEqual(PodcastEpisode.objects.get(episode_uuid="uuid-20").duration, 1800)
 
     def test_second_poll_of_an_unchanged_catalog_is_far_cheaper(self):
         first = self._run_import()

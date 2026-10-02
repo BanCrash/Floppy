@@ -4,6 +4,70 @@
   --breakpoint-xs: 30rem;
 }
 
+.home-settings-row-controls .filter-control > .absolute {
+  right: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+@media (max-width: 63.999rem) {
+  .home-settings-row-body {
+    height: auto;
+    min-height: 2.5rem;
+  }
+
+  .home-settings-row-body > div {
+    flex-wrap: wrap;
+    padding-block: 0.25rem;
+  }
+
+  /* Title and delete button share the first line; the filters follow as chips. */
+  .home-settings-row-title {
+    flex: 1 1 calc(100% - 2.75rem);
+    min-width: 0;
+  }
+
+  .home-settings-row-controls {
+    display: contents;
+  }
+
+  .home-settings-row-controls > button:last-child {
+    order: 1;
+  }
+
+  .home-settings-row-controls > :not(:last-child) {
+    order: 2;
+  }
+
+  .home-settings-chip {
+    border: 1px solid var(--color-surface-border);
+    background: var(--color-panel);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .home-settings-chip svg {
+    margin-left: 0.25rem;
+  }
+
+  .home-settings-row-controls .filter-control {
+    position: static;
+  }
+
+  .home-settings-row-controls .filter-control > .absolute {
+    left: 0;
+    width: auto;
+    max-width: 100%;
+  }
+}
+
+/* Below md the settings menu collapses into a dropdown (see users/base.html). */
+@media (max-width: 47.999rem) {
+  .settings-nav-collapsed {
+    display: none;
+  }
+}
+
 :root {
   --color-surface: #2a2f35;
   --color-surface-strong: #39404b;
@@ -24,6 +88,7 @@
   /* Lifted from #9ca3af: that value reached only 4.1:1 on --color-surface-strong,
      the raised surface settings cards use, so muted copy missed WCAG AA there. */
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
@@ -66,6 +131,7 @@
     --color-text: #1f2937;
     --color-text-secondary: #374151;
     --color-text-muted: #4b5563;
+    --color-success-text: #047857;
     --color-warning-text: #92400e;
     --color-info-text: #3730a3;
     --color-error-text: #b91c1c;
@@ -103,6 +169,7 @@ html.light {
   --color-text: #1f2937;
   --color-text-secondary: #374151;
   --color-text-muted: #4b5563;
+  --color-success-text: #047857;
   --color-warning-text: #92400e;
   --color-info-text: #3730a3;
   --color-error-text: #b91c1c;
@@ -139,6 +206,7 @@ html.dark {
   --color-text: #f3f4f6;
   --color-text-secondary: #d1d5db;
   --color-text-muted: #adb5bd;
+  --color-success-text: #6ee7b7;
   --color-warning-text: #fde68a;
   --color-info-text: #c7d2fe;
   --color-error-text: #fca5a5;
@@ -1372,11 +1440,7 @@ html.light .theme-toggle-icon-moon {
   }
 }
 
-.media-card .media-status-chip,
-.media-card .media-score-chip,
-.media-card .media-progress-chip,
-.media-card .media-time-left-chip,
-.media-card .media-repeat-chip {
+.media-card .media-status-chip {
   z-index: 6;
 }
 
@@ -1695,11 +1759,7 @@ html.light .theme-toggle-icon-moon {
 
 /* Keep revealed controls above the title gradient and poster badges. */
 .media-card.media-card-revealed .media-card-body,
-.media-card.media-card-revealed .media-status-chip,
-.media-card.media-card-revealed .media-score-chip,
-.media-card.media-card-revealed .media-progress-chip,
-.media-card.media-card-revealed .media-time-left-chip,
-.media-card.media-card-revealed .media-repeat-chip {
+.media-card.media-card-revealed .media-status-chip {
   z-index: 4;
 }
 
@@ -1965,31 +2025,6 @@ html.light .theme-toggle-icon-moon {
     background-color: transparent !important;
     padding: 0 !important;
     border-radius: 0 !important;
-  }
-
-  .media-progress-chip[data-progress-chip-mode="conditional"] {
-    display: none !important;
-  }
-
-  .media-progress-chip[data-progress-chip-mode="conditional"][data-mobile-show="true"] {
-    display: flex !important;
-  }
-
-  .media-time-left-chip[data-time-left-mode="conditional"] {
-    display: none !important;
-  }
-
-  .media-time-left-chip[data-time-left-mode="conditional"][data-mobile-show="true"] {
-    display: flex !important;
-  }
-
-  .media-score-chip[data-score-chip-mode="conditional"] {
-    display: none !important;
-  }
-
-  .media-score-chip[data-score-chip-mode="conditional"][data-mobile-show="true"] {
-    display: flex !important;
-    top: calc(var(--spacing) * 2) !important;
   }
 
   .media-status-chip[data-mobile-hide-on-mobile="true"] {
@@ -2301,4 +2336,34 @@ html.light .theme-toggle-icon-moon {
 [data-horizontal-drag="true"]:focus-visible {
   outline: 2px solid var(--color-link);
   outline-offset: 2px;
+}
+
+/*
+ * The rating button in a card's title row. When the item is unrated it shows an
+ * empty star, only while the card is hovered (or the button has focus); touch
+ * screens have no hover, so it stays faintly visible there.
+ */
+.media-card-rate-empty {
+  opacity: 0;
+  transition: opacity 150ms ease-in-out;
+}
+
+.media-card-rate-empty .media-card-rate-star svg {
+  fill: none;
+}
+
+.media-card-rate-empty:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .media-card-rate-empty {
+    opacity: 1;
+  }
+}
+
+@media (pointer: coarse) {
+  .media-card-rate-empty {
+    opacity: 0.6;
+  }
 }

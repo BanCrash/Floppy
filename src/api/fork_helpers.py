@@ -22,7 +22,11 @@ FORK_VALID_SOURCES = {
         Sources.GPODDER.value,
         Sources.AUDIOBOOKSHELF.value,
     ],
-    MediaTypes.COMIC_ISSUE.value: [Sources.COMICVINE.value, Sources.MANUAL.value],
+    MediaTypes.COMIC_ISSUE.value: [
+        Sources.COMICVINE.value,
+        Sources.GCD.value,
+        Sources.MANUAL.value,
+    ],
 }
 
 # FORK: sources the fork resolves for a media type upstream *already* lists.
@@ -41,7 +45,10 @@ FORK_EXTRA_SOURCES = {
     MediaTypes.ANIME.value: [Sources.TMDB.value, Sources.TVDB.value],
 }
 
-_MODIFIABLE_FIELDS = {"score", "status", "progress", "start_date", "end_date", "notes"}
+_MODIFIABLE_FIELDS = {
+    "score", "status", "progress", "start_date", "end_date", "notes",
+    "entry_source",
+}
 
 
 # FORK: sort vocabulary for consumption-history endpoints (upstream TODO:

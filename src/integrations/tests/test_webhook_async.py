@@ -10,6 +10,7 @@ from unittest.mock import call, patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 from simple_history.models import HistoricalRecords
@@ -281,7 +282,7 @@ class ProcessWebhookTaskTests(TestCase):
             tasks.process_webhook("jellyfin", {"Event": "Stop"}, missing_id)
         self.assertIn("missing user", logs.output[0])
 
-    @patch("integrations.tasks.push_jellyfin_watched.delay")
+    @patch("integrations.tasks.push_jellyfin_watched.apply_async")
     @patch("integrations.webhooks.jellyfin.JellyfinWebhookProcessor.process_payload")
     def test_jellyfin_instant_push_when_enabled(self, _mock_process, mock_push_delay):
         """A Jellyfin webhook should queue a push-back when instant push is enabled."""
@@ -293,11 +294,16 @@ class ProcessWebhookTaskTests(TestCase):
             instant_push_enabled=True,
         )
 
+        cache.clear()
         tasks.process_webhook("jellyfin", {"Event": "Stop"}, self.user.id)
 
-        mock_push_delay.assert_called_once_with(user_id=self.user.id)
+        mock_push_delay.assert_called_once()
+        self.assertEqual(
+            mock_push_delay.call_args.kwargs["kwargs"],
+            {"user_id": self.user.id},
+        )
 
-    @patch("integrations.tasks.push_jellyfin_watched.delay")
+    @patch("integrations.tasks.push_jellyfin_watched.apply_async")
     @patch("integrations.webhooks.jellyfin.JellyfinWebhookProcessor.process_payload")
     def test_jellyfin_instant_push_skipped_when_disabled(
         self,
@@ -317,7 +323,7 @@ class ProcessWebhookTaskTests(TestCase):
 
         mock_push_delay.assert_not_called()
 
-    @patch("integrations.tasks.push_jellyfin_watched.delay")
+    @patch("integrations.tasks.push_jellyfin_watched.apply_async")
     @patch("integrations.webhooks.jellyfin.JellyfinWebhookProcessor.process_payload")
     def test_jellyfin_instant_push_skipped_without_account(
         self,

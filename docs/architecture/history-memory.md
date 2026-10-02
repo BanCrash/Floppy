@@ -166,3 +166,16 @@ It deliberately does not warm up the scenario it measures. glibc keeps a grown
 arena, so a warm-up request moves the whole cost into an unmeasured call and
 leaves every later delta reading ~0 -- which is exactly how this cost stayed
 invisible in earlier aging runs.
+
+## The same columns in the import preload
+
+Every importer starts by loading the user's whole library through
+`get_existing_media` and `get_existing_children`
+(`integrations/imports/helpers.py`). Those loaded full items too, so a large
+library ran a Trakt export import out of memory before it wrote a row (#1252).
+They now defer the same columns. With 600 rows carrying a 32 KiB payload the
+preload's peak Python allocation went from ~51 MiB to ~2.5 MiB.
+
+Regressions: `integrations.tests.imports.test_import_preload_memory` (the
+preloaded items defer the heavy columns; its `slow` benchmark compares the
+preload against full hydration).

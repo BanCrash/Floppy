@@ -145,6 +145,7 @@ _NUMERIC_MEDIA_ID_SOURCES = {
     Sources.TVDB.value,
     Sources.MAL.value,
     Sources.MANGAUPDATES.value,
+    Sources.MANGABAKA.value,
     Sources.IGDB.value,
     Sources.COMICVINE.value,
     Sources.BGG.value,
@@ -681,6 +682,11 @@ class YamtrackImporter:
                         self.status_overrides[media_type][
                             (row["source"], row["media_id"], season_number)
                         ] = status_value
+            # Keep the backup's rating time; otherwise the insert stamps "now".
+            scored_at = parse_datetime(row.get("scored_at") or "")
+            # A cleared rating keeps its time too, so the removal survives.
+            if scored_at:
+                form.instance.scored_at = scored_at
             self.bulk_media[media_type].append(form.instance)
         else:
             error_msg = f"{row['title']} ({media_type}): {form.errors.as_json()}"

@@ -1,10 +1,13 @@
+import contextlib
 import json
 import logging
+import time
 from collections import defaultdict
 
 import requests
 from django.conf import settings
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django_celery_beat.models import PeriodicTask
 from simple_history.utils import bulk_update_with_history
@@ -31,6 +34,36 @@ TRAKT_DEVICE_MIN_INTERVAL = 5
 TRAKT_DEVICE_MAX_INTERVAL = 60
 BULK_PAGE_SIZE = 1000
 TRAKT_UNKNOWN_DATE = "1970-01-01T00:00:00.000Z"
+# History is the long loop of an export import; a line every so many entries
+# shows it moving without one INFO record per watch.
+HISTORY_LOG_EVERY = 1000
+
+
+@contextlib.contextmanager
+def _phase(name, username):
+    """Log the start, duration and outcome of one stage of an import.
+
+    Stages after the history loop write nothing per entry, so without these a
+    long run looks identical to a stuck one in the logs.
+    """
+    started = time.monotonic()
+    logger.info("Trakt import stage started: %s (user %s)", name, username)
+    try:
+        yield
+    except BaseException:
+        logger.warning(
+            "Trakt import stage failed: %s after %.1fs (user %s)",
+            name,
+            time.monotonic() - started,
+            username,
+        )
+        raise
+    logger.info(
+        "Trakt import stage finished: %s in %.1fs (user %s)",
+        name,
+        time.monotonic() - started,
+        username,
+    )
 
 def _parse_watched_at(watched_at: str):
     if watched_at == TRAKT_UNKNOWN_DATE:
@@ -83,6 +116,7 @@ def handle_oauth_callback(
     return {
         "access_token": token_response["access_token"],
         "refresh_token": token_response["refresh_token"],
+        "redirect_uri": redirect_uri,
         "username": get_username_from_oauth(
             token_response["access_token"],
             client_id=client_id,
@@ -129,9 +163,13 @@ def _refresh_redirect_uri():
     Celery worker) or because it is plain HTTP on a non-loopback host, which is
     also how the connection was made in the first place.
     """
+    # Runs in a Celery worker, whose ROOT_URLCONF is empty and whose
+    # INSTALLED_APPS lack allauth, so neither the default urlconf nor
+    # ``config.urls`` can be resolved there. ``integrations.urls`` holds the
+    # route, mounted at the root, and imports fine in every process.
     redirect_uri = app_helpers.build_absolute_app_url(
         None,
-        reverse("import_trakt_private"),
+        reverse("import_trakt_private", urlconf="integrations.urls"),
     )
     if not app_helpers.supports_oauth_redirect(redirect_uri):
         return TRAKT_OOB_REDIRECT_URI
@@ -206,6 +244,7 @@ def poll_device_token(device_code, client_id=None, client_secret=None):
         return {
             "access_token": access_token,
             "refresh_token": payload["refresh_token"],
+            "redirect_uri": TRAKT_OOB_REDIRECT_URI,
             "username": get_username_from_oauth(access_token, client_id=client_id),
         }
 
@@ -232,8 +271,13 @@ def poll_device_token(device_code, client_id=None, client_secret=None):
     raise MediaImportError(msg)
 
 
-def get_access_token(encrypted_refresh_token):
-    """Get access token from encrypted refresh token."""
+def get_access_token(encrypted_refresh_token, redirect_uri=None):
+    """Get access token from encrypted refresh token.
+
+    Trakt checks the redirect URI on a refresh, so send the one the connection
+    was authorized with. Connections saved before it was stored (``None``) fall
+    back to the best guess from this instance's configuration.
+    """
     url = "https://api.trakt.tv/oauth/token"
 
     decrypted_token = helpers.decrypt_or_raise(encrypted_refresh_token)
@@ -243,7 +287,7 @@ def get_access_token(encrypted_refresh_token):
         "client_secret": credentials.get("trakt", "client_secret"),
         "refresh_token": decrypted_token,
         "grant_type": "refresh_token",
-        "redirect_uri": _refresh_redirect_uri(),
+        "redirect_uri": redirect_uri or _refresh_redirect_uri(),
     }
 
     try:
@@ -257,11 +301,30 @@ def get_access_token(encrypted_refresh_token):
         if error.status_code == requests.codes.unauthorized:
             msg = "Invalid Trakt secret key."
             raise MediaImportError(msg) from error
+        if error.status_code == requests.codes.bad_request:
+            raise MediaImportError(_refresh_rejected_message(error)) from error
         raise
 
     # refresh tokens are one time use only
     update_refresh_token(encrypted_refresh_token, request["refresh_token"])
     return request["access_token"]
+
+
+def _refresh_rejected_message(error):
+    """Explain a 400 from the token endpoint, naming the OAuth error Trakt sent."""
+    try:
+        payload = error.response.json()
+        reason = payload["error"] if isinstance(payload, dict) else None
+    except (AttributeError, KeyError, ValueError):
+        reason = None
+    if not isinstance(reason, str):
+        reason = None
+    logger.warning("Trakt token refresh rejected (error=%s)", reason)
+    detail = f" ({reason})" if reason else ""
+    return (
+        f"Trakt rejected the token refresh{detail}. Check that the Redirect URI "
+        "on your Trakt app matches the one Floppy shows, then reconnect Trakt."
+    )
 
 
 def update_refresh_token(old_token, new_token):
@@ -278,7 +341,7 @@ def update_refresh_token(old_token, new_token):
         periodic_task.save()
 
 
-def importer(token, user, mode, username):
+def importer(token, user, mode, username, redirect_uri=None):
     """Import the user's data from Trakt.
 
     Can import using either OAuth (token provided) or public username.
@@ -290,8 +353,16 @@ def importer(token, user, mode, username):
         user: Django user object to import data for
         mode (str): Import mode ("new" or "overwrite")
         username (str): Trakt username to import from
+        redirect_uri (str, optional): Redirect URI the connection was authorized
+            with, sent again when the refresh token is exchanged
     """
-    trakt_importer = TraktImporter(username, user, mode, refresh_token=token)
+    trakt_importer = TraktImporter(
+        username,
+        user,
+        mode,
+        refresh_token=token,
+        redirect_uri=redirect_uri,
+    )
     return trakt_importer.import_data()
 
 
@@ -557,7 +628,7 @@ class TraktMetadataResolverMixin:
 class TraktImporter(TraktMetadataResolverMixin):
     """Class to handle importing user data from Trakt."""
 
-    def __init__(self, username, user, mode, refresh_token=None):
+    def __init__(self, username, user, mode, refresh_token=None, redirect_uri=None):
         """Initialize the importer with user details and mode.
 
         Args:
@@ -566,12 +637,14 @@ class TraktImporter(TraktMetadataResolverMixin):
             mode (str): Import mode ("new" or "overwrite")
             refresh_token (str, optional): Encrypted OAuth2 refresh token if
                 using OAuth, None for public import
+            redirect_uri (str, optional): Redirect URI used when authorizing
         """
         self.username = username
         self.user = user
         self.external_reference_integration = "trakt"
         self.mode = mode
         self.refresh_token = refresh_token
+        self.redirect_uri = redirect_uri
         self.is_oauth_import = bool(refresh_token)
         user_identifier = "me" if self.is_oauth_import else username
         self.user_base_url = f"{TRAKT_API_BASE_URL}/users/{user_identifier}"
@@ -651,6 +724,10 @@ class TraktImporter(TraktMetadataResolverMixin):
         return set(
             app.models.Episode.objects.filter(
                 related_season__user=self.user,
+                # Scoped to the source this importer resolves against: an
+                # episode tracked from another provider can share a media_id
+                # with a TMDB one, and matching it would skip a real play.
+                item__source=Sources.TMDB.value,
                 end_date__isnull=False,
             ).values_list(
                 "item__media_id",
@@ -690,26 +767,42 @@ class TraktImporter(TraktMetadataResolverMixin):
         """Import all user data from Trakt."""
         self._validate_username()
         self.process_dropped()
-        self.process_history()
-        self.process_watchlist()
-        self.process_ratings()
-        self.process_notes()
-        self.process_comments()
-        self.process_collection()
+        for name, stage in (
+            ("history", self.process_history),
+            ("watchlist", self.process_watchlist),
+            ("ratings", self.process_ratings),
+            ("notes", self.process_notes),
+            ("comments", self.process_comments),
+            ("collection", self.process_collection),
+        ):
+            with _phase(name, self.username):
+                stage()
 
-        helpers.cleanup_existing_media(self.to_delete, self.user)
-        helpers.bulk_create_media(self.bulk_media, self.user)
+        with _phase("save media", self.username):
+            helpers.cleanup_existing_media(self.to_delete, self.user)
+            helpers.bulk_create_media(self.bulk_media, self.user)
 
-        if self.completed_seasons:
-            bulk_update_with_history(
-                self.completed_seasons, app.models.Season, fields=["status"]
-            )
-        if self.completed_tvs:
-            bulk_update_with_history(
-                self.completed_tvs, app.models.TV, fields=["status"]
-            )
-        if self.dropped_tvs:
-            bulk_update_with_history(self.dropped_tvs, app.models.TV, fields=["status"])
+            if self.completed_seasons:
+                bulk_update_with_history(
+                    self.completed_seasons,
+                    app.models.Season,
+                    fields=["status"],
+                    default_change_reason=f"Trakt import ({self.mode})",
+                )
+            if self.completed_tvs:
+                bulk_update_with_history(
+                    self.completed_tvs,
+                    app.models.TV,
+                    fields=["status"],
+                    default_change_reason=f"Trakt import ({self.mode})",
+                )
+            if self.dropped_tvs:
+                bulk_update_with_history(
+                    self.dropped_tvs,
+                    app.models.TV,
+                    fields=["status"],
+                    default_change_reason=f"Trakt import ({self.mode})",
+                )
 
         # Neither bulk_create_media() nor bulk_update_with_history() call
         # TV.save(), so the season/episode cascade it normally fires for a
@@ -728,28 +821,30 @@ class TraktImporter(TraktMetadataResolverMixin):
             )
             if tv.pk
         }
-        for tv_obj in touched_tvs.values():
-            if tv_obj.status == Status.COMPLETED.value:
-                pending_date = self.tv_completion_dates.get(f"{tv_obj.item.media_id}")
-                if pending_date is not None:
-                    tv_obj._pending_end_date = pending_date
-                try:
-                    tv_obj._completed()
-                except (
-                    services.ProviderAPIError,
-                    requests.exceptions.RequestException,
-                    KeyError,
-                    TypeError,
-                    ValueError,
-                ) as error:
-                    logger.warning(
-                        "Skipping completion fan-out due to missing metadata"
-                        " for %s: %s",
-                        tv_obj.item.media_id,
-                        error,
-                    )
-            elif tv_obj.status == Status.DROPPED.value:
-                tv_obj._mark_in_progress_seasons_as_dropped()
+        with _phase("finish shows", self.username):
+            for i, tv_obj in enumerate(touched_tvs.values(), start=1):
+                import_progress.report(i, len(touched_tvs), "Trakt: finishing shows")
+                if tv_obj.status == Status.COMPLETED.value:
+                    pending_date = self.tv_completion_dates.get(f"{tv_obj.item.media_id}")
+                    if pending_date is not None:
+                        tv_obj._pending_end_date = pending_date
+                    try:
+                        tv_obj._completed()
+                    except (
+                        services.ProviderAPIError,
+                        requests.exceptions.RequestException,
+                        KeyError,
+                        TypeError,
+                        ValueError,
+                    ) as error:
+                        logger.warning(
+                            "Skipping completion fan-out due to missing metadata"
+                            " for %s: %s",
+                            tv_obj.item.media_id,
+                            error,
+                        )
+                elif tv_obj.status == Status.DROPPED.value:
+                    tv_obj._mark_in_progress_seasons_as_dropped()
 
         imported_counts = {
             media_type: len(media_list)
@@ -772,7 +867,10 @@ class TraktImporter(TraktMetadataResolverMixin):
                 # already made api_request before, so access_token is set
                 headers["Authorization"] = f"Bearer {self.access_token}"
             except AttributeError:
-                self.access_token = get_access_token(self.refresh_token)
+                self.access_token = get_access_token(
+                    self.refresh_token,
+                    self.redirect_uri,
+                )
                 headers["Authorization"] = f"Bearer {self.access_token}"
         return services.api_request(
             "TRAKT",
@@ -860,17 +958,24 @@ class TraktImporter(TraktMetadataResolverMixin):
         total = len(full_history)
         for i, entry in enumerate(reversed(full_history), start=1):
             import_progress.report(i, total, "Trakt: watch history")
+            if i % HISTORY_LOG_EVERY == 0:
+                logger.info(
+                    "Trakt history progress: %s of %s entries (user %s)",
+                    i,
+                    total,
+                    self.username,
+                )
             watched_at = entry["watched_at"]
             try:
                 if entry["type"] == "movie":
-                    logger.info(
+                    logger.debug(
                         "Processing movie %s watched at %s",
                         entry["movie"]["title"],
                         watched_at,
                     )
                     self.process_watched_movie(entry)
                 elif entry["type"] == "episode":
-                    logger.info(
+                    logger.debug(
                         "Processing episode %s S%sE%s watched at %s",
                         entry["show"]["title"],
                         entry["episode"]["season"],
@@ -1116,7 +1221,13 @@ class TraktImporter(TraktMetadataResolverMixin):
                     item=season_item,
                     user=self.user,
                     related_tv=tv_obj,
-                    status=Status.IN_PROGRESS.value,
+                    # History for a new season of a show the user dropped or
+                    # paused is recorded without reopening the show.
+                    status=(
+                        tv_obj.status
+                        if tv_obj.status in app.models.USER_HELD_STATUSES
+                        else Status.IN_PROGRESS.value
+                    ),
                 )
                 if watched_at_dt is not None:
                     season_obj._history_date = watched_at_dt
@@ -1507,7 +1618,7 @@ class TraktImporter(TraktMetadataResolverMixin):
     def _process_generic_entry(self, entry, entry_type, attribute_updates):
         """Process a generic entry (watchlist, rating, or comment)."""
         if entry["type"] == "movie":
-            logger.info(
+            logger.debug(
                 "Processing movie %s for %s",
                 entry["movie"]["title"],
                 entry_type,
@@ -1526,7 +1637,7 @@ class TraktImporter(TraktMetadataResolverMixin):
                 entry_type=entry_type,
             )
         elif entry["type"] == "show":
-            logger.info(
+            logger.debug(
                 "Processing show %s for %s",
                 entry["show"]["title"],
                 entry_type,
@@ -1540,7 +1651,7 @@ class TraktImporter(TraktMetadataResolverMixin):
                 entry_type=entry_type,
             )
         elif entry["type"] == "season":
-            logger.info(
+            logger.debug(
                 "Processing season %s S%s for %s",
                 entry["show"]["title"],
                 entry["season"]["number"],
@@ -1556,7 +1667,7 @@ class TraktImporter(TraktMetadataResolverMixin):
                 entry_type=entry_type,
             )
         elif entry["type"] == "episode":
-            logger.info(
+            logger.debug(
                 "Processing episode %s S%sE%s for %s",
                 entry["show"]["title"],
                 entry["episode"]["season"],
@@ -1618,7 +1729,10 @@ class TraktImporter(TraktMetadataResolverMixin):
                 item__episode_number=episode_number,
             )
             if episodes.exists():
-                episodes.update(score=scaled_score)
+                episodes.exclude(score=scaled_score).update(
+                    score=scaled_score,
+                    scored_at=timezone.now(),
+                )
                 return
 
         # Fall back to in-memory episode objects from this same import run
@@ -1683,7 +1797,9 @@ class TraktImporter(TraktMetadataResolverMixin):
         updated_at = parse_datetime(
             entry.get("listed_at")
             or entry.get("rated_at")
-            or (entry.get("comment") or entry.get("note") or {}).get("updated_at"),
+            or (entry.get("comment") or entry.get("note") or {}).get("updated_at")
+            # An entry may carry no date at all (e.g. a WeTrakr export row).
+            or "",
         )
 
         # A rating, a comment, or a note says nothing about whether the user
@@ -1749,8 +1865,22 @@ class TraktImporter(TraktMetadataResolverMixin):
         tv_key = f"{tmdb_id}"
 
         # Create or get the TV object
+        existing_tv = None
+        if (
+            tv_key not in self.media_instances[MediaTypes.TV.value]
+            and tmdb_id not in self.to_delete[MediaTypes.TV.value][Sources.TMDB.value]
+        ):
+            # A season row for a show the user already tracks belongs to that
+            # show; creating a second, In progress TV row would override the
+            # status the user chose.
+            existing_tv = self.existing_media[MediaTypes.TV.value][
+                Sources.TMDB.value
+            ].get(tmdb_id)
         if tv_key in self.media_instances[MediaTypes.TV.value]:
             tv_obj = self.media_instances[MediaTypes.TV.value][tv_key][0]
+        elif existing_tv is not None:
+            tv_obj = existing_tv
+            self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]
         else:
             tv_obj = app.models.TV(
                 item=tv_item,

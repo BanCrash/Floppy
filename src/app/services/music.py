@@ -1355,6 +1355,45 @@ def canonicalize_album(album: Album, user=None) -> Album:
     return merge_album_records(album, canonical)
 
 
+def canonicalize_albums(albums: list[Album], user=None) -> list[Album]:
+    """Canonicalize many albums, checking for duplicate rows in one query.
+
+    Only albums whose MusicBrainz identity is shared with another row go
+    through canonicalize_album; every other album is returned as it is.
+    """
+    group_ids = {
+        a.musicbrainz_release_group_id for a in albums if a.musicbrainz_release_group_id
+    }
+    release_ids = {
+        a.musicbrainz_release_id
+        for a in albums
+        if a.musicbrainz_release_id and not a.musicbrainz_release_group_id
+    }
+    group_counts = {}
+    release_counts = {}
+    if group_ids or release_ids:
+        rows = Album.objects.filter(
+            models.Q(musicbrainz_release_group_id__in=group_ids)
+            | models.Q(musicbrainz_release_id__in=release_ids),
+        ).values_list("musicbrainz_release_group_id", "musicbrainz_release_id")
+        for group_id, release_id in rows:
+            if group_id in group_ids:
+                group_counts[group_id] = group_counts.get(group_id, 0) + 1
+            if release_id in release_ids:
+                release_counts[release_id] = release_counts.get(release_id, 0) + 1
+
+    canonical = []
+    for album in albums:
+        if album.musicbrainz_release_group_id:
+            shared = group_counts.get(album.musicbrainz_release_group_id, 0) > 1
+        elif album.musicbrainz_release_id:
+            shared = release_counts.get(album.musicbrainz_release_id, 0) > 1
+        else:
+            shared = False
+        canonical.append(canonicalize_album(album, user=user) if shared else album)
+    return canonical
+
+
 def needs_discography_sync(artist: Artist, max_age_days: int = 7) -> bool:
     """Check if an artist needs discography sync.
 

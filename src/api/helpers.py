@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from http import HTTPStatus as HTTP  # noqa: N814
 
 from django.db.models import Count, OuterRef, Subquery
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.timezone import localdate
 from rest_framework.response import Response
@@ -72,10 +73,12 @@ def resolve_episode_coordinate_for_request(
     return coordinate, None
 
 MEDIA_MODIFIABLE_FIELDS = {
-    MediaTypes.MOVIE.value: {"score", "status", "start_date", "end_date", "notes"},
-    MediaTypes.TV.value: {"score", "status", "notes"},
-    MediaTypes.SEASON.value: {"score", "status", "notes"},
-    MediaTypes.EPISODE.value: {"end_date"},
+    MediaTypes.MOVIE.value: {
+        "score", "status", "start_date", "end_date", "notes", "entry_source",
+    },
+    MediaTypes.TV.value: {"score", "status", "notes", "entry_source"},
+    MediaTypes.SEASON.value: {"score", "status", "notes", "entry_source"},
+    MediaTypes.EPISODE.value: {"end_date", "entry_source"},
     MediaTypes.ANIME.value: {
         "score",
         "status",
@@ -83,6 +86,7 @@ MEDIA_MODIFIABLE_FIELDS = {
         "start_date",
         "end_date",
         "notes",
+        "entry_source",
     },
     MediaTypes.MANGA.value: {
         "score",
@@ -91,6 +95,7 @@ MEDIA_MODIFIABLE_FIELDS = {
         "start_date",
         "end_date",
         "notes",
+        "entry_source",
     },
     MediaTypes.GAME.value: {
         "score",
@@ -99,6 +104,7 @@ MEDIA_MODIFIABLE_FIELDS = {
         "start_date",
         "end_date",
         "notes",
+        "entry_source",
     },
     MediaTypes.BOOK.value: {
         "score",
@@ -107,6 +113,7 @@ MEDIA_MODIFIABLE_FIELDS = {
         "start_date",
         "end_date",
         "notes",
+        "entry_source",
     },
     MediaTypes.COMIC.value: {
         "score",
@@ -115,6 +122,7 @@ MEDIA_MODIFIABLE_FIELDS = {
         "start_date",
         "end_date",
         "notes",
+        "entry_source",
     },
     MediaTypes.BOARDGAME.value: {
         "score",
@@ -123,6 +131,7 @@ MEDIA_MODIFIABLE_FIELDS = {
         "start_date",
         "end_date",
         "notes",
+        "entry_source",
     },
 }
 
@@ -198,10 +207,10 @@ VALID_SOURCES = {
     MediaTypes.EPISODE.value: ["tmdb", "manual"],
     MediaTypes.MOVIE.value: ["tmdb", "manual"],
     MediaTypes.ANIME.value: ["mal", "manual"],
-    MediaTypes.MANGA.value: ["mal", "mangaupdates", "manual"],
+    MediaTypes.MANGA.value: ["mal", "mangaupdates", "mangabaka", "manual"],
     MediaTypes.GAME.value: ["igdb", "manual"],
     MediaTypes.BOOK.value: ["openlibrary", "hardcover", "googlebooks", "manual"],
-    MediaTypes.COMIC.value: ["comicvine", "manual"],
+    MediaTypes.COMIC.value: ["comicvine", "gcd", "manual"],
     MediaTypes.BOARDGAME.value: ["bgg", "manual"],
 }
 
@@ -1054,7 +1063,7 @@ def apply_episode_score(season, episode_number, score):
     if not episodes.exists():
         return False
 
-    episodes.update(score=score)
+    episodes.exclude(score=score).update(score=score, scored_at=timezone.now())
 
     day_keys = [
         history_cache.history_day_key(end_date)

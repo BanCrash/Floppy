@@ -548,7 +548,9 @@ class JellyfinPlaybackReportingImporter:
         if import_run_id and movie.import_run_id != import_run_id:
             movie.import_run_id = import_run_id
             movie.save(update_fields=["import_run"])
-        _, created = movie.watch(row.date_created, external_id=source_id)
+        _, created = movie.watch(
+            row.date_created, external_id=source_id, entry_source="jellyfin",
+        )
         if created:
             self.counts[MediaTypes.MOVIE.value] += 1
         else:
@@ -593,6 +595,7 @@ class JellyfinPlaybackReportingImporter:
             episode_number,
             row.date_created,
             watch_operation_id=operation_id,
+            entry_source="jellyfin",
         )
         if result.created:
             self.counts[MediaTypes.EPISODE.value] += 1

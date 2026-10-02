@@ -13,6 +13,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from app.log_safety import exception_summary
+from integrations import connection_health
 from integrations.imports.helpers import retry_on_lock
 
 logger = logging.getLogger(__name__)
@@ -290,14 +291,18 @@ def poll_all_koito_accounts():
     """Global task to poll Koito for all connected users."""
     from integrations.models import KoitoAccount
 
-    accounts = KoitoAccount.objects.filter(
-        connection_broken=False,
-    ).select_related("user")
-    if not accounts.exists():
+    # Broken accounts are included once they are due for a re-probe: a
+    # successful sync clears the flag, a rejected one re-records it.
+    accounts = [
+        account
+        for account in KoitoAccount.objects.select_related("user")
+        if connection_health.due_for_probe(account)
+    ]
+    if not accounts:
         logger.debug("No Koito accounts to poll")
         return {"processed": 0, "errors": 0, "message": "No accounts to poll"}
 
-    logger.info("Polling Koito for %d users", accounts.count())
+    logger.info("Polling Koito for %d users", len(accounts))
 
     batch_size = 10
     processed_count = 0
@@ -330,7 +335,7 @@ def poll_all_koito_accounts():
     return {
         "processed": processed_count,
         "errors": error_count,
-        "total_accounts": accounts.count(),
+        "total_accounts": len(accounts),
         "message": f"Processed {processed_count} Koito account(s).",
     }
 

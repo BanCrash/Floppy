@@ -392,6 +392,7 @@ class OpenAPIArtifactTests(SimpleTestCase):
                 "start_date",
                 "end_date",
                 "notes",
+                "entry_source",
             },
         )
         self.assertEqual(
@@ -403,6 +404,7 @@ class OpenAPIArtifactTests(SimpleTestCase):
                 "start_date",
                 "end_date",
                 "notes",
+                "entry_source",
                 "image_url",
             },
         )
@@ -417,6 +419,7 @@ class OpenAPIArtifactTests(SimpleTestCase):
                 "tracked",
                 "created_at",
                 "score",
+                "scored_at",
                 "status",
                 "progress",
                 "episodes_left",
@@ -427,6 +430,7 @@ class OpenAPIArtifactTests(SimpleTestCase):
                 "start_date",
                 "end_date",
                 "notes",
+                "source",
                 "lists",
                 "next_episode",
                 "show",
@@ -434,7 +438,16 @@ class OpenAPIArtifactTests(SimpleTestCase):
         )
         self.assertEqual(
             set(schemas["NextEpisode"]["properties"]),
-            {"season_number", "episode_number", "air_date"},
+            {
+                "season_number",
+                "episode_number",
+                "air_date",
+                "title",
+                "episode_code",
+                "image",
+                "ids",
+                "url",
+            },
         )
         self.assertEqual(
             set(schemas["Show"]["properties"]),
@@ -446,12 +459,14 @@ class OpenAPIArtifactTests(SimpleTestCase):
                 "consumption_id",
                 "created",
                 "score",
+                "scored_at",
                 "progress",
                 "progressed_at",
                 "status",
                 "start_date",
                 "end_date",
                 "notes",
+                "source",
                 "external_id",
             },
         )

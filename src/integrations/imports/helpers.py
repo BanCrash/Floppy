@@ -19,15 +19,25 @@ from simple_history.utils import bulk_create_with_history
 import app
 from app import providers
 from app.db_retry import run_retryable_db_operation
+from app.history_cache_utils import history_deferred_item_fields
 from app.models import Episode, MediaTypes, Status
 from app.services.completion import normalize_completed_entry
 from integrations import import_progress
+from integrations.models import ImportRun
 
 logger = logging.getLogger(__name__)
 
 
 class MediaImportError(Exception):
     """Custom exception for import errors."""
+
+
+class ConnectionAuthError(MediaImportError):
+    """The provider rejected our credentials (401/403).
+
+    The one import failure that marks an account ``connection_broken``; see
+    ``integrations.connection_health``.
+    """
 
 
 class MediaImportUnexpectedError(Exception):
@@ -57,6 +67,15 @@ def mal_id_from_kitsu_mappings(mappings, media_type):
     return mappings.get(f"myanimelist/{media_type}")
 
 
+def periodic_task_user_kwargs(user_id):
+    """Return ``filter`` kwargs matching one user's periodic task by exact id.
+
+    A bare ``kwargs__contains='"user_id": 1'`` also matches user 10's task, so
+    the match must end at the closing brace or the next key.
+    """
+    return {"kwargs__regex": rf"[\"']user_id[\"']: {int(user_id)}[,}}]"}
+
+
 def find_item_across_buckets(preferred_bucket=None, **identity):
     """Return an existing Item for an identity, preferring one library bucket.
 
@@ -79,6 +98,12 @@ def find_item_across_buckets(preferred_bucket=None, **identity):
     return candidates[0]
 
 
+# Importers read identity fields off the preloaded items, never these. Loading
+# them for a whole library (``watch_providers`` is ~146 KiB a title) ran a large
+# Trakt export import out of memory before it wrote anything (#1252).
+PRELOAD_DEFERRED_ITEM_FIELDS = history_deferred_item_fields("item")
+
+
 def get_existing_media(user):
     """Get all existing media for the user to check against during import."""
     excluded_types = [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]
@@ -88,7 +113,11 @@ def get_existing_media(user):
     for media_type in valid_types:
         media_model = apps.get_model(app_label="app", model_name=media_type)
 
-        for media in media_model.objects.filter(user=user).select_related("item"):
+        for media in (
+            media_model.objects.filter(user=user)
+            .select_related("item")
+            .defer(*PRELOAD_DEFERRED_ITEM_FIELDS)
+        ):
             existing[media_type][media.item.source][media.item.media_id] = media
 
     counts = [
@@ -113,14 +142,20 @@ def get_existing_children(user):
         MediaTypes.SEASON.value: defaultdict(dict),
         MediaTypes.EPISODE.value: defaultdict(dict),
     }
-    for season in app.models.Season.objects.filter(user=user).select_related("item"):
+    for season in (
+        app.models.Season.objects.filter(user=user)
+        .select_related("item")
+        .defer(*PRELOAD_DEFERRED_ITEM_FIELDS)
+    ):
         item = season.item
         existing[MediaTypes.SEASON.value][item.source][
             (item.media_id, item.season_number)
         ] = season
-    for episode in app.models.Episode.objects.filter(
-        related_season__user=user,
-    ).select_related("item"):
+    for episode in (
+        app.models.Episode.objects.filter(related_season__user=user)
+        .select_related("item")
+        .defer(*PRELOAD_DEFERRED_ITEM_FIELDS)
+    ):
         item = episode.item
         existing[MediaTypes.EPISODE.value][item.source][
             (item.media_id, item.season_number, item.episode_number)
@@ -498,12 +533,23 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
 
     warnings = []
 
+    # A source season's aggregate status is not a destination season status:
+    # alternate orders may split or combine those groups.
+    active_shows = set(
+        app.models.TV.objects.filter(
+            user=user, active_episode_order__isnull=False,
+        ).values_list("item__source", "item__media_id"),
+    )
+
     # Importers build rows using their source provider's numbering. Resolve
     # before persistence so those numbers never become active-order numbers.
+    # Resolution is per episode and only ever matches a show with an active
+    # order, so a user with none skips it: it cost ~3 queries per episode, two
+    # thirds of the time this function spent on a large history import.
     ordered_episodes = []
     for episode in bulk_media_list.get(MediaTypes.EPISODE.value, []):
         item = episode.item
-        if item.episode_order_id:
+        if not active_shows or item.episode_order_id:
             ordered_episodes.append(episode)
             continue
         targets = resolve_incoming(
@@ -522,13 +568,6 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
     if MediaTypes.EPISODE.value in bulk_media_list:
         bulk_media_list[MediaTypes.EPISODE.value] = ordered_episodes
 
-    # A source season's aggregate status is not a destination season status:
-    # alternate orders may split or combine those groups.
-    active_shows = set(
-        app.models.TV.objects.filter(
-            user=user, active_episode_order__isnull=False,
-        ).values_list("item__source", "item__media_id"),
-    )
     if MediaTypes.SEASON.value in bulk_media_list:
         bulk_media_list[MediaTypes.SEASON.value] = [
             season for season in bulk_media_list[MediaTypes.SEASON.value]
@@ -545,9 +584,18 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
         bulk_media = _deduplicate_unique_user_item_rows(model, bulk_media)
 
         import_run_id = import_progress.get_current_import_run_id()
+        import_source = ""
         if import_run_id:
+            import_source = (
+                ImportRun.objects.filter(id=import_run_id)
+                .values_list("source", flat=True)
+                .first()
+                or ""
+            )
             for media_obj in bulk_media:
                 media_obj.import_run_id = import_run_id
+                if import_source and not media_obj.entry_source:
+                    media_obj.entry_source = import_source
 
         logger.info("Bulk importing %s", media_type)
 
@@ -605,13 +653,26 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
             logger.info("Updating references for podcasts to existing episodes")
             update_podcast_references(bulk_media)
 
-        def create_media(bulk_media=bulk_media, model=model):
+        # Imports are written as the user, so the reason is what tells an
+        # imported status apart from one the user set (#1133).
+        change_reason = (
+            f"{import_source.replace('_', ' ').capitalize()} import"
+            if import_source
+            else "Import"
+        )
+
+        def create_media(
+            bulk_media=bulk_media,
+            model=model,
+            change_reason=change_reason,
+        ):
             return bulk_create_with_history(
                 bulk_media,
                 model,
                 batch_size=500,
                 default_user=user,
                 default_date=timezone.now(),
+                default_change_reason=change_reason,
             )
 
         created_media = retry_on_lock(create_media)
@@ -649,10 +710,14 @@ def create_import_schedule(
     source,
     token=None,
     extra_kwargs=None,
+    replace_existing=False,
 ):
     """Create an import schedule.
 
     extra_kwargs: Optional dictionary of additional task kwargs to persist.
+    replace_existing: When the same schedule already exists, refresh its token
+        and extra kwargs instead of refusing. Used when a connection is redone,
+        so the schedule does not keep a dead token.
     """
     try:
         import_time = (
@@ -667,7 +732,18 @@ def create_import_schedule(
         return
 
     task_name = f"Import from {source} for {username} at {import_time} {frequency}"
-    if PeriodicTask.objects.filter(name=task_name).exists():
+    existing = PeriodicTask.objects.filter(name=task_name).first()
+    if existing and replace_existing:
+        task_kwargs = json.loads(existing.kwargs)
+        if token:
+            task_kwargs["token"] = token
+        if extra_kwargs:
+            task_kwargs.update(extra_kwargs)
+        existing.kwargs = json.dumps(task_kwargs)
+        existing.save()
+        messages.success(request, f"{source} import task updated.")
+        return
+    if existing:
         messages.error(
             request,
             "The same import task is already scheduled.",

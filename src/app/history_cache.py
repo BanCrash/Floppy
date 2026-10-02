@@ -154,7 +154,11 @@ def _fetch_episode_data(
 
     episodes = Episode.all_objects.filter(related_season__user=user)
     if not include_undated:
-        episodes = episodes.filter(end_date__isnull=False)
+        # An open play has no end date yet; like a movie, it is listed on the
+        # day it started (issue #1278).
+        episodes = episodes.filter(
+            models.Q(end_date__isnull=False) | models.Q(start_date__isnull=False),
+        )
     episodes = (
         episodes.select_related(
             "item",
@@ -168,13 +172,19 @@ def _fetch_episode_data(
                 "related_season__related_tv__item",
             ),
         )
-        .order_by("-end_date")
+        .order_by("-end_date", "-start_date")
     )
 
     if start_date:
-        episodes = episodes.filter(end_date__gte=start_date)
+        episodes = episodes.filter(
+            models.Q(end_date__gte=start_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__gte=start_date))
+        )
     if end_date:
-        episodes = episodes.filter(end_date__lte=end_date)
+        episodes = episodes.filter(
+            models.Q(end_date__lte=end_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__lte=end_date))
+        )
     if filters.get("tv"):
         episodes = episodes.filter(related_season__related_tv_id=filters["tv"])
     if filters.get("season"):
@@ -1426,7 +1436,7 @@ def build_history_days(
                 continue
             entry = _build_episode_entry(episode, episode_title_map)
             if entry:
-                if include_undated and not episode.end_date:
+                if include_undated and not episode.end_date and not episode.start_date:
                     entry["played_at_local"] = None
                 entries.append(entry)
                 entry_counts["episodes"] += 1

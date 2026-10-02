@@ -331,6 +331,11 @@ def fetch_history(
         "sort": "viewedAt:desc",
         "X-Plex-Container-Start": start,
         "X-Plex-Container-Size": page_size,
+        # Ask Plex to include each history row's external Guid[] values so the
+        # importer can avoid one /library/metadata/{ratingKey} request per row.
+        # Older servers may ignore this, in which case the existing detail
+        # lookup remains the fallback.
+        "includeGuids": 1,
     }
     if section_id and section_id != "all":
         params["librarySectionID"] = section_id

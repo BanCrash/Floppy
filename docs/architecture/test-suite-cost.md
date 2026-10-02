@@ -443,10 +443,10 @@ is the result of fixing it.
 
 ```bash
 # Iterating on non-migration code — the fast path.
-FLOPPY_TEST_FAST_DB=1 SECRET=test-only scripts/test.sh app.tests.test_statistics_refresh_run
+FLOPPY_TEST_FAST_DB=1 SECRET=test-only scripts/test.sh app.tests.test_statistics_sync
 
 # The real gate: real migrations, real graph.
-SECRET=test-only scripts/test.sh app.tests.test_statistics_refresh_run
+SECRET=test-only scripts/test.sh app.tests.test_statistics_sync
 
 # Whole fast suite.
 SECRET=test-only scripts/test.sh

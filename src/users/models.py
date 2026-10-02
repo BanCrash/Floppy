@@ -9,6 +9,7 @@ from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.models import UserManager as DjangoUserManager
 from django.db import models
 from django.db.models import Q
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django_celery_beat.models import PeriodicTask
@@ -26,9 +27,13 @@ PLAYBACK_WEBHOOK_SECRET_MAX_LENGTH = 128
 EXCLUDED_SEARCH_TYPES = [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]
 HOME_ALL_MEDIA_TYPE = "all"
 
+# Search-bar option that searches every enabled type in the user's own library
+# (tracked, collected or tagged items) instead of one provider (#1160).
+ALL_SEARCH_TYPE = "all"
+
 VALID_SEARCH_TYPES = [
     value for value in MediaTypes.values if value not in EXCLUDED_SEARCH_TYPES
-]
+] + [ALL_SEARCH_TYPE]
 
 VALID_HOME_SCREEN_MEDIA_TYPES = [
     HOME_ALL_MEDIA_TYPE,
@@ -463,6 +468,8 @@ class MetadataSourceDefaultChoices(models.TextChoices):
     HARDCOVER = Sources.HARDCOVER.value, Sources.HARDCOVER.label
     OPENLIBRARY = Sources.OPENLIBRARY.value, Sources.OPENLIBRARY.label
     GOOGLEBOOKS = Sources.GOOGLEBOOKS.value, Sources.GOOGLEBOOKS.label
+    COMICVINE = Sources.COMICVINE.value, Sources.COMICVINE.label
+    GCD = Sources.GCD.value, Sources.GCD.label
 
 
 class AnimeLibraryModeChoices(models.TextChoices):
@@ -498,7 +505,7 @@ class User(AbstractUser):
     last_search_type = models.CharField(
         max_length=10,
         default=MediaTypes.TV.value,
-        choices=MediaTypes.choices,
+        choices=[*MediaTypes.choices, (ALL_SEARCH_TYPE, "All")],
     )
 
     last_discover_type = models.CharField(
@@ -827,6 +834,14 @@ class User(AbstractUser):
         default=False,
         help_text="Hide completed media in recommendations",
     )
+    show_recommendations = models.BooleanField(
+        default=True,
+        help_text="Show recommendations on media detail pages",
+    )
+    show_discover = models.BooleanField(
+        default=True,
+        help_text="Show the Discover page and keep its caches warm",
+    )
     hide_zero_rating = models.BooleanField(
         default=False,
         help_text="Hide zero ratings from media cards",
@@ -865,6 +880,14 @@ class User(AbstractUser):
             ),
         ],
         help_text="Default metadata provider for TV details and search tabs.",
+    )
+    tv_auto_move_to_default_provider = models.BooleanField(
+        default=True,
+        help_text=(
+            "Let the nightly job move TV shows tracked on the other provider to "
+            "the default provider. Turned off when the user chooses to leave "
+            "their library as it is after switching providers."
+        ),
     )
     anime_metadata_source_default = models.CharField(
         max_length=20,
@@ -909,6 +932,21 @@ class User(AbstractUser):
             ),
         ],
         help_text="Default metadata provider for Book details and search tabs.",
+    )
+    comic_metadata_source_default = models.CharField(
+        max_length=20,
+        default=MetadataSourceDefaultChoices.COMICVINE,
+        choices=[
+            (
+                MetadataSourceDefaultChoices.COMICVINE,
+                MetadataSourceDefaultChoices.COMICVINE.label,
+            ),
+            (
+                MetadataSourceDefaultChoices.GCD,
+                MetadataSourceDefaultChoices.GCD.label,
+            ),
+        ],
+        help_text="Default metadata provider for Comic details and search tabs.",
     )
     stats_split_tv_anime = models.BooleanField(
         default=False,
@@ -1086,6 +1124,26 @@ class User(AbstractUser):
         choices=JellyseerrDefaultAddedStatusChoices.choices,
         default=Status.PLANNING.value,
         help_text="Status to set when adding media via Jellyseerr webhook",
+    )
+    seerr_url = models.URLField(
+        blank=True,
+        help_text="Seerr server URL, used to request movies and shows from Floppy",
+    )
+    seerr_api_key = models.TextField(
+        blank=True,
+        default="",
+        help_text="Encrypted Seerr API key",
+    )
+    seerr_username = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Seerr login (username or email) the requests are made as",
+    )
+    seerr_user_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Seerr user id resolved from seerr_username when settings are saved",
     )
     tmdb_proxy_url = models.TextField(
         blank=True,
@@ -1515,6 +1573,15 @@ class User(AbstractUser):
                 ),
             ),
             models.CheckConstraint(
+                name="comic_metadata_source_default_valid",
+                condition=models.Q(
+                    comic_metadata_source_default__in=[
+                        MetadataSourceDefaultChoices.COMICVINE,
+                        MetadataSourceDefaultChoices.GCD,
+                    ],
+                ),
+            ),
+            models.CheckConstraint(
                 name="lists_sort_valid",
                 condition=models.Q(lists_sort__in=ListSortChoices.values),
             ),
@@ -1869,6 +1936,15 @@ class User(AbstractUser):
 
         return None
 
+    def task_result_filter(self):
+        """Match TaskResult rows whose kwargs carry this user's id."""
+        return (
+            Q(task_kwargs__contains=f"'user_id': {self.id},")
+            | Q(task_kwargs__contains=f"'user_id': {self.id}" + "}")
+            | Q(task_kwargs__contains=f'"user_id": {self.id},')
+            | Q(task_kwargs__contains=f'"user_id": {self.id}' + "}")
+        )
+
     def get_import_tasks(self):
         """Return import tasks history and schedules for the user."""
         result_task_names = {
@@ -1894,16 +1970,24 @@ class User(AbstractUser):
                 "integrations.tasks.import_goodreads",
             ],
             "mdblist": ["Import from MDBList", "Import MDBList Lists"],
-            "plex": ["Import from Plex", "Sync Plex Watchlist"],
+            "plex": [
+                "Import from Plex",
+                "Sync Plex Watchlist",
+                "Sync Plex Watched Marks",
+            ],
             "jellyfin_playback_reporting": [
                 "Import from Jellyfin Playback Reporting",
             ],
             "radarr": ["Import from Radarr", "Import from Radarr (Recurring)"],
             "sonarr": ["Import from Sonarr", "Import from Sonarr (Recurring)"],
+            "mylar": ["Import from Mylar3", "Import from Mylar3 (Recurring)"],
+            "kapowarr": ["Import from Kapowarr", "Import from Kapowarr (Recurring)"],
             "audiobookshelf": [
                 "Import from Audiobookshelf",
                 "Import from Audiobookshelf (Recurring)",
             ],
+            "kavita": ["Import from Kavita", "Import from Kavita (Recurring)"],
+            "komga": ["Import from Komga", "Import from Komga (Recurring)"],
             "storyteller": [
                 "Import from Storyteller",
                 "Import from Storyteller (Recurring)",
@@ -1919,7 +2003,10 @@ class User(AbstractUser):
                 "Import from Stremio (Recurring)",
             ],
             "lastfm": ["Import from Last.fm History"],
-            "hardcover": ["Import from Hardcover"],
+            "hardcover": [
+                "Import from Hardcover",
+                "Import from Hardcover Account",
+            ],
             "storygraph": ["Import from StoryGraph"],
             "koito": ["Import from Koito History"],
         }
@@ -1927,7 +2014,12 @@ class User(AbstractUser):
             **result_task_names,
             "radarr": ["Import from Radarr (Recurring)"],
             "sonarr": ["Import from Sonarr (Recurring)"],
+            "mylar": ["Import from Mylar3 (Recurring)"],
+            "kapowarr": ["Import from Kapowarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
+            "kavita": ["Import from Kavita (Recurring)"],
+            "komga": ["Import from Komga (Recurring)"],
+            "hardcover": ["Import from Hardcover Account"],
             "storyteller": ["Import from Storyteller (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
             "gpodder": ["Import from GPodder (Recurring)"],
@@ -1952,12 +2044,7 @@ class User(AbstractUser):
         }
         schedule_import_task_names = list(schedule_task_to_source)
 
-        task_result_filters = (
-            Q(task_kwargs__contains=f"'user_id': {self.id},")
-            | Q(task_kwargs__contains=f"'user_id': {self.id}" + "}")
-            | Q(task_kwargs__contains=f'"user_id": {self.id},')
-            | Q(task_kwargs__contains=f'"user_id": {self.id}' + "}")
-        )
+        task_result_filters = self.task_result_filter()
 
         # Get all task results for this user (last 7 days only).
         # Exclude stale PENDING records (created >30 min ago and never updated)
@@ -2006,6 +2093,7 @@ class User(AbstractUser):
             results.append(
                 {
                     "task": processed_task,
+                    "task_id": task.task_id,
                     "source": source,
                     "date": task.date_done,
                     "status": task.status,
@@ -2414,3 +2502,45 @@ class HomeScreenRow(models.Model):
     def __str__(self):
         """Return a compact label for admin/debug use."""
         return f"{self.user_id}:{self.media_type}:{self.row_type}:{self.position}"
+
+
+# Saved views of the History page live beside the media list ones, keyed by
+# this pseudo media type.
+HISTORY_VIEW_TYPE = "history"
+
+
+class SavedView(models.Model):
+    """A named media list or History view (filters, sort, layout) in the sidebar."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="saved_views",
+    )
+    media_type = models.CharField(
+        max_length=16,
+        choices=[*MediaTypes.choices, (HISTORY_VIEW_TYPE, "History")],
+    )
+    name = models.CharField(max_length=100)
+    # The media list (or History) query string, e.g. "sort=score&direction=desc&status=Completed".
+    query = models.TextField(blank=True, default="")
+    position = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Model and field configuration."""
+
+        ordering = ["media_type", "position", "id"]
+        indexes = [models.Index(fields=["user", "media_type", "position"])]
+
+    def __str__(self):
+        """Return a compact label for admin/debug use."""
+        return f"{self.user_id}:{self.media_type}:{self.name}"
+
+    def get_absolute_url(self):
+        """Return the media list or History URL that reproduces this view."""
+        if self.media_type == HISTORY_VIEW_TYPE:
+            base = reverse("history")
+        else:
+            base = reverse("medialist", args=[self.media_type])
+        return f"{base}?{self.query}" if self.query else base

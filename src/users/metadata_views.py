@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
+from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
 from app import config, preflight
@@ -24,6 +25,7 @@ PROVIDER_DEFAULT_MEDIA_TYPES = (
     MediaTypes.TV.value,
     MediaTypes.ANIME.value,
     MediaTypes.BOOK.value,
+    MediaTypes.COMIC.value,
 )
 
 
@@ -175,8 +177,8 @@ def metadata_settings(request):
             groups.append(
                 {
                     "key": group,
-                    "label": credentials.GROUP_LABELS[group],
-                    "description": credentials.GROUP_DESCRIPTIONS[group],
+                    "label": gettext(credentials.GROUP_LABELS[group]),
+                    "description": gettext(credentials.GROUP_DESCRIPTIONS[group]),
                     "providers": providers,
                 },
             )
@@ -186,6 +188,7 @@ def metadata_settings(request):
         "can_edit_instance": can_edit_instance,
         "provider_summary": _provider_summary(user),
         "anime_library_mode_choices": AnimeLibraryModeChoices.choices,
+        "tv_provider_prompt": request.session.pop("tv_provider_prompt", None),
         "anime_shape_prompt_count": request.session.pop(
             "anime_shape_prompt_count",
             None,
@@ -224,6 +227,21 @@ def set_media_type_provider(request, media_type):
     if getattr(request.user, field) != source:
         setattr(request.user, field, source)
         request.user.save(update_fields=[field])
+
+        if media_type == MediaTypes.TV.value:
+            # Shows already tracked on the other provider are left alone until
+            # the user asks to move them, so the nightly job must not move
+            # them either.
+            from app.services import library_migration
+
+            movable = library_migration.tv_items_to_move(request.user, source).count()
+            if movable:
+                request.user.tv_auto_move_to_default_provider = False
+                request.user.save(update_fields=["tv_auto_move_to_default_provider"])
+                request.session["tv_provider_prompt"] = {
+                    "count": movable,
+                    "label": metadata_resolution.metadata_provider_label(source),
+                }
 
         if media_type == MediaTypes.ANIME.value:
             # Switching provider only decides the shape of newly added shows.

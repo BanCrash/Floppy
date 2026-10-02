@@ -5,12 +5,14 @@
 import logging
 from http import HTTPStatus as HTTP  # noqa: N814
 
+from django.conf import settings
 from django.http import HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 from rest_framework import views as drf_views
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from app.redis_diagnosis import queue_failure_message
 from integrations import exports, tasks
 from integrations.upload_staging import (
     enqueue_staged_task,
@@ -53,6 +55,17 @@ def _resolve_mode(request):
     return mode
 
 
+def _queue_failure_response(error):
+    """Return 503 naming an unreachable Redis broker rather than a bare 500."""
+    detail = queue_failure_message(
+        error,
+        "The import could not be queued.",
+        "",
+        settings.CELERY_BROKER_URL,
+    )
+    return Response({"detail": detail}, status=HTTP.SERVICE_UNAVAILABLE)
+
+
 # /api/v1/imports/[service]/
 class ImportDispatchView(drf_views.APIView):
     """Queue a one-off import for a service (mirrors the web import forms).
@@ -87,11 +100,15 @@ class ImportDispatchView(drf_views.APIView):
                     {"detail": f"{label} is required in 'username'."},
                     status=HTTP.BAD_REQUEST,
                 )
-            task = task_fn.delay(
-                username=username,
-                user_id=request.user.id,
-                mode=mode,
-            )
+            try:
+                task = task_fn.delay(
+                    username=username,
+                    user_id=request.user.id,
+                    mode=mode,
+                )
+            except Exception as error:
+                logger.exception("Could not queue %s import", label)
+                return _queue_failure_response(error)
             return Response({"task_id": task.id}, status=HTTP.ACCEPTED)
 
         if service in _FILE_IMPORTS:
@@ -119,12 +136,9 @@ class ImportDispatchView(drf_views.APIView):
                     mode=mode,
                     staged_paths=(staged_file,),
                 )
-            except Exception:
+            except Exception as error:
                 logger.exception("Could not queue %s upload", label)
-                return Response(
-                    {"detail": "The import could not be queued."},
-                    status=HTTP.SERVICE_UNAVAILABLE,
-                )
+                return _queue_failure_response(error)
             return Response({"task_id": task.id}, status=HTTP.ACCEPTED)
 
         return Response(

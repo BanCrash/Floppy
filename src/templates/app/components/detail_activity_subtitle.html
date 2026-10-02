@@ -1,5 +1,6 @@
 
 {% load i18n %}
+{% load app_tags %}
 {% load user_tags %}
 
 {% if activity_subtitle %}
@@ -15,7 +16,7 @@
       {% if activity_subtitle.duration_text %}
         <span class="inline-flex items-center">
           <span>
-            {{ activity_subtitle.duration_text|cut:" watched"|cut:" played"|cut:" listened"|cut:" read" }}{% if activity_subtitle.primary_text %} ({{ activity_subtitle.primary_text|cut:"Progress: " }}){% endif %}
+            {{ activity_subtitle.duration_text|cut:" watched"|cut:" played"|cut:" listened"|cut:" read" }}{% if activity_subtitle.primary_text %} ({{ activity_subtitle.primary_text|cut:"Progress: "|translate_activity_text:media_type }}){% endif %}
           </span>
         </span>
         {% if activity_subtitle.date_start or activity_subtitle.date_end %}
@@ -66,11 +67,7 @@
             @click="$dispatch('open-session-history')">
       {% if activity_subtitle.primary_text %}
         <span>
-          {% if "Progress: " in activity_subtitle.primary_text %}
-            {% blocktranslate trimmed with value_1=activity_subtitle.primary_text|cut:"Progress: " %}Progress: {{ value_1 }}{% endblocktranslate %}
-          {% else %}
-            {% translate activity_subtitle.primary_text %}
-          {% endif %}
+          {{ activity_subtitle.primary_text|translate_activity_text:media_type }}
         </span>
       {% endif %}
       {% if activity_subtitle.date_start or activity_subtitle.date_end %}

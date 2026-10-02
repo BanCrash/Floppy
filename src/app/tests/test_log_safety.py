@@ -188,6 +188,62 @@ class LogSafetyTests(SimpleTestCase):
             redact_secrets("headers={'trakt-api-key': 'floppy-web'}"),
         )
 
+    def test_redact_secrets_strips_urllib3_connection_host(self):
+        """A urllib3 debug log names the literal host it dials.
+
+        For a Plex custom server, that host is a direct route to the user's
+        self-hosted server (#1274), so it is redacted like a credential.
+        """
+        line = "Starting new HTTPS connection (1): myserver.duckdns.org:32400"
+
+        result = redact_secrets(line)
+
+        self.assertNotIn("myserver.duckdns.org", result)
+        self.assertEqual(
+            result, "Starting new HTTPS connection (1): [REDACTED]"
+        )
+
+    def test_redact_secrets_strips_urllib3_request_line_host(self):
+        line = (
+            'https://myserver.duckdns.org:32400 '
+            '"GET /library/sections?X-Plex-Token=abc HTTP/1.1" 200 760'
+        )
+
+        result = redact_secrets(line)
+
+        self.assertNotIn("myserver.duckdns.org", result)
+        self.assertEqual(
+            result,
+            'https://[REDACTED] "GET /library/sections?X-Plex-Token='
+            '[REDACTED] HTTP/1.1" 200 760',
+        )
+
+    def test_redact_secrets_strips_urllib3_connection_pool_host(self):
+        """urllib3's error text names the host in Celery failures (#1307)."""
+        line = (
+            'raised unexpected: ReadTimeout(ReadTimeoutError("HTTPSConnectionPool('
+            "host='myserver.duckdns.org', port=443): Read timed out. "
+            '(read timeout=20)"))'
+        )
+
+        result = redact_secrets(line)
+
+        self.assertNotIn("myserver.duckdns.org", result)
+        self.assertIn(
+            "HTTPSConnectionPool(host='[REDACTED]', port=443): Read timed out.",
+            result,
+        )
+
+    def test_redact_secrets_keeps_safe_url_diagnostics_intact(self):
+        """The urllib3 rules match only the third-party logger's own format.
+
+        A URL an app log line builds via ``safe_url()`` has no trailing
+        quoted HTTP method, so it must stay readable for diagnosis.
+        """
+        line = "plex sync failed for https://myserver.duckdns.org:32400/library/sections"
+
+        self.assertEqual(redact_secrets(line), line)
+
     def test_redact_secrets_strips_list_values(self):
         """Django writes form data as a QueryDict repr with list values."""
         result = redact_secrets("<QueryDict: {'password': ['plain-secret']}>")

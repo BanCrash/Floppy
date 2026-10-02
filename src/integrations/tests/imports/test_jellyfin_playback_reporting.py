@@ -188,7 +188,7 @@ class PlaybackReportingImporterTests(TestCase):
         mock_decrypt,
     ):
         season = SimpleNamespace(
-            watch=lambda episode_number, end_date, watch_operation_id: SimpleNamespace(
+            watch=lambda episode_number, end_date, watch_operation_id, entry_source=None: SimpleNamespace(
                 created=True,
             ),
         )

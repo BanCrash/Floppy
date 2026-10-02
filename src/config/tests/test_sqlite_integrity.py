@@ -1524,55 +1524,37 @@ class SqliteIntegrityTests(SimpleTestCase):
         self.assertEqual(status["phase"], "unknown")
         self.assertEqual(status["elapsed_seconds"], 600.0)
 
-    def test_entrypoint_bounds_integrity_check_without_background_polling(self):
+    def test_entrypoint_supervises_integrity_check_by_progress_not_wall_clock(self):
         script = ENTRYPOINT.read_text()
         check = (
-            'timeout "$integrity_timeout" python -c '
+            'python -m config.sqlite_startup_watchdog "$DB_FILE" python -c '
             "'from config.sqlite_recovery_policy import "
             "check_database_for_startup; import sys; "
-            'check_database_for_startup(sys.argv[1])\' "$DB_FILE"'
+            'check_database_for_startup(sys.argv[1])\' "$DB_FILE" &'
         )
 
         self.assertIn(check, script)
-        # The bound and the message it reports must come from one definition.
-        self.assertIn("integrity_timeout=600", script)
-        self.assertIn('"$DB_FILE" &', script)
-        # The heartbeat reads the status sidecar the scan itself writes; it
-        # must never poll the scanner's own PID or /proc directly, which is
-        # exactly what the old, removed heartbeat did.
+        # A wall-clock bound stops a slow but healthy scan. The watchdog owns
+        # the stall decision and the heartbeat; the shell only waits for it.
+        self.assertNotIn("integrity_timeout", script)
+        self.assertNotIn('timeout "$integrity', script)
+        self.assertNotIn("heartbeat_pid", script)
         self.assertNotIn("kill -0", script)
         self.assertNotIn("/proc/", script)
         self.assertNotIn("Still checking SQLite integrity", script)
-        self.assertIn("print_startup_heartbeat", script)
-        self.assertIn("sleep 30", script)
         launch = script.index(check)
         cleanup_trap = script.index(
             "trap 'kill \"$integrity_pid\" 2>/dev/null || :; "
-            'wait "$integrity_pid" 2>/dev/null || :; '
-            'kill "$heartbeat_pid" 2>/dev/null || :; '
-            "wait \"$heartbeat_pid\" 2>/dev/null || :; exit 0' TERM INT"
+            "wait \"$integrity_pid\" 2>/dev/null || :; exit 0' TERM INT"
         )
-        heartbeat_launch = script.index("heartbeat_pid=$!", launch)
-        wait = script.index('wait "$integrity_pid"', heartbeat_launch)
-        heartbeat_cleanup = script.index('kill "$heartbeat_pid"', wait)
-        heartbeat_wait = script.index('wait "$heartbeat_pid"', heartbeat_cleanup)
-        reset_trap = script.index("trap - TERM INT", heartbeat_wait)
+        wait = script.index('wait "$integrity_pid"', launch)
+        reset_trap = script.index("trap - TERM INT", wait)
         self.assertLess(cleanup_trap, launch)
-        self.assertLess(launch, heartbeat_launch)
-        self.assertLess(heartbeat_launch, wait)
-        self.assertLess(wait, heartbeat_cleanup)
-        self.assertLess(heartbeat_cleanup, heartbeat_wait)
-        self.assertLess(heartbeat_wait, reset_trap)
-        timeout_case = script.index("124|143)")
+        self.assertLess(launch, wait)
+        self.assertLess(wait, reset_trap)
+        timeout_case = script.index("124)", reset_trap)
         failure_case = script.index("*)", timeout_case)
-        self.assertIn(
-            "exceeded its ${integrity_timeout}s timeout",
-            script[timeout_case:failure_case],
-        )
-        self.assertIn(
-            "mark_startup_status_timeout",
-            script[timeout_case:failure_case],
-        )
+        self.assertIn("stopped making progress", script[timeout_case:failure_case])
         self.assertIn("integrity check failed", script[failure_case:])
         self.assertIn(
             "trap 'kill \"$parking_pid\" 2>/dev/null || :; "

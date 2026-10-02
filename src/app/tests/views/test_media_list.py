@@ -821,6 +821,21 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "My private note")
 
+    def test_table_layout_shows_capitalized_entry_source(self):
+        """The Source column shows each entry's source with display casing (issue #1258)."""
+        movie = Movie.objects.get(item__title="Test Movie 1", user=self.user)
+        movie.entry_source = "plex"
+        movie.save(update_fields=["entry_source"])
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?layout=table",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("entry_source", [c.key for c in response.context["resolved_columns"]])
+        self.assertContains(response, ">Plex</div>")
+        self.assertNotContains(response, ">plex</div>")
+
     def test_movie_grid_counts_completed_plays_when_progress_is_zero(self):
         """Completed movie duplicates should count as plays even when progress is zero."""
         item = Item.objects.get(
@@ -1486,6 +1501,51 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-status-label="no-status"')
         self.assertContains(response, "No Status")
+
+    def test_no_status_card_add_to_tracker_opens_modal(self):
+        """Regression for #1376: the card sent instance_id="None" and the modal 500ed."""
+        untracked_item = Item.objects.create(
+            media_id="21510",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Grid No Status Modal",
+            image="http://example.com/grid-no-status-modal.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_item,
+            media_type="digital",
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]),
+            {"search": "Grid No Status Modal", "layout": "grid", "status": "no_status"},
+        )
+        self.assertContains(response, "Grid No Status Modal")
+        self.assertNotContains(response, '"instance_id": "None"')
+
+        with (
+            mock.patch(
+                "app.providers.services.get_media_metadata",
+                return_value={
+                    "media_id": "21510",
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "title": "Grid No Status Modal",
+                    "image": "http://example.com/grid-no-status-modal.jpg",
+                    "max_progress": 1,
+                },
+            ),
+            mock.patch("app.models.Item.fetch_releases"),
+        ):
+            modal = self.client.get(
+                reverse(
+                    "track_modal",
+                    args=[Sources.TMDB.value, MediaTypes.MOVIE.value, "21510"],
+                ),
+                {"return_url": "/medialist/movie"},
+            )
+        self.assertEqual(modal.status_code, 200)
 
     def test_not_rated_filter_excludes_collected_untracked_items(self):
         rated_item = Item.objects.create(
@@ -3257,6 +3317,7 @@ class MediaListViewTests(TestCase):
                     "date_added",
                     "start_date",
                     "end_date",
+                    "entry_source",
                     "notes",
                     "synopsis",
                 ],
@@ -3327,6 +3388,7 @@ class MediaListViewTests(TestCase):
                 "release_date",
                 "date_added",
                 "end_date",
+                "entry_source",
                 "notes",
                 "synopsis",
             ],
@@ -3353,6 +3415,7 @@ class MediaListViewTests(TestCase):
                 "release_date",
                 "date_added",
                 "end_date",
+                "entry_source",
                 "notes",
                 "synopsis",
             ],
@@ -3419,6 +3482,7 @@ class MediaListViewTests(TestCase):
                 "Tags",
                 "Release Date",
                 "Date Added",
+                "Source",
                 "Notes",
                 "Description",
             ],
@@ -3461,6 +3525,7 @@ class MediaListViewTests(TestCase):
                 "Tags",
                 "Release Date",
                 "Date Added",
+                "Source",
                 "Notes",
                 "Description",
             ],
@@ -3496,6 +3561,7 @@ class MediaListViewTests(TestCase):
                     "tags",
                     "release_date",
                     "date_added",
+                    "entry_source",
                     "notes",
                     "synopsis",
                 ],
@@ -3519,6 +3585,7 @@ class MediaListViewTests(TestCase):
                 "tags",
                 "release_date",
                 "date_added",
+                "entry_source",
                 "notes",
                 "synopsis",
             ],

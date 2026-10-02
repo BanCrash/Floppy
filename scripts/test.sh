@@ -5,6 +5,8 @@
 # Usage:
 #   scripts/test.sh                       Fast suite (default; use this)
 #   scripts/test.sh <label> [...]         Targeted run, e.g. app.tests.test_query_counts
+#                                         (skips @tag("network"); run those with
+#                                         --network <label>)
 #   scripts/test.sh --full                Full suite incl. slow tests (20+ min,
 #                                         needs `playwright install`)
 #   scripts/test.sh --slow                Only @tag("slow") tests
@@ -65,6 +67,9 @@ case "${1:-}" in
       --exclude-tag slow --exclude-tag network
     ;;
   *)
-    exec "${RUNNER[@]}" src/manage.py test "${COMMON[@]}" "$@"
+    # Network tests cannot pass here: the offline guard is installed unless
+    # FLOPPY_TEST_ALLOW_NETWORK is set, so a targeted run of a module holding
+    # them failed for reasons unrelated to the change. Use --network <label>.
+    exec "${RUNNER[@]}" src/manage.py test "${COMMON[@]}" "$@" --exclude-tag network
     ;;
 esac

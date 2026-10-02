@@ -296,10 +296,10 @@ class PocketCastsImporter:
                     self.user.username,
                 )
             except Exception:
+                # Don't fail yet - let _ensure_valid_token handle it. A rejected
+                # login already marked the account broken; anything else (a
+                # timeout, a 5xx) says nothing about the credentials.
                 logger.exception("Failed to login when access token was missing")
-                # Mark as broken but don't fail yet - let _ensure_valid_token handle it
-                self.account.connection_broken = True
-                self.account.save()
         # If we have a refresh token but no access token (and no credentials), try to refresh immediately
         elif not has_access_token and has_refresh_token:
             logger.info(
@@ -313,12 +313,11 @@ class PocketCastsImporter:
                     self.user.username,
                 )
             except Exception:
+                # Don't fail yet - let _ensure_valid_token handle it. A rejected
+                # refresh already marked the account broken.
                 logger.exception(
                     "Failed to refresh token when access token was missing"
                 )
-                # Mark as broken but don't fail yet - let _ensure_valid_token handle it
-                self.account.connection_broken = True
-                self.account.save()
 
         # Allow import even if connection_broken - we'll attempt refresh/login in _ensure_valid_token
 
@@ -433,12 +432,27 @@ class PocketCastsImporter:
             # runs of ~1,019 seconds each walked ~11,000 episodes across 12
             # shows and imported nothing.
             catalog_index = self._load_catalog_index(show)
+            play_states = self._fetch_show_play_states(podcast_uuid)
             for metadata_ep in full_metadata.values():
                 catalog_episode_data = self._build_catalog_episode_data(
                     metadata_ep,
                     podcast_uuid,
                     podcast_meta,
                 )
+                # _process_episode() re-syncs a listened episode's catalog row
+                # from the merged play-state values (the user's own duration
+                # and isDeleted flag), which differ from the public feed's.
+                # Comparing and writing the feed values here would put them
+                # back on every poll, only for that pass to overwrite them
+                # again: two writes per listened episode per run, forever.
+                # Use the same merged values both passes will agree on.
+                play_state = (play_states or {}).get(metadata_ep.get("uuid"))
+                if play_state:
+                    merged = self._build_episode_data(
+                        play_state, metadata_ep, podcast_uuid, podcast_meta
+                    )
+                    if self._has_listening_activity(merged):
+                        catalog_episode_data = merged
                 self._count("examined")
                 if self._catalog_episode_unchanged(catalog_episode_data, catalog_index):
                     self._count("unchanged")
@@ -446,7 +460,6 @@ class PocketCastsImporter:
                 self._count("changed")
                 self._sync_catalog_episode(catalog_episode_data, show=show)
 
-            play_states = self._fetch_show_play_states(podcast_uuid)
             if play_states is None:
                 self.warnings.append(f"{show_title}: failed to sync play state")
                 continue
@@ -621,7 +634,7 @@ class PocketCastsImporter:
         counters = self._catalog_counters
         logger.info(
             "pocketcasts_catalog_sync user=%s shows=%s examined=%s unchanged=%s "
-            "changed=%s created=%s written=%s hydrated=%s",
+            "changed=%s created=%s written=%s hydrated=%s differs=%s",
             self.user.username,
             successful_show_syncs,
             counters["examined"],
@@ -630,6 +643,11 @@ class PocketCastsImporter:
             counters["created"],
             counters["written"],
             counters["hydrated"],
+            {
+                name.removeprefix("differs_"): count
+                for name, count in counters.items()
+                if name.startswith("differs_")
+            },
         )
 
         if successful_show_syncs == 0 and self.warnings:
@@ -707,7 +725,9 @@ class PocketCastsImporter:
                 self.user.username,
             )
             schedule_history_refresh(self.user.id)
-            statistics_cache.schedule_all_ranges_refresh(self.user.id)
+            statistics_cache.invalidate_all_statistics_days(
+                self.user.id, reason="pocketcasts_import"
+            )
 
         return imported_counts, "\n".join(self.warnings) if self.warnings else ""
 
@@ -747,7 +767,7 @@ class PocketCastsImporter:
 
         PeriodicTask.objects.filter(
             task="Import from Pocket Casts (Recurring)",
-            kwargs__contains=f'"user_id": {self.user.id}',
+            **helpers.periodic_task_user_kwargs(self.user.id),
         ).delete()
         logger.info("Removed scheduled imports for user %s", self.user.username)
 
@@ -868,8 +888,10 @@ class PocketCastsImporter:
                 except requests.HTTPError as e:
                     # If refresh fails with 401, _refresh_token will handle fallback to login if credentials exist
                     # For legacy accounts without credentials, disconnect
+                    # ``Response.__bool__`` is ``response.ok``, so an error
+                    # response is falsy: compare against None, not truthiness.
                     if (
-                        e.response
+                        e.response is not None
                         and e.response.status_code == requests.codes.unauthorized
                     ) and not has_credentials:
                         self._disconnect_account("Refresh token is invalid or expired")
@@ -1977,6 +1999,15 @@ class PocketCastsImporter:
             )
         }
 
+    def _differs(self, reason):
+        """Count why an episode failed the freshness check, and report False.
+
+        A run that "changed" thousands of episodes says nothing about *which*
+        field disagreed; this makes the next production log say so.
+        """
+        self._count(f"differs_{reason}")
+        return False
+
     def _catalog_episode_unchanged(self, episode_data, catalog_index):
         """Report whether syncing this episode would write nothing.
 
@@ -1987,10 +2018,10 @@ class PocketCastsImporter:
         """
         stored = catalog_index.get(episode_data.get("uuid"))
         if stored is None:
-            return False
+            return self._differs("index_miss")
 
         if stored["is_deleted"] != episode_data.get("isDeleted", False):
-            return False
+            return self._differs("is_deleted")
 
         published_raw = episode_data.get("published")
         if published_raw:
@@ -1999,7 +2030,7 @@ class PocketCastsImporter:
                 # Unparseable, so the sync would not write it either.
                 pass
             elif stored["published"] != datetime.fromtimestamp(published_ts, tz=UTC):
-                return False
+                return self._differs("published")
 
         for stored_field, incoming_key in self._CATALOG_COMPARISON_FIELDS:
             incoming = episode_data.get(incoming_key)
@@ -2008,14 +2039,14 @@ class PocketCastsImporter:
                     continue
                 coerced = self._coerce_nonnegative_int(incoming)
                 if coerced is not None and stored[stored_field] != coerced:
-                    return False
+                    return self._differs(stored_field)
                 continue
             if stored_field in ("slug", "file_type", "episode_type"):
                 # These write on "is not None", so "" is a real value.
                 if incoming is None:
                     continue
                 if stored[stored_field] != incoming:
-                    return False
+                    return self._differs(stored_field)
                 continue
             if stored_field == "duration":
                 # Compared through the same coercion the write uses, so a
@@ -2026,10 +2057,10 @@ class PocketCastsImporter:
                 # there, so it is not a difference here either.
                 coerced = self._coerce_duration(incoming)
                 if coerced and stored[stored_field] != coerced:
-                    return False
+                    return self._differs(stored_field)
                 continue
             if incoming and stored[stored_field] != incoming:
-                return False
+                return self._differs(stored_field)
 
         return True
 

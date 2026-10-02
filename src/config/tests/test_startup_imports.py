@@ -59,6 +59,8 @@ app.loader.import_default_modules()
 names = (
     "Resolve live playback image",
     "app.tasks.refresh_statistics_cache_task",
+    "app.tasks.statistics_sync_task",
+    "Reconcile statistics sync",
     "Process media server webhook",
     "Process Stremio playback webhook",
     "Verify Stremio playback completion",

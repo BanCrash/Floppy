@@ -1,9 +1,11 @@
+import re
 from datetime import datetime
 
 from django import template
 from django.templatetags.static import static
 from django.utils import formats, timezone
 from django.utils.html import format_html
+from django.utils.translation import gettext, gettext_noop, ngettext
 
 from users.appearance import (
     BASIC_THEME_KEYS,
@@ -14,6 +16,89 @@ from users.appearance import (
 from users.models import DateFormatChoices, TimeFormatChoices
 
 register = template.Library()
+
+
+_IMPORT_MEDIA_LABELS = {
+    "TV Show": (gettext_noop("TV Show"), gettext_noop("TV Shows")),
+    "TV Season": (gettext_noop("TV Season"), gettext_noop("TV Seasons")),
+    "Episode": (gettext_noop("Episode"), gettext_noop("Episodes")),
+    "Movie": (gettext_noop("Movie"), gettext_noop("Movies")),
+    "Book": (gettext_noop("Book"), gettext_noop("Books")),
+    "Anime": (gettext_noop("Anime title"), gettext_noop("Anime titles")),
+    "Manga": (gettext_noop("Manga title"), gettext_noop("Manga titles")),
+    "Game": (gettext_noop("Game"), gettext_noop("Games")),
+    "Comic": (gettext_noop("Comic"), gettext_noop("Comics")),
+    "Comic Issue": (gettext_noop("Comic Issue"), gettext_noop("Comic Issues")),
+    "Board Game": (gettext_noop("Board Game"), gettext_noop("Board Games")),
+    "Music": (gettext_noop("Music item"), gettext_noop("Music items")),
+    "Podcast": (gettext_noop("Podcast"), gettext_noop("Podcasts")),
+    "list": (gettext_noop("list"), gettext_noop("lists")),
+    "collection entry": (
+        gettext_noop("collection entry"),
+        gettext_noop("collection entries"),
+    ),
+    "collection entries": (
+        gettext_noop("collection entry"),
+        gettext_noop("collection entries"),
+    ),
+}
+
+
+@register.filter
+def translate_import_summary(value):
+    """Localize legacy English import summaries stored by background tasks."""
+    if not value:
+        return value
+
+    exact = {
+        "No media was imported.": gettext("No media was imported."),
+        "This task was cancelled before it finished.": gettext(
+            "This task was cancelled before it finished."
+        ),
+        "Unexpected error occurred while processing the task.": gettext(
+            "Unexpected error occurred while processing the task."
+        ),
+    }
+    if value in exact:
+        return exact[value]
+
+    match = re.fullmatch(r"Imported (.+)\.", str(value))
+    if not match:
+        return gettext(value)
+
+    raw_parts = re.split(r",\s*|\s+and\s+", match.group(1))
+    translated = []
+    total = 0
+    for part in raw_parts:
+        item = re.fullmatch(r"(\d+)\s+(.+)", part)
+        if not item:
+            translated.append(part)
+            continue
+        count = int(item.group(1))
+        total += count
+        english_label = item.group(2)
+        labels = _IMPORT_MEDIA_LABELS.get(english_label)
+        if labels is None:
+            labels = _IMPORT_MEDIA_LABELS.get(english_label.removesuffix("s"))
+        label = (
+            gettext(labels[0 if count == 1 else 1])
+            if labels
+            else gettext(english_label)
+        )
+        translated.append(f"{count} {label}")
+
+    if len(translated) > 1:
+        joined = gettext("%(head)s and %(tail)s") % {
+            "head": ", ".join(translated[:-1]),
+            "tail": translated[-1],
+        }
+    else:
+        joined = translated[0]
+    return ngettext(
+        "Imported %(items)s.",
+        "Imported %(items)s.",
+        total,
+    ) % {"items": joined}
 
 
 @register.simple_tag
@@ -111,6 +196,14 @@ SOURCES_CONFIG = {
         "name": "Storyteller",
         "logo": static("img/storyteller-logo.svg"),
     },
+    "kavita": {
+        "name": "Kavita",
+        "logo": static("img/kavita-logo.svg"),
+    },
+    "komga": {
+        "name": "Komga",
+        "logo": static("img/komga-logo.svg"),
+    },
     "koreader": {
         "name": "KOReader",
         "logo": static("img/koreader-logo.svg"),
@@ -147,6 +240,10 @@ SOURCES_CONFIG = {
         "name": "IGDB",
         "logo": static("img/igdb-logo.png"),
     },
+    "opencritic": {
+        "name": "OpenCritic",
+        "logo": static("img/opencritic-logo.svg"),
+    },
     "hardcover": {
         "name": "Hardcover",
         "logo": static("img/hardcover-logo.png"),
@@ -163,6 +260,10 @@ SOURCES_CONFIG = {
         "name": "TV Time",
         "logo": static("img/tvtime-logo.png"),
     },
+    "wetrakr": {
+        "name": "WeTrakr",
+        "logo": static("img/wetrakr-logo.svg"),
+    },
     "radarr": {
         "name": "Radarr",
         "logo": static("img/plex-logo.svg"),
@@ -170,6 +271,18 @@ SOURCES_CONFIG = {
     "sonarr": {
         "name": "Sonarr",
         "logo": static("img/plex-logo.svg"),
+    },
+    "mylar": {
+        "name": "Mylar3",
+        "logo": static("img/mylar-logo.png"),
+    },
+    "kapowarr": {
+        "name": "Kapowarr",
+        "logo": static("img/kapowarr-logo.png"),
+    },
+    "gcd": {
+        "name": "Grand Comics Database",
+        "logo": static("img/gcd-logo.png"),
     },
 }
 

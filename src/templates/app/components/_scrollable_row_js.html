@@ -284,6 +284,10 @@
       if (freshTotal !== null && freshTotal !== undefined) {
         row.dataset.totalCount = freshTotal;
       }
+      const freshSeed = xhr && xhr.getResponseHeader('X-Home-Row-Seed');
+      if (freshSeed !== null && freshSeed !== undefined) {
+        row.dataset.seed = freshSeed;
+      }
       row.dataset.loading = 'false';
     }
   });

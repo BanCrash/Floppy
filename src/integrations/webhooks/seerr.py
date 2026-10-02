@@ -202,7 +202,7 @@ class SeerrWebhookProcessor:
         return item
 
     def _get_or_create_user_media(self, user, item, media_type, desired_status):
-        defaults = {"status": desired_status}
+        defaults = {"status": desired_status, "entry_source": "jellyseerr"}
 
         model = Movie if media_type == MediaTypes.MOVIE.value else TV
         model_fields = {field.name for field in model._meta.fields}

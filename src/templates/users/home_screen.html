@@ -1,7 +1,6 @@
 {% extends "users/base.html" %}
 {% load i18n %}
 
-
 {% block title %}
   {% translate "Home Screen - Floppy" %}
 {% endblock title %}
@@ -79,15 +78,17 @@
                    class="rounded-md border border-[var(--color-surface-border)]"
                    :data-home-row-list="section.media_type">
                 <template x-for="row in section.rows" :key="row.client_id">
-                  <article class="relative border-t border-[var(--color-surface-strong)] first:rounded-t-md first:border-t-0 last:rounded-b-md"
+                  <article class="home-settings-row relative border-t border-[var(--color-surface-strong)] first:rounded-t-md first:border-t-0 last:rounded-b-md"
                            x-data="{ openMenu: null, filterView: 'root', filterSearch: '', hovering: false, isDesktop: window.matchMedia('(min-width: 1024px)').matches }"
+                           :class="{ 'z-50': openMenu !== null || row.editorOpen }"
+                           @keydown.escape="if (openMenu !== null) { $event.stopPropagation(); $event.preventDefault(); $event.target.closest('.filter-control')?.querySelector('button')?.focus(); openMenu = null; filterView = 'root'; filterSearch = ''; }"
                            @mouseenter="hovering = true"
                            @mouseleave="if (openMenu === null && !row.editorOpen) hovering = false"
                            @focusin="hovering = true"
                            @focusout="if (!($el.contains($event.relatedTarget))) { hovering = false }"
                            @click="hovering = true"
                            :data-row-client-id="row.client_id">
-                    <div class="h-10 rounded-[inherit] bg-[var(--color-hover-dim)] px-3 transition-colors hover:bg-[var(--color-surface)]">
+                    <div class="home-settings-row-body h-10 rounded-[inherit] bg-[var(--color-hover-dim)] px-3 transition-colors hover:bg-[var(--color-surface)]">
                       <div class="flex h-full min-w-0 items-center gap-2">
                         <button type="button"
                                 class="drag-handle hidden h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-surface-hover)] bg-[var(--color-page-bg)] text-slate-400 transition-colors hover:text-[var(--color-text)] cursor-grab active:cursor-grabbing lg:inline-flex"
@@ -95,7 +96,7 @@
                           {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
                         </button>
 
-                        <div class="min-w-0 flex-1">
+                        <div class="home-settings-row-title min-w-0 flex-1">
                           <input type="text"
                                  x-model="row.custom_title"
                                  maxlength="100"
@@ -114,12 +115,13 @@
                              x-transition:leave="transition ease-in duration-100"
                              x-transition:leave-start="opacity-100"
                              x-transition:leave-end="opacity-0"
-                             class="flex shrink-0 items-center gap-1 whitespace-nowrap">
+                             class="home-settings-row-controls flex shrink-0 items-center gap-1 whitespace-nowrap">
                           <template x-if="row.row_type === 'library_query'">
                             <div class="relative filter-control"
                                  @click.outside="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; }">
                               <button type="button"
-                                      class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      :aria-expanded="openMenu === 'filter'"
                                       @click.stop="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; } else { openMenu = 'filter'; filterView = 'root'; filterSearch = ''; }">
                                 <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]" x-text="rowFilterLabel(section, row)"></span>
                                 <svg xmlns="http://www.w3.org/2000/svg"
@@ -195,7 +197,8 @@
                           <template x-if="row.row_type === 'library_query'">
                             <div class="relative filter-control" @click.outside="if (openMenu === 'status') openMenu = null">
                               <button type="button"
-                                      class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      :aria-expanded="openMenu === 'status'"
                                       @click.stop="openMenu = openMenu === 'status' ? null : 'status'">
                                 <span x-text="statusButtonLabel(section, row)"></span>
                                 <svg xmlns="http://www.w3.org/2000/svg"
@@ -222,7 +225,8 @@
                           <template x-if="row.row_type !== 'recently_unrated'">
                             <div class="relative filter-control" @click.outside="if (openMenu === 'sort') openMenu = null">
                               <button type="button"
-                                      class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                      :aria-expanded="openMenu === 'sort'"
                                       @click.stop="openMenu = openMenu === 'sort' ? null : 'sort'">
                                 <span x-text="sortButtonLabel(section, row)"></span>
                                 <svg xmlns="http://www.w3.org/2000/svg"
@@ -256,7 +260,7 @@
 
                           <template x-if="row.row_type === 'custom_list'">
                             <button type="button"
-                                    class="flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                                    class="home-settings-chip flex items-center px-2 py-2 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                     @click.stop="openMenu = null; row.editorOpen = !row.editorOpen">
                               <span x-text="row.custom_list_name || gettext('Choose List')"></span>
                               <svg xmlns="http://www.w3.org/2000/svg"
@@ -319,9 +323,13 @@
               </div>
 
               <div class="mt-4 flex flex-wrap items-center gap-2">
-                <div class="relative" @click.outside="section.addRowMenuOpen = false">
+                <div class="relative"
+                     :class="{ 'z-50': section.addRowMenuOpen }"
+                     @keydown.escape="if (section.addRowMenuOpen) { $event.stopPropagation(); $event.preventDefault(); section.addRowMenuOpen = false; $el.querySelector('button').focus(); }"
+                     @click.outside="section.addRowMenuOpen = false">
                   <button type="button"
                           class="inline-flex items-center rounded-md border border-[var(--color-surface-border)] bg-[var(--color-panel)] px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-muted)] cursor-pointer"
+                          :aria-expanded="section.addRowMenuOpen"
                           @click="section.addRowMenuOpen = !section.addRowMenuOpen">
                     {% include "app/icons/plus.svg" with classes="mr-2 h-4 w-4" %}
                     {% translate "Add Row" %}
@@ -449,6 +457,7 @@
         sortables: [],
         sortableLoadPromise: null,
         nextRowId: 0,
+        subviewDefaults: { music: 'tracks', podcast: 'shows' },
         init() {
           window.homeScreenSettingsInstance = this;
           this.nextRowId = this.sections.reduce((maxId, section) => {
@@ -633,8 +642,8 @@
           else if (statuses.length > 1) parts.push(interpolate(ngettext('%s status', '%s Statuses', statuses.length), [statuses.length]));
           else parts.push(gettext('Library'));
 
-          if (section.media_type === 'music') {
-            const subview = row.filters?.subview || 'tracks';
+          if (section.media_type in this.subviewDefaults) {
+            const subview = row.filters?.subview || this.subviewDefaults[section.media_type];
             const subviewField = (section.filter_fields || []).find(field => field.key === 'subview');
             const subviewOption = (subviewField?.options || []).find(option => option.value === subview);
             const subviewLabel = subviewOption ? subviewOption.label : subview;
@@ -808,7 +817,7 @@
             tag: [],
             tag_mode: 'or'
           };
-          if (section.media_type === 'music') defaults.subview = 'tracks';
+          if (section.media_type in this.subviewDefaults) defaults.subview = this.subviewDefaults[section.media_type];
           if (section.media_type === 'all') {
             const mediaTypeField = this.fieldDefinition(section, 'media_types');
             defaults.media_types = (mediaTypeField?.options || section.available_media_types || [])

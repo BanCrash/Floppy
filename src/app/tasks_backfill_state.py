@@ -7,6 +7,7 @@ import logging
 from collections import defaultdict
 from datetime import timedelta
 
+import requests
 from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
@@ -67,6 +68,15 @@ def is_terminal_backfill_error(exc: BaseException) -> bool:
     including an unconfigured provider, and any exception this code did not
     anticipate - stays retryable, because the cost of wrongly retrying is one
     request and the cost of wrongly retiring is silent permanent data loss.
+
+    Production evidence (2026-09-20): passes were still reporting 149 failures
+    out of 150 every fifteen minutes. ``services.api_request`` deliberately
+    re-raises a bare ``requests.exceptions.HTTPError`` for any 4xx it does not
+    retry, leaving each provider to wrap it in ``handle_error``; musicbrainz,
+    trakt and tvmaze never did. So a MusicBrainz 404 arrived here as a raw
+    ``HTTPError``, matched neither branch, and was retried forever. The status
+    set is the same either way - this makes the unwrapped path behave like the
+    wrapped one rather than making anything newly terminal.
     """
     from app.providers.services import ProviderAPIError
 
@@ -76,6 +86,13 @@ def is_terminal_backfill_error(exc: BaseException) -> bool:
         # ProviderNotConfiguredError carries no response, so status_code is
         # None and it correctly lands here as transient.
         return exc.status_code in TERMINAL_PROVIDER_STATUS_CODES
+    if isinstance(exc, requests.exceptions.HTTPError):
+        # Matched on the concrete type, not on "has a .response": any
+        # exception can carry that attribute, and retiring an item on a
+        # duck-typed match is the silent data loss this function exists to
+        # avoid. A response-less HTTPError has no status and stays retryable.
+        status_code = getattr(exc.response, "status_code", None)
+        return status_code in TERMINAL_PROVIDER_STATUS_CODES
     return False
 
 
@@ -511,8 +528,15 @@ def _schedule_metadata_statistics_refresh(items, field: str, reason: str):
     for user_id, day_keys in user_day_keys.items():
         if not day_keys:
             continue
-        statistics_cache.mark_metadata_refreshing(user_id, reason=reason)
-        statistics_cache.invalidate_statistics_days(user_id, day_keys, reason=reason)
+        if field == MetadataBackfillField.CREDITS:
+            # Day payloads carry no credits (talent is aggregated per range
+            # from the database), so re-aggregating is enough. Rebuilding the
+            # days turned every backfill batch into hundreds of day builds.
+            statistics_cache.invalidate_statistics_cache(user_id)
+        else:
+            statistics_cache.invalidate_statistics_days(
+                user_id, day_keys, reason=reason
+            )
         statistics_cache.schedule_all_ranges_refresh(
             user_id,
             debounce_seconds=10,

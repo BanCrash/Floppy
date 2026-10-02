@@ -14,7 +14,7 @@ from django.test.utils import CaptureQueriesContext
 
 from app.models import Item, MediaTypes, Movie, Sources, Status
 from lists.models import CustomList, CustomListItem
-from users.home_screen import _custom_list_entries
+from users.home_screen import _custom_list_row_window
 from users.models import HomeScreenRow, HomeScreenRowTypeChoices
 
 ITEM_COUNT = 10
@@ -55,7 +55,7 @@ class HomeCardProjectionTests(TestCase):
     def test_watch_providers_is_never_selected_for_a_custom_list_row(self):
         """Neither the item query nor the media query may load it."""
         with CaptureQueriesContext(connection) as captured:
-            entries = _custom_list_entries(self.user, self.row)
+            entries, _total = _custom_list_row_window(self.user, self.row, 0, 100, seed=0)
 
         self.assertEqual(len(entries), ITEM_COUNT)
         loading = [
@@ -71,7 +71,7 @@ class HomeCardProjectionTests(TestCase):
 
     def test_the_cards_still_carry_what_they_render(self):
         """Projection is invisible to the row: same items, same media."""
-        entries = _custom_list_entries(self.user, self.row)
+        entries, _total = _custom_list_row_window(self.user, self.row, 0, 100, seed=0)
 
         titles = sorted(entry.item.title for entry in entries)
         self.assertEqual(titles[0], "Projection Movie 0")
