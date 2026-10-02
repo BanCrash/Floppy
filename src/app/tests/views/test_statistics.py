@@ -243,6 +243,23 @@ class StatisticsViewTests(TestCase):
         self.assertIn("status_pie_chart_data", response.context)
         self.assertIn("daily_hours_by_media_type", response.context)
 
+    def test_activity_heatmap_month_labels_share_the_week_grid(self):
+        """Month labels must sit on the same grid tracks as the week columns."""
+        response = self.client.get(
+            reverse("statistics") + "?start-date=2026-07-01&end-date=2026-10-01",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        weeks = len(response.context["activity_data"]["calendar_weeks"])
+        self.assertGreater(weeks, 0)
+        html = response.content.decode()
+        tracks = f"grid-template-columns: repeat({weeks}, minmax(1rem, 20px))"
+        self.assertEqual(html.count(tracks), 2)  # months row + weeks grid
+        months_row = html.split(tracks)[1]
+        spans = [int(n) for n in re.findall(r"grid-column: span (\d+)", months_row)]
+        self.assertTrue(spans)
+        self.assertLessEqual(sum(spans), weeks)
+
     @patch("app.statistics_views.tvdb.enabled", return_value=True)
     def test_statistics_view_shows_anime_genre_preference_when_supported(
         self, _mock_tvdb_enabled
@@ -1736,6 +1753,61 @@ class StatisticsViewTests(TestCase):
         _, start_date, end_date = mock_top_talent.call_args.args[:3]
         self.assertTrue(timezone.is_aware(start_date))
         self.assertTrue(timezone.is_aware(end_date))
+
+    def test_activity_heatmap_counts_are_split_by_media_type(self):
+        """Each heatmap day carries per-media-type counts for the type filter."""
+        now = timezone.now()
+        movie_item = Item.objects.create(
+            media_id="heat-movie",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Heatmap Movie",
+            image="http://example.com/heat-movie.jpg",
+            runtime_minutes=100,
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=now,
+            end_date=now,
+        )
+        book_item = Item.objects.create(
+            media_id="heat-book",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Heatmap Book",
+            image="http://example.com/heat-book.jpg",
+            number_of_pages=200,
+        )
+        Book.objects.create(
+            item=book_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=200,
+            start_date=now,
+            end_date=now,
+        )
+
+        today = timezone.localdate()
+        data = statistics_cache._aggregate_statistics_from_days(
+            self.user,
+            [today],
+            start_date=None,
+            end_date=None,
+            build_missing=True,
+        )
+
+        days = [
+            day
+            for week in data["activity_data"]["calendar_weeks"]
+            for day in week
+            if day["date"] == today.isoformat()
+        ]
+        self.assertEqual(len(days), 1)
+        self.assertEqual(days[0]["by_type"], {"movie": 1, "book": 1})
+        self.assertEqual(days[0]["count"], 2)
 
     def test_statistics_view_includes_top_talent_sections(self):
         """Top cast/crew and studio sections should be present in context."""

@@ -780,6 +780,45 @@ function initStatisticsCharts() {
     boardgame: "Board Game", game: "Game", manga: "Manga",
   };
 
+  // ─── Activity History heatmap ──────────────────────────────────────────────
+  // The server renders every day for all media types; cells with activity carry
+  // their per-type counts so the heatmap can follow the media-type filter.
+  const HEATMAP_LEVEL_CLASSES = ["bg-[var(--color-surface-muted)]", "bg-indigo-700", "bg-indigo-600", "bg-indigo-500", "bg-indigo-400"];
+
+  // Same thresholds as stats_activity.get_level.
+  function heatmapLevel(count) {
+    if (count <= 0) return 0;
+    if (count <= 3) return 1;
+    if (count <= 6) return 2;
+    if (count <= 9) return 3;
+    return 4;
+  }
+
+  function updateActivityHeatmap() {
+    const heatmap = document.getElementById("activityHistory");
+    const cells = heatmap ? heatmap.querySelectorAll("[data-heatmap-counts]") : [];
+    if (!cells.length) return;
+    const types = getCurrentMediaTypes();
+    cells.forEach(function (cell) {
+      let count = 0;
+      cell.dataset.heatmapCounts.split(",").forEach(function (pair) {
+        const [type, n] = pair.split(":");
+        if (types.length === 0 || types.includes(type)) count += Number(n) || 0;
+      });
+      cell.classList.remove(...HEATMAP_LEVEL_CLASSES);
+      cell.classList.add(HEATMAP_LEVEL_CLASSES[heatmapLevel(count)]);
+      // The server rendered the translated tooltip for 0, 1 and 2 (the locale's
+      // plural rule decides which wording each uses); swap in the real count
+      // first (the template has no other digits), then the date.
+      const marker = count > 2 ? "2" : String(count);
+      const template = heatmap.dataset["title" + marker];
+      cell.title = template.replace(marker, String(count)).replace("__DATE__", cell.dataset.heatmapDate);
+    });
+  }
+
+  updateActivityHeatmap();
+  window.addEventListener("stats-media-type-changed", updateActivityHeatmap);
+
   // ─── Activity Rhythm SVG dot matrix ────────────────────────────────────────
   const weekdayHourEl = document.getElementById("weekday_hour_chart_data");
   const rhythmContainer = document.getElementById("activityRhythmContainer");

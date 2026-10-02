@@ -12,6 +12,7 @@
     sort: '{{ sort_by }}',
     direction: '{{ direction }}',
     layout: '{{ layout }}',
+    group: '{% if group_by_type %}type{% endif %}',
     renderedLayout: '{{ layout }}',
     type: '{{ media_type|default:'all' }}',
     format: '{{ format_filter|default:'all' }}',
@@ -58,6 +59,7 @@
       <input type="hidden" name="sort" x-model="sort">
       <input type="hidden" name="direction" x-model="direction">
       <input type="hidden" name="layout" x-model="layout">
+      <input type="hidden" name="group" x-model="group">
       <input type="hidden" name="type" x-model="type">
       <input type="hidden" name="format" x-model="format">
       <input type="hidden" name="resolution" x-model="resolution">
@@ -522,6 +524,20 @@
                         @click="setSort('{{ value }}'); open = false"
                         type="button">{% translate label %}</button>
               {% endfor %}
+              <div class="border-t border-gray-700 my-1"></div>
+              <button hx-get="{% url 'collection_list' %}"
+                      hx-target="#collection-view"
+                      hx-include="#filter-form"
+                      hx-indicator="#collection-loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                      :disabled="type !== 'all' || layout === 'table'"
+                      role="menuitemcheckbox"
+                      :aria-checked="(group === 'type').toString()"
+                      @click="group = (group === 'type') ? '' : 'type'; open = false"
+                      type="button">
+                <span>{% translate "Group by media type" %}</span>
+                <span class="ml-auto" x-show="group === 'type' && type === 'all' && layout !== 'table'">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+              </button>
             </div>
           </div>
 
@@ -564,3 +580,7 @@
     </div>
   </div>
 {% endblock content %}
+
+{% block js %}
+  {% include "app/components/_scrollable_row_js.html" %}
+{% endblock js %}
