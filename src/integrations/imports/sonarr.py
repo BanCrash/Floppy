@@ -57,7 +57,11 @@ class SonarrClient:
         if response.status_code >= HTTP_STATUS_BAD_REQUEST:
             msg = f"Sonarr request failed ({response.status_code}) for {path}"
             raise MediaImportError(msg)
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as error:
+            msg = "Sonarr returned a response that is not JSON"
+            raise MediaImportError(msg) from error
 
     def healthcheck(self):
         """Verify connection."""

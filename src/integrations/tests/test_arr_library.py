@@ -147,6 +147,13 @@ class RadarrPanelTests(TestCase):
         self.instance.refresh_from_db()
         self.assertFalse(self.instance.connection_broken)
 
+    def test_non_json_reply_becomes_an_error_panel(self):
+        html = _response({})
+        html.json.side_effect = requests.JSONDecodeError("Expecting value", "<html>", 0)
+        with patch(RADARR_GET, return_value=html):
+            (panel,) = self._panels()
+        self.assertEqual(panel["error"], "Can't reach Radarr.")
+
     def test_non_tmdb_movie_is_not_looked_up(self):
         with patch(RADARR_GET) as mock_get:
             panels = arr_library.library_panels(self.user, "manual", "movie", "1")
@@ -483,6 +490,35 @@ class LibraryPanelViewTests(TestCase):
         self.assertContains(response, "Requests")
         self.assertContains(response, "maya")
         self.assertContains(response, "Approved")
+
+    def test_episode_lists_only_requests_for_its_season(self):
+        RadarrInstance.objects.all().delete()
+        self.user.seerr_url = "http://seerr:5055"
+        self.user.seerr_api_key = helpers.encrypt("key")
+        self.user.save()
+        payload = {
+            "mediaInfo": {
+                "requests": [
+                    {
+                        "status": 2,
+                        "createdAt": "2026-09-22T10:00:00Z",
+                        "requestedBy": {"username": "maya"},
+                        "seasons": [{"seasonNumber": 1}],
+                    },
+                    {
+                        "status": 2,
+                        "createdAt": "2026-09-23T10:00:00Z",
+                        "requestedBy": {"username": "sam"},
+                        "seasons": [{"seasonNumber": 2}],
+                    },
+                ]
+            }
+        }
+        url = reverse("library_panel", args=["tmdb", "episode", "95396"])
+        with patch(SEERR_SEND, return_value=_response(payload)):
+            response = self.client.get(url, {"season_number": 2, "episode_number": 1})
+        self.assertContains(response, "sam")
+        self.assertNotContains(response, "maya")
 
     def test_seerr_failure_is_shown_in_the_requests_box_only(self):
         self.user.seerr_url = "http://seerr:5055"

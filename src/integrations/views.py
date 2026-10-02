@@ -5813,7 +5813,9 @@ def library_panel(request, source, media_type, media_id):
         try:
             seerr_requests = seerr_api.requests_for(
                 seerr_api.SeerrClient.for_user(user).media(seerr_type, media_id),
-                season_number=season if media_type == MediaTypes.SEASON.value else None,
+                season_number=(
+                    None if media_type == MediaTypes.TV.value else season
+                ),
             )
         except (seerr_api.SeerrError, helpers.MediaImportError) as exc:
             seerr_error = str(exc)

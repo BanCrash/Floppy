@@ -52,7 +52,11 @@ class RadarrClient:
         if response.status_code >= HTTPStatus.BAD_REQUEST:
             msg = f"Radarr request failed ({response.status_code}) for {path}"
             raise MediaImportError(msg)
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as error:
+            msg = "Radarr returned a response that is not JSON"
+            raise MediaImportError(msg) from error
 
     def healthcheck(self):
         """Verify connection."""
