@@ -1,5 +1,6 @@
 """Drop-in music listen hooks."""
 
+import gc
 import tempfile
 from pathlib import Path
 
@@ -30,6 +31,16 @@ class MusicListenHookTests(SimpleTestCase):
             )
             with override_settings(MUSIC_HOOKS_DIR=tmp):
                 load_music_listen_hooks()
+                gc.collect()  # a hook must survive garbage collection
                 music_listen_recorded.send(sender=object, music="row", event="evt")
             self.assertEqual(marker.read_text(), "row|evt")
         music_listen_recorded.disconnect(dispatch_uid="test-capture")
+
+    def test_broken_hook_file_does_not_stop_startup(self):
+        """A hook that raises on import is logged and skipped."""
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a_broken.py").write_text("raise RuntimeError('bad hook')\n")
+            with override_settings(MUSIC_HOOKS_DIR=tmp), self.assertLogs(
+                "app.signals_music", "ERROR"
+            ):
+                load_music_listen_hooks()

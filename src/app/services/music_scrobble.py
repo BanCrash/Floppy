@@ -239,14 +239,25 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
             _maybe_refresh_album_cover(album)
             _prefetch_missing_covers(artist, force=force_cover_prefetch)
 
-    if music is not None and event.origin_url and music.origin_url != event.origin_url:
-        music.origin_url = event.origin_url
+    origin_url = event.origin_url
+    if (
+        origin_url
+        and len(origin_url) <= Music._meta.get_field("origin_url").max_length
+        and music.origin_url != origin_url
+    ):
+        music.origin_url = origin_url
         music.save(update_fields=["origin_url"])
 
-    if music is not None:
-        from app.signals_music import music_listen_recorded
+    from app.signals_music import music_listen_recorded
 
-        music_listen_recorded.send(sender=Music, music=music, event=event)
+    # send_robust: a failing hook is logged, never a failed scrobble.
+    for receiver, result in music_listen_recorded.send_robust(
+        sender=Music, music=music, event=event
+    ):
+        if isinstance(result, Exception):
+            logger.error(
+                "Music listen hook %r failed: %s", receiver, exception_summary(result)
+            )
 
     return music
 

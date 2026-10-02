@@ -5,6 +5,7 @@ Receivers must not block. A receiver's job is to enqueue work and return.
 
 import importlib.util
 import logging
+import sys
 from pathlib import Path
 
 from django.conf import settings
@@ -37,5 +38,12 @@ def load_music_listen_hooks():
             logger.warning("Skipping music listen hook %s: no loader", path)
             continue
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        # @receiver holds its function weakly; without a reference to the
+        # module, garbage collection silently unhooks it.
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            logger.exception("Music listen hook %s failed to load", path.name)
+            continue
         logger.info("Loaded music listen hook %s", path.name)
