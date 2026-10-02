@@ -373,6 +373,7 @@ Notes:
 - Ruff config lives in `pyproject.toml` and excludes `migrations/`.
 - Djlint config is in `pyproject.toml`; Stylelint config is in `.stylelintrc`.
 - After model changes, keep migration files under `src/*/migrations/` and run `uv run --no-sync python src/manage.py migrate`.
+- A PR that touches a migration must contain every migration already on `latest` (`.github/workflows/migration-order.yml`, checked by `scripts/check_migration_order.py`). When it fails, merge `latest` into the branch and point your migration at the new leaf; never add your own merge migration.
 - Media type changes follow `docs/agents/media_type_integration.md` (`app.models.choices.MediaTypes` vocabulary + `app.config.MEDIA_TYPE_CONFIG` wiring).
 
 ## PR / Commit Expectations
