@@ -522,7 +522,7 @@ def _attach_media(user, batch: list[Candidate], needs: set[str]) -> None:
         ).select_related("item")
         # Progress and derived status read episodes and seasons; fetch them
         # once for the batch instead of once per row.
-        rows = BasicMedia.objects._apply_prefetch_related(rows, media_type)
+        rows = BasicMedia.objects._apply_prefetch_related(rows, media_type, compact_episodes=True)
         aggregated = BasicMedia.objects._aggregate_duplicate_data(rows, user, media_type)
         latest = {}
         for media in aggregated:

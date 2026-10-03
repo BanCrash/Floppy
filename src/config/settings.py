@@ -25,6 +25,8 @@ from decouple import (
 from django.core.cache import CacheKeyWarning
 from django.core.exceptions import ImproperlyConfigured
 from django.db.backends.signals import connection_created
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 from config.runtime_profile import (
     PROFILE as RESOURCE_PROFILE,
@@ -332,14 +334,18 @@ SPECTACULAR_SETTINGS = {
 if ENABLE_DEBUG_TOOLBAR:
     INSTALLED_APPS.append("debug_toolbar")
 
-# Slow-request instrumentation: log requests exceeding either threshold.
+# Performance instrumentation: thresholded request and task summaries.
 PERF_LOG_ENABLED = config("PERF_LOG_ENABLED", default=True, cast=bool)
 PERF_LOG_SLOW_REQUEST_MS = config("PERF_LOG_SLOW_REQUEST_MS", default=500, cast=int)
+PERF_LOG_SLOW_TASK_MS = config("PERF_LOG_SLOW_TASK_MS", default=5000, cast=int)
 PERF_LOG_QUERY_COUNT_THRESHOLD = config(
     "PERF_LOG_QUERY_COUNT_THRESHOLD",
     default=75,
     cast=int,
 )
+TRAKT_IMPORT_CHUNK_ROWS = config("TRAKT_IMPORT_CHUNK_ROWS", default=100, cast=int)
+TRAKT_IMPORT_CHUNK_TARGET_MS = config("TRAKT_IMPORT_CHUNK_TARGET_MS", default=100, cast=int)
+TRAKT_IMPORT_STAGING_BYTES = config("TRAKT_IMPORT_STAGING_BYTES", default=512 * 1024 * 1024, cast=int)
 
 # High-water memory attribution (app/memory_envelope.py). Separate from the
 # slow-request log above: that one answers "what was slow", this one answers
@@ -619,6 +625,8 @@ CACHES = {
         "KEY_PREFIX": KEY_PREFIX,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "REDIS_CLIENT_CLASS": "app.cache_safety.CacheRedis",
+            "CONNECTION_POOL_CLASS": "app.cache_safety.CacheConnectionPool",
             # A cache is allowed to be unavailable. Without this, a slow or full
             # Redis raised out of every one of ~460 cache.get calls and took
             # page loads, webhooks and background tasks down with it (#521).
@@ -633,7 +641,7 @@ CACHES = {
             # promptly instead of blocking worker threads forever (#341).
             "SOCKET_CONNECT_TIMEOUT": config(
                 "REDIS_SOCKET_CONNECT_TIMEOUT",
-                default=5,
+                default=1,
                 cast=int,
             ),
             # Every thread that touches the cache blocks for this long when Redis
@@ -641,7 +649,7 @@ CACHES = {
             # threads x timeout. Shorter on hosts that can least afford it.
             "SOCKET_TIMEOUT": config(
                 "REDIS_SOCKET_TIMEOUT",
-                default=by_tier(4, 5, 10),
+                default=1,
                 cast=int,
             ),
             "CONNECTION_POOL_KWARGS": {
@@ -653,7 +661,10 @@ CACHES = {
                     default=by_tier(12, 20, 32),
                     cast=int,
                 ),
-                "retry_on_timeout": True,
+                # Optional cache data must not repeat a full socket timeout.
+                # Cached sessions fall back to their database source of truth.
+                "retry_on_timeout": False,
+                "retry": Retry(NoBackoff(), 0),
                 "health_check_interval": 30,
             },
         },
@@ -706,7 +717,13 @@ LOG_FILE = str(Path(LOG_DIR) / "floppy.log")
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "cache_cooldown": {"()": "app.cache_safety.CacheCooldownLogFilter"},
+    },
     "loggers": {
+        "django_redis.cache": {
+            "filters": ["cache_cooldown"],
+        },
         "requests_ratelimiter.requests_ratelimiter": {
             "level": "DEBUG" if DEBUG else "WARNING",
         },

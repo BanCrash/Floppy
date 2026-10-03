@@ -4,6 +4,7 @@ from datetime import timedelta
 from io import BytesIO
 
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from app.log_safety import exception_summary
@@ -82,7 +83,10 @@ def close_abandoned_import_runs():
     any of its code, so its ImportRun would read "running" for ever. A run
     older than the task time limit plus a margin cannot still be alive.
     """
+    from integrations.imports.durable import recover_outboxes
     from integrations.models import ImportRun
+
+    recover_outboxes()
 
     time_limit = settings.CELERY_TASK_TIME_LIMIT
     if not time_limit:
@@ -93,7 +97,7 @@ def close_abandoned_import_runs():
         ImportRun.objects.filter(
             status=ImportRun.Status.RUNNING,
             started_at__lt=now - timedelta(seconds=time_limit + 300),
-        )
+        ).filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=now))
         .exclude(source__in=SELF_RESCHEDULING_IMPORT_SOURCES)
         .update(status=ImportRun.Status.FAILED, finished_at=now)
     )
