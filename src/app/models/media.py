@@ -215,6 +215,7 @@ class Media(models.Model):
                 MediaTypes.PODCAST.value,
                 MediaTypes.MUSIC.value,
                 MediaTypes.BOARDGAME.value,
+                MediaTypes.VIDEO.value,
             ) or (
                 self.item.media_type == MediaTypes.BOOK.value
                 and self.item.format == "audiobook"
@@ -295,6 +296,7 @@ class Media(models.Model):
         if self.item.media_type not in (
             MediaTypes.MUSIC.value,
             MediaTypes.PODCAST.value,
+            MediaTypes.VIDEO.value,
         ):
             self.item.fetch_releases(delay=True)
 

@@ -11,7 +11,7 @@ class VideoPlayApiTests(FloppyApiTestCase):
     """A second post with the same external id updates the play."""
 
     def test_upsert_raises_progress_and_completes(self):
-        """20% stays in progress. 85% completes the same play."""
+        """20% stays in progress. 85% completes the same play. No provider calls."""
         url = reverse(
             "api_video_play",
             kwargs={"source": "youtube", "media_id": "dQw4w9WgXcQ"},
@@ -24,6 +24,7 @@ class VideoPlayApiTests(FloppyApiTestCase):
             "progressSeconds": 200,
             "externalId": "youtube:dQw4w9WgXcQ:2026-10-02",
         }
+        self._metadata_mock.reset_mock()
         first = self.client.post(url, payload, format="json", **self.auth_headers)
         self.assertEqual(first.status_code, 201)
         self.assertEqual(first.data["status"], Status.IN_PROGRESS.value)
@@ -33,6 +34,7 @@ class VideoPlayApiTests(FloppyApiTestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.data["status"], Status.COMPLETED.value)
         self.assertEqual(VideoPlay.objects.count(), 1)
+        self._metadata_mock.assert_not_called()
 
         history = self.client.get(
             reverse("api_history"),
