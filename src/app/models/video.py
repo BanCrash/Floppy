@@ -39,7 +39,16 @@ class Video(Media):
         self.progress = progress_seconds
         self.status = Status.COMPLETED.value if completed else Status.IN_PROGRESS.value
         self.end_date = when
-        self.save(update_fields=["progress", "status", "end_date", "channel", "watch_url", "length_seconds"])
+        self.save(
+            update_fields=[
+                "progress",
+                "status",
+                "end_date",
+                "channel",
+                "watch_url",
+                "length_seconds",
+            ]
+        )
 
         play = self.plays.filter(external_id=external_id).first()
         created = play is None
@@ -75,3 +84,7 @@ class VideoPlay(models.Model):
                 name="app_videoplay_unique_video_external_id",
             ),
         ]
+
+    def __str__(self):
+        """Return the play's external id."""
+        return self.external_id

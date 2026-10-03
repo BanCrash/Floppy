@@ -64,7 +64,6 @@ from app.models.media import (
     Movie,
     MoviePlay,
 )
-from app.models.video import Video, VideoPlay
 from app.models.music import (
     Album,
     AlbumArtist,
@@ -103,6 +102,7 @@ from app.models.tv import (
     RewatchAlreadyCompleteError,
     Season,
 )
+from app.models.video import Video, VideoPlay
 from app.models.watch_state import (
     WatchState,
     WatchStateChange,
@@ -168,8 +168,6 @@ __all__ = [
     "MetadataProviderPreference",
     "Movie",
     "MoviePlay",
-    "Video",
-    "VideoPlay",
     "Music",
     "MusicReleasePreference",
     "Person",
@@ -193,6 +191,8 @@ __all__ = [
     "Tag",
     "Track",
     "UserProviderCredential",
+    "Video",
+    "VideoPlay",
     "WatchState",
     "WatchStateChange",
     "WatchStateChangeKind",
