@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
         ('app', '0197_youtube_video_choices'),
         ('auth', '0012_alter_user_first_name_max_length'),
         ('lists', '0015_customlist_source_wetrakr'),
-        ('users', '0143_merge_20261002_2211'),
+        ('users', '0142_rating_scale_disabled'),
     ]
 
     operations = [

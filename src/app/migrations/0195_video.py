@@ -13,8 +13,8 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('app', '0194_merge_20260930_1210'),
-        ('integrations', '0051_komgaaccount_komgabooklink'),
+        ('app', '0194_add_mangabaka_source'),
+        ('integrations', '0052_kavitaaccount_kavitalink'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -95,7 +95,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='deletedmedia',
             name='source',
-            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], max_length=20),
+            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('mangabaka', 'MangaBaka'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], max_length=20),
         ),
         migrations.AlterField(
             model_name='item',
@@ -110,12 +110,12 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='item',
             name='source',
-            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], max_length=20),
+            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('mangabaka', 'MangaBaka'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], max_length=20),
         ),
         migrations.AlterField(
             model_name='itemproviderlink',
             name='provider',
-            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], max_length=20),
+            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('mangabaka', 'MangaBaka'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], max_length=20),
         ),
         migrations.AlterField(
             model_name='itemproviderlink',
@@ -125,26 +125,26 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='metadataproviderpreference',
             name='provider',
-            field=models.CharField(blank=True, choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='', max_length=20),
+            field=models.CharField(blank=True, choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('mangabaka', 'MangaBaka'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='', max_length=20),
         ),
         migrations.AlterField(
             model_name='person',
             name='source',
-            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='tmdb', max_length=20),
+            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('mangabaka', 'MangaBaka'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='tmdb', max_length=20),
         ),
         migrations.AlterField(
             model_name='podcastshow',
             name='source',
-            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='pocketcasts', help_text='Podcast provider source for this show', max_length=20),
+            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('mangabaka', 'MangaBaka'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='pocketcasts', help_text='Podcast provider source for this show', max_length=20),
         ),
         migrations.AlterField(
             model_name='studio',
             name='source',
-            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='tmdb', max_length=20),
+            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('tvdb', 'TheTVDB'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('mangabaka', 'MangaBaka'), ('igdb', 'Internet Game Database'), ('imdb', 'IMDb'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('googlebooks', 'Google Books'), ('comicvine', 'Comic Vine'), ('gcd', 'Grand Comics Database'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('gpodder', 'GPodder'), ('audiobookshelf', 'Audiobookshelf'), ('storyteller', 'Storyteller'), ('plex', 'Plex'), ('manual', 'Manual'), ('youtube', 'YouTube')], default='tmdb', max_length=20),
         ),
         migrations.AddConstraint(
             model_name='item',
-            constraint=models.CheckConstraint(condition=models.Q(('source__in', ['tmdb', 'tvdb', 'mal', 'mangaupdates', 'igdb', 'imdb', 'openlibrary', 'hardcover', 'googlebooks', 'comicvine', 'gcd', 'bgg', 'musicbrainz', 'pocketcasts', 'gpodder', 'audiobookshelf', 'storyteller', 'plex', 'manual', 'youtube'])), name='app_item_source_valid'),
+            constraint=models.CheckConstraint(condition=models.Q(('source__in', ['tmdb', 'tvdb', 'mal', 'mangaupdates', 'mangabaka', 'igdb', 'imdb', 'openlibrary', 'hardcover', 'googlebooks', 'comicvine', 'gcd', 'bgg', 'musicbrainz', 'pocketcasts', 'gpodder', 'audiobookshelf', 'storyteller', 'plex', 'manual', 'youtube'])), name='app_item_source_valid'),
         ),
         migrations.AddConstraint(
             model_name='item',
