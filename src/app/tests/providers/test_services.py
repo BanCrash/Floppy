@@ -553,7 +553,7 @@ class ServicesTests(TestCase):
 
         self.assert_metadata_title_payload(result, "Test Season")
 
-        mock_tv_with_seasons.assert_called_once_with("1", [1], None)
+        mock_tv_with_seasons.assert_called_once_with("1", [1], None, missing_seasons=set())
 
     @patch("app.providers.tmdb.episode")
     def test_get_media_metadata_episode(self, mock_episode):

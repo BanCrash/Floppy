@@ -258,7 +258,7 @@ def build_media_list_filter_cache_key(
     return "_".join(parts)
 
 
-HOME_ROW_CACHE_PREFIX = "home_row_v1"
+HOME_ROW_CACHE_PREFIX = "home_row_v2"
 HOME_ROW_CACHE_TTL = 60  # seconds — matches the media-list cache horizon
 _HOME_ROW_REGISTRY_TEMPLATE = f"{HOME_ROW_CACHE_PREFIX}_registry_{{user_id}}"
 

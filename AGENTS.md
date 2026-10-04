@@ -304,6 +304,7 @@ Models/migrations and divergent UI normally require manual adaptation. Provider 
 - `docs/agents/clz_import.md`: the CLZ importer's header-mapped contract and the shared custom-field resolution layer it sits on.
 - `docs/agents/migration_sync_playbook.md`: hard-gate flow for adapting accepted upstream migration outcomes to Floppy's current graph.
 - `docs/agents/view_authentication.md`: guide for view authentication and declaring public route exemptions.
+- `docs/agents/pr_screenshots.md`: `scripts/pr_screenshots.py` captures before/after screenshots of a PR and posts them to its description.
 - `docs/architecture/log-redaction.md`: the log boundary contract — where credentials are removed, what the rules match, and what they do not cover.
 - `docs/architecture/theming.md`: the theme resolution contract and the six theme states any colour change must hold.
 - `docs/architecture/webhook-write-rules.md`: when a media-server webhook may write tracking rows — the shared policy table every integration is listed in, its exceptions, and the test that catches a missing row.
@@ -350,6 +351,7 @@ Run tests through `scripts/test.sh`, in this priority order:
 3. **Full suite (rarely needed locally):** `scripts/test.sh --full` — all tags, including slow benchmarks/Playwright and live-provider `network` tests. Takes 20+ minutes and produces huge output. Only run it when the user asks or the risk clearly justifies it. Application-impacting PRs run the CI application suite, which excludes `network` tests; documentation-only trigger filtering is owned by `.github/workflows/app-tests.yml`.
 
 Notes:
+- **Diff selection:** `scripts/test.sh --affected` runs the tests that executed the changed lines, using `.floppy/affected.coverage` when that map exists. Record it with `scripts/test.sh --affected-record` (the CI suite: slow included, network excluded). A missing map, a new file, or a file coverage does not measure falls back to the import walk: a changed test module runs, a source module runs the tests that import it, and a file under one app with no importing test runs that app. Templates, static, the lockfile, settings, and the runner run the fast suite. A docs-only diff runs nothing. Pull requests download the map from the last successful run on `latest` and use the same selection.
 - Quick confidence: `uv run --no-sync ruff check src`
 - Deployment confidence: `uv run --no-sync python src/manage.py floppy_preflight` — paths,
   settings, database, migrations and Redis in one pass. Reads only, so it is safe against a

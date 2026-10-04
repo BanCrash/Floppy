@@ -816,10 +816,10 @@
         <div class="p-3 bg-[var(--color-surface-strong)] rounded-md mb-4">
           <div class="flex flex-col items-start gap-1 mb-2">
             <label class="text-[var(--color-text-secondary)] text-sm font-medium">{% translate "Rating Scale" %}</label>
-            <span class="text-[var(--color-text-muted)] text-xs">{% translate "Choose whether ratings use a 1-5 or 1-10 scale." %}</span>
+            <span class="text-[var(--color-text-muted)] text-xs">{% translate "Choose a rating scale, or turn ratings off." %}</span>
           </div>
           <div class="relative w-full"
-               x-data="{ open: false, selectedValue: '{{ user.rating_scale }}', selectedLabel: '', options: [ { value: '10', label: gettext('1-10 stars') }, { value: '5', label: gettext('1-5 stars') } ], init() { const match = this.options.find(o => o.value === this.selectedValue); this.selectedLabel = match ? match.label : this.options[0]?.label ?? ''; } }"
+               x-data="{ open: false, selectedValue: '{{ user.rating_scale }}', selectedLabel: '', options: [ { value: '10', label: gettext('1-10 stars') }, { value: '5', label: gettext('1-5 stars') }, { value: '0', label: gettext('Disabled') } ], init() { const match = this.options.find(o => o.value === this.selectedValue); this.selectedLabel = match ? match.label : this.options[0]?.label ?? ''; } }"
                x-init="init()">
             <button type="button"
                     @click="open = !open"

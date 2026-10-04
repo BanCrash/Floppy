@@ -66,7 +66,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('lists', '0014_customlist_include_notes'),
-        ('users', '0141_merge_search_all_discover_seerr'),
+        ('users', '0142_rating_scale_disabled'),
     ]
 
     operations = [

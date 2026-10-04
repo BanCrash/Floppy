@@ -68,7 +68,9 @@ TV_LIST_TIME_LEFT_SORT_MAX_QUERIES = (
     26  # pinned after Fix 4 bulk runtime load (was ~400+ per-season queries)
 )
 TV_LIST_NEXT_EPISODE_SORT_MAX_QUERIES = (
-    31  # the untracked-season events of every show on the page are read in
+    33  # +2 fixed Item prefetches after compact Episode window selection;
+    # keeps wide Item columns out of the history-sized window intermediates.
+    # The untracked-season events of every show on the page are read in
     # one query; it was one per show plus one per event's item (49 for these
     # ten shows, 92 for sixty)
 )
@@ -79,7 +81,8 @@ ANIME_LIST_DEFAULT_SORT_MAX_QUERIES = (
     # one, each once per cold cache (an hour in production, every test here).
 )
 ANIME_LIST_GROUPED_MAX_QUERIES = (
-    25  # grouped (TV-backed) anime adds no per-show runtime queries;
+    26  # +1 bulk Item prefetch after compact Episode window selection;
+    # grouped (TV-backed) anime adds no per-show runtime queries;
     # +1 for the page COUNT: the list is paged by the library-query engine
     # instead of counting a fully loaded list (#1248);
     # +4 from the Genres/Tags column Prefetch("item__item_tags") added in #457;
