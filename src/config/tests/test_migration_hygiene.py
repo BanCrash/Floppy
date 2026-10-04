@@ -23,7 +23,8 @@ class MigrationHygieneCommandTests(TestCase):
     @override_settings(MIGRATION_MODULES={})
     def test_command_passes_with_head_baseline_for_users(self):
         """The command should pass against HEAD baseline for a stable app graph."""
-        # Inspect real migrations even when fast test DB setup disables them.
+        # Inspect the real graph even when FAST_DB builds the test schema
+        # without migrations. This command's contract is the on-disk graph.
         output = StringIO()
 
         call_command(

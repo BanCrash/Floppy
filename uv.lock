@@ -778,6 +778,7 @@ dependencies = [
     { name = "redis", extra = ["hiredis"] },
     { name = "requests" },
     { name = "requests-ratelimiter" },
+    { name = "sortedcontainers" },
     { name = "supervisor" },
     { name = "unidecode" },
 ]
@@ -846,6 +847,7 @@ requires-dist = [
     { name = "redis", extras = ["hiredis"], specifier = "==7.4.0" },
     { name = "requests", specifier = "==2.33.1" },
     { name = "requests-ratelimiter", specifier = "==0.8.0" },
+    { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "supervisor", specifier = "==4.3.0" },
     { name = "unidecode", specifier = "==1.4.0" },
 ]

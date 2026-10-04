@@ -22,6 +22,13 @@ TODO.txt
 .claude
 # Database dumps live beside the repo for local restores, never in the image.
 *.sql.gz
+# Local runtime data and validation-only secrets must never enter the build context.
+/db/
+/backups/
+/.secrets/
+/production-snapshot.sqlite3*
+*.sqlite3-wal
+*.sqlite3-shm
 
 # Repository history can retain deleted database exports. The metadata stage
 # only needs the remote URL from config, never Git objects or reflogs.

@@ -150,7 +150,7 @@ def manga(media_id):
                 "status": (series.get("status") or "").title() or None,
                 "authors": series.get("authors") or None,
                 "artists": series.get("artists") or None,
-                "themes": get_themes(series),
+                "tags": get_tags(series),
                 "content_rating": (series.get("content_rating") or "").title() or None,
             },
             "authors_full": get_authors_full(series),
@@ -225,7 +225,7 @@ def get_genres(series):
     return genres or None
 
 
-def get_themes(series):
+def get_tags(series):
     """Return the tags that describe the series, most widely shared first."""
 
     def is_theme(tag):

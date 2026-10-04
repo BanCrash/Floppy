@@ -121,6 +121,7 @@
           </div>
         {% endif %}
         {# Your Score card - interactive rating popup #}
+        {% if user.ratings_enabled %}
         <div x-data="{ showRatingPopup: false, rating: {% if album_tracker %}{{ album_tracker.score|score_display:user|default:'null' }}{% else %}null{% endif %}, hoverRating: null, isHovering: false }"
              class="relative">
             <!-- Rating display -->
@@ -152,6 +153,7 @@
               {% include "app/components/rating_picker.html" with post_url=rating_post_url %}
             </div>
           </div>
+        {% endif %}
       </div>
     </div>
   </div>

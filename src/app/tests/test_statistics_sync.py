@@ -28,6 +28,7 @@ from app.models import (
     Status,
 )
 from app.statistics_day_cache import _day_cache_key
+from integrations.models import ImportRun
 
 NON_EAGER = override_settings(CELERY_TASK_ALWAYS_EAGER=False, TESTING=False)
 SYNC_TASK = "app.tasks_interactive.statistics_sync_task.apply_async"
@@ -145,6 +146,170 @@ class MarkingTests(StatisticsSyncTestCase):
         self.mark([self.day(40)])
 
         self.assertIsNone(cache.get(key))
+
+
+class BulkImportStatisticsTests(StatisticsSyncTestCase):
+    @NON_EAGER
+    @patch(SYNC_TASK)
+    @patch("app.statistics_sync.interactive_request_active", return_value=True)
+    def test_reconciler_does_not_publish_work_that_browser_guard_will_defer(self, _active, enqueue):
+        self.mark([self.day(3)])
+        self.assertEqual(statistics_sync.reconcile(), 0)
+        enqueue.assert_not_called()
+        self.assertTrue(StatisticsDirtyDay.objects.filter(user=self.user).exists())
+        self.assertTrue(statistics_sync.ensure_sync(self.user.id, urgent=True))
+        enqueue.assert_called_once()
+
+    def test_verified_noop_import_restores_only_its_own_mark(self):
+        self.full_sync()
+        before = self.state().generation
+        with statistics_sync.coalesce_import_changes(self.user.id) as changes:
+            changes["unchanged"] = True
+        self.assertEqual(self.state().generation, before)
+        self.assertIsNone(self.state().full_sweep_requested_at)
+
+    def test_noop_import_cannot_erase_concurrent_tracking(self):
+        self.full_sync()
+        before = self.state().generation
+        with statistics_sync.coalesce_import_changes(self.user.id) as changes:
+            # A different process/context does not inherit import coalescing.
+            token = statistics_sync._import_changes.set({})
+            try:
+                self.mark([self.day(3)])
+            finally:
+                statistics_sync._import_changes.reset(token)
+            changes["unchanged"] = True
+        self.assertEqual(self.state().generation, before + 2)
+        self.assertIsNotNone(self.state().full_sweep_requested_at)
+        self.assertTrue(StatisticsDirtyDay.objects.filter(user=self.user).exists())
+
+    def test_import_coalesces_generation_but_retains_dirty_tokens(self):
+        before = self.state().generation
+        with statistics_sync.coalesce_import_changes(self.user.id):
+            self.mark([self.day(3)])
+            first = StatisticsDirtyDay.objects.get(user=self.user, day=self.day(3))
+            self.mark([self.day(3), self.day(40)])
+            statistics_sync.mark_aggregate(self.user.id, reason="item_metadata")
+            self.assertEqual(self.state().generation, before + 1)
+            self.assertNotEqual(
+                StatisticsDirtyDay.objects.get(user=self.user, day=self.day(3)).token,
+                first.token,
+            )
+        self.mark([self.day(3)])
+        self.assertEqual(self.state().generation, before + 2)
+
+    def test_failed_import_restores_ordinary_marking_and_keeps_full_sweep(self):
+        before = self.state().generation
+        with self.assertRaisesRegex(ValueError, "import failed"):
+            with statistics_sync.coalesce_import_changes(self.user.id):
+                raise ValueError("import failed")
+        self.assertIsNotNone(self.state().full_sweep_requested_at)
+        statistics_sync.mark_aggregate(self.user.id)
+        self.assertEqual(self.state().generation, before + 2)
+
+    @NON_EAGER
+    @patch(SYNC_TASK)
+    def test_running_import_defers_sync_and_reconcile_until_completion(self, enqueue):
+        run = ImportRun.objects.create(user=self.user, source="trakt")
+        self.mark([self.day(3)])
+        self.assertFalse(statistics_sync.ensure_sync(self.user.id))
+        self.assertEqual(statistics_sync.reconcile(), 0)
+        result = statistics_sync.run_sync(self.user.id, budget_seconds=10)
+        self.assertEqual(result["status"], "deferred")
+        self.assertIsNone(self.state().lease_expires_at)
+        enqueue.assert_not_called()
+        run.status = ImportRun.Status.COMPLETED
+        run.save(update_fields=["status"])
+        self.assertEqual(statistics_sync.reconcile(), 1)
+        enqueue.assert_called_once()
+
+    @override_settings(CELERY_TASK_TIME_LIMIT=60)
+    def test_abandoned_import_and_self_rescheduling_source_do_not_defer(self):
+        run = ImportRun.objects.create(user=self.user, source="trakt")
+        ImportRun.objects.filter(pk=run.pk).update(
+            started_at=timezone.now() - timedelta(hours=1)
+        )
+        ImportRun.objects.create(user=self.user, source="lastfm")
+        self.assertFalse(statistics_sync._bulk_import_active(self.user.id))
+
+    @override_settings(CELERY_TASK_TIME_LIMIT=60)
+    def test_resumed_import_fresh_lease_defers_despite_original_start_timestamp(self):
+        """Restart retains provenance while proving its current writer is alive."""
+        run = ImportRun.objects.create(user=self.user, source="trakt", phase="persist")
+        ImportRun.objects.filter(pk=run.pk).update(
+            started_at=timezone.now() - timedelta(days=1), lease_expires_at=timezone.now() + timedelta(minutes=10),
+        )
+        self.assertTrue(statistics_sync._bulk_import_active(self.user.id))
+
+    def test_sqlite_defers_other_users_but_postgres_does_not(self):
+        other = get_user_model().objects.create_user(username="other-import")
+        ImportRun.objects.create(user=other, source="mdblist")
+        self.assertTrue(statistics_sync._bulk_import_active(self.user.id))
+        with patch.object(statistics_sync.connection, "vendor", "postgresql"):
+            self.assertFalse(statistics_sync._bulk_import_active(self.user.id))
+
+    def test_full_sweep_repairs_cached_day_after_signal_free_write(self):
+        self.full_sync()
+        old = statistics_sync.refresh_range_inline(self.user.id, "Today")
+        Movie.objects.filter(pk=self.movies[0].pk).update(score=9)
+        with statistics_sync.coalesce_import_changes(self.user.id):
+            pass
+        rebuilt = statistics_sync.run_sync(self.user.id, only_ranges=["Today"])
+        self.assertEqual(rebuilt["status"], "done")
+        self.assertEqual(old["score_distribution"]["average_score"], 7)
+        self.assertEqual(rebuilt["published"]["Today"]["score_distribution"]["average_score"], 9)
+
+    def test_budget_yields_between_days_without_rebuilding_completed_day(self):
+        self.full_sync()
+        self.mark([self.day(3), self.day(40)])
+        clock = 0.0
+        real_build = statistics_day_builder.build_stats_for_day
+        built = []
+
+        def slow_day(*args, **kwargs):
+            nonlocal clock
+            data = real_build(*args, **kwargs)
+            built.append(args[1])
+            clock += 2.0
+            return data
+
+        with (
+            patch("app.statistics_sync.time.monotonic", side_effect=lambda: clock),
+            patch("app.statistics_day_builder.build_stats_for_day", side_effect=slow_day),
+        ):
+            result = statistics_sync.run_sync(self.user.id, budget_seconds=1)
+        self.assertEqual(result["status"], "continued")
+        self.assertEqual(len(built), 1)
+        self.assertTrue(StatisticsDirtyDay.objects.filter(user=self.user).exists())
+        result = self.full_sync()
+        self.assertFalse(StatisticsDirtyDay.objects.filter(user=self.user).exists())
+
+    def test_full_sweep_continuations_retain_completed_days(self):
+        self.full_sync()
+        with statistics_sync.coalesce_import_changes(self.user.id):
+            pass
+        real_build = statistics_day_builder.build_stats_for_day
+        clock = 0.0
+        built = []
+
+        def slow_day(*args, **kwargs):
+            nonlocal clock
+            data = real_build(*args, **kwargs)
+            built.append(args[1])
+            clock += 2.0
+            return data
+
+        with (
+            patch("app.statistics_sync.time.monotonic", side_effect=lambda: clock),
+            patch("app.statistics_day_builder.build_stats_for_day", side_effect=slow_day),
+        ):
+            for _ in range(len(self.offsets)):
+                result = statistics_sync.run_sync(self.user.id, budget_seconds=1)
+                self.assertEqual(result["status"], "continued")
+        self.assertEqual(len(built), len(self.offsets))
+        self.assertEqual(len(set(built)), len(built))
+        self.assertFalse(StatisticsDirtyDay.objects.filter(user=self.user).exists())
+        self.full_sync()
 
 
 class SyncTests(StatisticsSyncTestCase):

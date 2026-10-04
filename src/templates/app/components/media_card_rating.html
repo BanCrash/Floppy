@@ -4,7 +4,8 @@
   The rating in a card's title row. With `rate_url` it is a button that opens the
   shared rating picker (see media_card_rate_button.html); without it, a read-only value.
 {% endcomment %}
-{% if rate_url %}
+{% if not user.ratings_enabled %}
+{% elif rate_url %}
   {% if rating_value|show_media_score:user %}
     {% include "app/components/media_card_rate_button.html" with rating_shown=rating_value|score_display:user %}
   {% else %}

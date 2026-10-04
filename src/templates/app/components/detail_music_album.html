@@ -41,7 +41,7 @@
 
     {% include "app/components/detail_music_album_activity_subtitle.html" with album=album music_album_activity_subtitle=music_album_activity_subtitle user=user only %}
 
-    {% if album_tracker %}
+    {% if album_tracker and user.ratings_enabled %}
       <div class="mt-4 mb-5 flex flex-wrap gap-2">
         <div x-data="{ showRatingPopup: false, rating: {{ album_tracker.score|score_display:user|default:'null' }}, ratingScaleMax: {{ user|rating_scale_max }}, hoverRating: null, isHovering: false, formatRating(value) { if (value === null || value === undefined || value === '') { return ''; } return this.ratingScaleMax === 5 ? String(value) + '/5' : String(value); } }"
              class="relative">
@@ -75,7 +75,7 @@
       </div>
     {% endif %}
 
-    <div class="{% if not music_album_activity_subtitle and not album_tracker %}mt-5 {% endif %}mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+    <div class="{% if not music_album_activity_subtitle and not album_tracker %}mt-5 {% elif not music_album_activity_subtitle and not user.ratings_enabled %}mt-5 {% endif %}mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
       <div x-data="{ trackOpen: false }" class="sm:shrink-0">
         <button type="button"
                 class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if detail_primary_action.active %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
@@ -376,7 +376,10 @@
                   <div class="flex-1">
                     <div class="flex justify-between items-start mb-2 space-x-2 px-4">
                       <div class="flex-1 min-w-0">
-                        <h3 class="text-lg font-semibold mb-1 line-clamp-1">{{ track_data.track.title }}</h3>
+                        <h3 class="text-lg font-semibold mb-1 line-clamp-1">
+                          <a href="{{ track_data.track|music_track_url }}"
+                             class="hover:text-indigo-500 transition-colors duration-200">{{ track_data.track.title }}</a>
+                        </h3>
                         <p class="text-sm text-[var(--color-text-muted)]">
                           {% if track_data.track.track_number %}
                             {% blocktranslate trimmed with value_1=track_data.track.track_number %}Track {{ value_1 }}{% endblocktranslate %}

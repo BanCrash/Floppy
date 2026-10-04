@@ -3,6 +3,7 @@ __pycache__
 *.egg-info/
 .env
 .coverage*
+.floppy/
 venv
 src/staticfiles
 src/db/db.sqlite3
