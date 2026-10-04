@@ -38,6 +38,7 @@ from app.models import (
     prefill_episode_runtime_index,
 )
 from app.release_years import prefill_display_release_years
+from app.request_timing import boundary
 from app.templatetags import app_tags
 from lists import smart_rules
 from lists.models import CustomList
@@ -1960,7 +1961,7 @@ def _media_lookup_for_items(
         if actual_media_type == MediaTypes.MUSIC.value:
             queryset = queryset.select_related("album")
         queryset = BasicMedia.objects._apply_prefetch_related(
-            queryset, actual_media_type
+            queryset, actual_media_type, compact_episodes=True,
         )
         media_entries = list(queryset)
 
@@ -2596,14 +2597,16 @@ def _row_items(user, row, executor, offset, limit, *, seed):
     from app import cache_utils
 
     if executor.uses_sql:
-        page = executor.page(offset, limit, defer=HOME_CARD_UNREAD_ITEM_FIELDS)
+        with boundary("home_materialize"):
+            page = executor.page(offset, limit, defer=HOME_CARD_UNREAD_ITEM_FIELDS)
         return page.items, page.total
 
     updated = int(row.updated_at.timestamp()) if row.updated_at else 0
     order_key = f"{cache_utils.HOME_ROW_CACHE_PREFIX}_order_{user.id}_{row.id}_{updated}_{seed}"
     ranked_ids = cache.get(order_key)
     if ranked_ids is None:
-        ranked_ids = executor.ranked_ids()
+        with boundary("home_rank"):
+            ranked_ids = executor.ranked_ids()
         cache.set(order_key, ranked_ids, cache_utils.HOME_ROW_CACHE_TTL)
         cache_utils.register_home_row_cache_key(user.id, order_key)
     window = ranked_ids[offset : offset + limit]
@@ -2613,7 +2616,8 @@ def _row_items(user, row, executor, offset, limit, *, seed):
 
 def _row_entries(user, items, *, planning_subtitle: bool = False) -> list[HomeRowEntry]:
     """Decorate one window of a shelf as Home cards."""
-    media_lookup = _media_lookup_for_items(user, items)
+    with boundary("home_cards"):
+        media_lookup = _media_lookup_for_items(user, items)
     return [
         HomeRowEntry(
             item=item,
@@ -2714,6 +2718,15 @@ def _recently_unrated_episode_entries(user, media_type: str) -> list[HomeRowEntr
             "item",
             "related_season__item",
             "related_season__related_tv__item",
+        )
+        .defer(
+            *(
+                f"{relation}__{field}"
+                for relation in (
+                    "item", "related_season__item", "related_season__related_tv__item"
+                )
+                for field in HOME_CARD_UNREAD_ITEM_FIELDS
+            )
         )
         .order_by("-end_date")
     )
@@ -2915,7 +2928,8 @@ def _cached_row_section(
     cache_key = cache_utils.build_home_row_cache_key(user.id, row.id, items_limit)
     cached = None if refresh else cache.get(cache_key)
     if cached is None:
-        section = _build_row_section(user, row, media_type, items_limit)
+        with boundary("home_row"):
+            section = _build_row_section(user, row, media_type, items_limit)
         cache.set(
             cache_key,
             section if section is not None else _HOME_ROW_EMPTY_SENTINEL,
@@ -2944,8 +2958,9 @@ def build_home_page_groups(
     """Build grouped home sections from persisted Home rows."""
     if only_row_id is not None:
         only_row_ids = (only_row_ids or set()) | {only_row_id}
-    rows = ensure_home_screen_rows(user)
-    enabled_media_types = get_home_configurable_media_types(user)
+    with boundary("home_config"):
+        rows = ensure_home_screen_rows(user)
+        enabled_media_types = get_home_configurable_media_types(user)
     rows_by_media_type: dict[str, list[HomeScreenRow]] = defaultdict(list)
     for row in rows:
         if row.enabled and (only_row_ids is None or row.id in only_row_ids):

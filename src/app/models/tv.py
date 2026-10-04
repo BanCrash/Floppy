@@ -22,6 +22,7 @@ from app.models.choices import USER_HELD_STATUSES, MediaTypes, Sources, Status
 from app.models.item import Item
 from app.models.manager import MediaManager
 from app.models.media import Media, ScoreMonitorField
+from integrations.import_scope import ImportScopedManager
 
 logger = logging.getLogger(__name__)
 
@@ -382,12 +383,12 @@ class TV(Media):
             {
                 "season": season.item.season_number,
                 "episode": episode.item.episode_number,
-                "end_date": episode.end_date,
+                "end_date": getattr(episode, "_card_last_end", episode.end_date),
             }
             for season in self.seasons.all()
             if hasattr(season, "episodes") and season.item.season_number != 0
             for episode in season.episodes.all()
-            if episode.end_date is not None
+            if getattr(episode, "_card_last_end", episode.end_date) is not None
         ]
 
         if not watched_episodes:
@@ -550,7 +551,7 @@ class TV(Media):
 
         return dates
 
-    def _completed(self):
+    def _completed(self, *, prepare_only=False):
         """Create remaining seasons and episodes for a TV show."""
         tv_metadata = providers.services.get_media_metadata(
             self.item.media_type,
@@ -560,11 +561,12 @@ class TV(Media):
         max_progress = tv_metadata["max_progress"]
 
         if not max_progress or self.progress > max_progress:
-            return
+            return None
 
         seasons_to_create = []
         seasons_to_update = []
         episodes_to_create = []
+
 
         season_numbers = [
             season["season_number"]
@@ -646,8 +648,9 @@ class TV(Media):
                     ),
                 )
 
-        bulk_create_with_history(seasons_to_create, Season)
-        bulk_update_with_history(seasons_to_update, Season, ["status"])
+        if not prepare_only:
+            bulk_create_with_history(seasons_to_create, Season)
+            bulk_update_with_history(seasons_to_update, Season, ["status"])
 
         for season_instance in seasons_to_create + seasons_to_update:
             season_metadata = tv_with_seasons_metadata[
@@ -659,6 +662,8 @@ class TV(Media):
                     end_date=getattr(self, "_pending_end_date", _UNSET_END_DATE),
                 ),
             )
+        if prepare_only:
+            return {"season": seasons_to_create, "episode": episodes_to_create}, seasons_to_update
         bulk_create_with_history(episodes_to_create, Episode)
         if episodes_to_create:
             # The bulk write fires no signals, and the show's own save signal
@@ -668,6 +673,7 @@ class TV(Media):
             statistics_sync.mark_rows(
                 self.user_id, episodes_to_create, reason="tv_completed_fan_out"
             )
+        return None
 
     def _mark_in_progress_seasons_as_dropped(self):
         """Mark all in-progress seasons as dropped."""
@@ -973,7 +979,7 @@ class Season(Media):
     )
     order_archived = models.BooleanField(default=False)
     objects = ActiveSeasonManager()
-    all_objects = models.Manager()
+    all_objects = ImportScopedManager()
     rewatch_started_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -1162,17 +1168,15 @@ class Season(Media):
 
         if self.status == Status.IN_PROGRESS.value:
             total_episodes = len(episode_counts)
-            majority_threshold = total_episodes / 2
 
             # Find the highest repeat level reached by a strict majority of
             # episodes. Vote counts are monotonically non-increasing as the
             # level rises, so the last level clearing the bar is the deepest
             # confirmed rewatch pass.
-            best_level = 1
-            for level in range(2, max(episode_counts.values()) + 1):
-                votes = sum(1 for count in episode_counts.values() if count >= level)
-                if votes > majority_threshold:
-                    best_level = level
+            # The middle descending count is the deepest level held by a
+            # strict majority. Avoid visiting every repeat level of a heavily
+            # rewatched episode (counts can exceed the distinct episode count).
+            best_level = sorted(episode_counts.values(), reverse=True)[total_episodes // 2]
 
             if best_level > 1:
                 # Report the highest episode number that reached this level,
@@ -1469,11 +1473,20 @@ class Season(Media):
 
         for ep in episodes:
             ep_num = ep.item.episode_number
-            if ep.status == Status.COMPLETED.value:
-                episode_counts[ep_num] = episode_counts.get(ep_num, 0) + 1
+            count = (
+                ep._card_completed_count
+                if getattr(ep, "_card_is_summary", False)
+                else int(ep.status == Status.COMPLETED.value)
+            )
+            if count:
+                episode_counts[ep_num] = episode_counts.get(ep_num, 0) + count
                 completed_episode_numbers.add(ep_num)
             if (
-                (ep.status in {Status.COMPLETED.value, Status.DROPPED.value})
+                (
+                    (getattr(ep, "_card_completed_count", 0) or getattr(ep, "_card_dropped_count", 0))
+                    if getattr(ep, "_card_is_summary", False)
+                    else ep.status in {Status.COMPLETED.value, Status.DROPPED.value}
+                )
                 and ep_num
                 and ep_num > max_episode_number
             ):
@@ -1491,9 +1504,9 @@ class Season(Media):
     def progressed_at(self):
         """Return the date when the last episode was watched."""
         dates = [
-            episode.end_date
+            getattr(episode, "_card_last_end", episode.end_date)
             for episode in self.episodes.all()
-            if episode.end_date is not None
+            if getattr(episode, "_card_last_end", episode.end_date) is not None
         ]
         return max(dates) if dates else None
 
@@ -1501,9 +1514,9 @@ class Season(Media):
     def start_date(self):
         """Return the date of the first episode watched."""
         dates = [
-            episode.end_date
+            getattr(episode, "_card_first_end", episode.end_date)
             for episode in self.episodes.all()
-            if episode.end_date is not None
+            if getattr(episode, "_card_first_end", episode.end_date) is not None
         ]
         return min(dates) if dates else None
 
@@ -1511,9 +1524,9 @@ class Season(Media):
     def end_date(self):
         """Return the date of the last episode watched."""
         dates = [
-            episode.end_date
+            getattr(episode, "_card_last_end", episode.end_date)
             for episode in self.episodes.all()
-            if episode.end_date is not None
+            if getattr(episode, "_card_last_end", episode.end_date) is not None
         ]
         return max(dates) if dates else None
 
@@ -1847,7 +1860,7 @@ class Season(Media):
 
     def get_remaining_eps(self, season_metadata, end_date=_UNSET_END_DATE):
         """Return episodes needed to complete a season."""
-        plays = Episode.objects.filter(related_season=self)
+        plays = Episode.objects.filter(related_season=self) if self.pk else Episode.objects.none()
         started_on = self.pass_started_on
         if started_on is None:
             latest_watched_ep_num = plays.aggregate(
@@ -1877,6 +1890,30 @@ class Season(Media):
 
         episodes_to_create = []
 
+        # Completion reuses catalogue Items, but still runs the same metadata
+        # updates and save hooks below. New identities keep get_or_create's
+        # uniqueness/race handling and normal creation signals.
+        existing_items = {}
+        if not self.item.episode_order_id:
+            season_bucket = self.item.library_media_type
+            episode_bucket = (
+                season_bucket
+                if season_bucket and season_bucket != MediaTypes.SEASON.value
+                else MediaTypes.EPISODE.value
+            )
+            for item in Item.objects.filter(
+                media_id=self.item.media_id,
+                source=self.item.source,
+                media_type=MediaTypes.EPISODE.value,
+                library_media_type=episode_bucket,
+                season_number=self.item.season_number,
+                episode_number__gt=latest_watched_ep_num,
+            ).defer("watch_providers"):
+                number = item.episode_number
+                # Preserve get_or_create's MultipleObjectsReturned semantics
+                # for ambiguous identities across episode-order catalogues.
+                existing_items[number] = None if number in existing_items else item
+
         # Calculate current time once before the loop
         now = timezone.now().replace(second=0, microsecond=0)
 
@@ -1885,7 +1922,10 @@ class Season(Media):
             if episode["episode_number"] <= latest_watched_ep_num:
                 break
 
-            item = self.get_episode_item(episode["episode_number"], season_metadata)
+            item = self.get_episode_item(
+                episode["episode_number"], season_metadata,
+                existing_item=existing_items.get(episode["episode_number"]),
+            )
 
             # An explicit end_date (including None) from the completion form
             # applies uniformly; otherwise fall back to the user's preference.
@@ -1905,7 +1945,7 @@ class Season(Media):
 
         return episodes_to_create
 
-    def get_episode_item(self, episode_number, season_metadata=None):
+    def get_episode_item(self, episode_number, season_metadata=None, *, existing_item=None):
         """Get the episode item instance, create it if it doesn't exist."""
         if self.item.episode_order_id:
             from app.services.episode_coordinates import InvalidEpisodeCoordinateError
@@ -2061,23 +2101,25 @@ class Season(Media):
             else MediaTypes.EPISODE.value
         )
 
-        item, created = Item.objects.get_or_create(
-            media_id=self.item.media_id,
-            source=self.item.source,
-            media_type=MediaTypes.EPISODE.value,
-            library_media_type=episode_bucket,
-            season_number=self.item.season_number,
-            episode_number=normalized_episode_number,
-            defaults={
-                **Item.title_fields_from_episode_metadata(
-                    matched_episode,
-                    fallback_title=self.item.title,
-                ),
-                "image": image,
-                "runtime_minutes": runtime_minutes,
-                "release_datetime": release_datetime,
-            },
-        )
+        item, created = existing_item, False
+        if item is None:
+            item, created = Item.objects.get_or_create(
+                media_id=self.item.media_id,
+                source=self.item.source,
+                media_type=MediaTypes.EPISODE.value,
+                library_media_type=episode_bucket,
+                season_number=self.item.season_number,
+                episode_number=normalized_episode_number,
+                defaults={
+                    **Item.title_fields_from_episode_metadata(
+                        matched_episode,
+                        fallback_title=self.item.title,
+                    ),
+                    "image": image,
+                    "runtime_minutes": runtime_minutes,
+                    "release_datetime": release_datetime,
+                },
+            )
 
         # Update fields if not set and we have them now
         updated = False
@@ -2127,7 +2169,7 @@ class Season(Media):
         return item
 
 
-class ActiveEpisodeManager(models.Manager):
+class ActiveEpisodeManager(ImportScopedManager):
     """Exclude retained migration records from watch projections."""
 
     def get_queryset(self):
@@ -2140,8 +2182,6 @@ class Episode(models.Model):
 
     tracker = FieldTracker(fields=["status", "dropped"])
     order_archived = models.BooleanField(default=False)
-    objects = ActiveEpisodeManager()
-    all_objects = models.Manager()  # noqa: DJ012
     history = HistoricalRecords(
         cascade_delete_history=True,
         excluded_fields=[
@@ -2191,6 +2231,8 @@ class Episode(models.Model):
         ],
     )
     scored_at = ScoreMonitorField(monitor="score", null=True, blank=True)
+    objects = ActiveEpisodeManager()
+    all_objects = ImportScopedManager()
 
     class Meta:
         """Meta options for the model."""

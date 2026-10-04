@@ -3,7 +3,7 @@
 {% load l10n %}
 {% load app_tags %}
 {% load user_tags %}
-
+{% if user.ratings_enabled %}
 <div x-data="{
        showRatingPopup: false,
        rating: {% localize off %}{% if ep_score is not None %}{{ ep_score|score_display:user }}{% else %}null{% endif %}{% endlocalize %},
@@ -56,3 +56,4 @@
     {% endif %}
   </div>
 </div>
+{% endif %}

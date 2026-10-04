@@ -16,14 +16,16 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 from django.apps import apps
 from django.conf import settings
 from django.core.cache import cache
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import F, Model, Q
 from django.utils import timezone
 
@@ -69,6 +71,67 @@ INTERACTIVE_QUEUE = "interactive"
 RANGE_COST_TIMEOUT = 7 * 24 * 60 * 60
 # A sync this far past its budget is worth a warning naming the range.
 OVERRUN_WARNING_SECONDS = 5
+_import_changes: ContextVar[dict[int, dict]] = ContextVar(
+    "statistics_import_changes", default=MappingProxyType({})
+)
+
+
+@contextmanager
+def coalesce_import_changes(user_id: int):
+    """Keep invalidations durable while one import advances one generation.
+
+    Record the full sweep before writes: even a killed worker leaves recovery
+    work behind. Dirty-day tokens still rotate, preserving concurrent marks.
+    Other threads/processes retain the ordinary incremental marking path.
+    """
+    users = _import_changes.get()
+    if user_id in users:
+        yield users[user_id]
+        return
+    fields = ("generation", "last_marked_at", "full_sweep_requested_at")
+    previous = StatisticsSyncState.objects.filter(user_id=user_id).values(*fields).first()
+    mark_aggregate(user_id, reason="media_import_started", full_sweep=True)
+    marker = StatisticsSyncState.objects.filter(user_id=user_id).values(*fields).first()
+    changes = {"marked": False, "unchanged": False}
+    token = _import_changes.set(users | {user_id: changes})
+    try:
+        yield changes
+    finally:
+        _import_changes.reset(token)
+        # A verified no-op poll needs no full history rebuild. Restore only our
+        # own untouched generation; another writer's mark makes this a no-op.
+        if changes["unchanged"] and not changes["marked"] and previous and marker:
+            StatisticsSyncState.objects.filter(
+                user_id=user_id,
+                generation=previous["generation"] + 1,
+                full_sweep_requested_at=marker["full_sweep_requested_at"],
+            ).update(**previous)
+
+
+def _bulk_import_active(user_id: int) -> bool:
+    """Defer derived work until finite bulk import tasks release the database."""
+    from integrations.models import ImportRun
+    from integrations.tasks._import_helpers import (
+        SELF_RESCHEDULING_IMPORT_SOURCES,
+        STREMIO_IMPORT_TIME_LIMIT,
+    )
+
+    runs = ImportRun.objects.filter(status=ImportRun.Status.RUNNING).exclude(
+        source__in=SELF_RESCHEDULING_IMPORT_SOURCES
+    )
+    if connection.vendor != "sqlite":
+        runs = runs.filter(user_id=user_id)
+    # Match close_abandoned_import_runs: a hard-killed worker must not leave
+    # Statistics deferred forever. With no task limit, RUNNING is authoritative.
+    time_limit = settings.CELERY_TASK_TIME_LIMIT
+    if time_limit:
+        cutoff = timezone.now() - timedelta(
+            seconds=max(time_limit, STREMIO_IMPORT_TIME_LIMIT) + 300
+        )
+        # A resumed durable run keeps its original provenance/start timestamp,
+        # while its fresh lease proves there is still a live writer.
+        runs = runs.filter(Q(started_at__gte=cutoff) | Q(lease_expires_at__gt=timezone.now()))
+    return runs.exists()
 
 
 def _setting(name: str, default: int) -> int:
@@ -181,6 +244,9 @@ def mark_days(user_id: int, day_values, reason: str | None = None) -> int:
             logger.warning("stats_mark_failed user_id=%s (user missing?)", user_id)
             return 0
         cache.delete_many([_day_cache_key(user_id, day) for day in days])
+    if user_id in _import_changes.get():
+        _import_changes.get()[user_id]["marked"] = True
+        return len(days)
     if not _bump_generation(user_id, now):
         return 0
     _after_mark(user_id, reason, len(days))
@@ -196,6 +262,9 @@ def mark_aggregate(
     is missing.
     """
     if not user_id:
+        return
+    if user_id in _import_changes.get():
+        _import_changes.get()[user_id]["marked"] = True
         return
     if not _bump_generation(user_id, timezone.now(), full_sweep=full_sweep):
         return
@@ -244,6 +313,8 @@ def ensure_sync(user_id: int, *, urgent: bool = False, bypass_gate=False) -> boo
     eager/test path skips it and the read path syncs inline instead.
     """
     if not user_id or _eager_mode():
+        return False
+    if _bulk_import_active(user_id) or (not urgent and interactive_request_active()):
         return False
     if not (urgent or bypass_gate) and not cache.add(
         _gate_key(user_id), True, _enqueue_gate_seconds()
@@ -645,12 +716,13 @@ def _check_deadline(deadline) -> None:
         raise _OutOfTimeError
 
 
-def _yield_if_interactive(enabled: bool) -> None:
+def _yield_if_interactive(enabled: bool, user_id: int | None = None) -> None:
     if enabled and (
         interactive_request_active()
         or higher_priority_task_waiting(
             INTERACTIVE_QUEUE, settings.CELERY_TASK_PRIORITY_INTERACTIVE
         )
+        or (user_id is not None and _bulk_import_active(user_id))
     ):
         raise _OutOfTimeError
 
@@ -728,7 +800,7 @@ def _build_days(
     credit_hints = 0
     size = _slice_days()
     for offset in range(0, len(days), size):
-        _yield_if_interactive(yield_to_interactive)
+        _yield_if_interactive(yield_to_interactive, user.id)
         _check_deadline(deadline)
         chunk = days[offset : offset + size]
         prefetch = _build_prefetch_for_range(user, chunk)
@@ -742,7 +814,10 @@ def _build_days(
         processed_days = []
         deferred = False
         for day in chunk:
-            if processed_days and yield_to_interactive and interactive_request_active():
+            if processed_days and (
+                (deadline is not None and time.monotonic() >= deadline)
+                or (yield_to_interactive and interactive_request_active())
+            ):
                 deferred = True
                 break
             day_stats = build_stats_for_day(
@@ -834,7 +909,9 @@ def run_sync(
     started = time.monotonic()
     deadline = None if budget_seconds is None else started + budget_seconds
     yield_to_interactive = budget_seconds is not None and only_ranges is None
-    if yield_to_interactive and interactive_request_active():
+    if yield_to_interactive and (
+        interactive_request_active() or _bulk_import_active(user_id)
+    ):
         return {"status": "deferred", "published": {}}
     user_model = apps.get_model(settings.AUTH_USER_MODEL)
     user = user_model.objects.filter(pk=user_id).first()
@@ -855,10 +932,35 @@ def run_sync(
     try:
         state = StatisticsSyncState.objects.get(user_id=user_id)
         generation = state.generation
+        day_epoch = cache.get(_day_epoch_key(user_id))
         full = (
             state.full_sweep_requested_at is not None
-            or cache.get(_day_epoch_key(user_id)) is None
+            or day_epoch is None
         )
+
+        if state.full_sweep_requested_at is not None:
+            sweep_epoch = state.full_sweep_requested_at.isoformat()
+            if day_epoch != sweep_epoch:
+                from app.statistics_refresh import _get_sparse_activity_days
+
+                # Prepare once per full-sweep request. Durable dirty tokens
+                # retain unfinished days across continuations and worker death;
+                # a lost cache marker only repeats this safe preparation.
+                sweep_days = _get_sparse_activity_days(user)
+                StatisticsDirtyDay.objects.bulk_create(
+                    [
+                        StatisticsDirtyDay(
+                            user_id=user_id, day=day, token=uuid.uuid4(), marked_at=now
+                        )
+                        for day in sweep_days
+                    ],
+                    update_conflicts=True,
+                    unique_fields=["user", "day"],
+                    update_fields=["token", "marked_at"],
+                    batch_size=500,
+                )
+                cache.delete_many([_day_cache_key(user_id, day) for day in sweep_days])
+                cache.set(_day_epoch_key(user_id), sweep_epoch, timeout=None)
 
         dirty_tokens = dict(
             StatisticsDirtyDay.objects.filter(user_id=user_id).values_list(
@@ -866,7 +968,12 @@ def run_sync(
             )
         )
         work = set(dirty_tokens)
-        work.update(today - timedelta(days=offset) for offset in range(WARM_DAY_COUNT))
+        warm_days = [today - timedelta(days=offset) for offset in range(WARM_DAY_COUNT)]
+        work.update(
+            _missing_days(user_id, warm_days)
+            if state.full_sweep_requested_at is not None
+            else warm_days
+        )
         if full:
             from app.statistics_refresh import _get_sparse_activity_days
 
@@ -878,8 +985,11 @@ def run_sync(
             from app.statistics_cache import _collect_stale_reading_score_days
 
             work.update(_collect_stale_reading_score_days(user))
-        # Newest first, so the hot ranges are correct as early as possible.
-        work_days = sorted(work, reverse=True)
+        # Dirty days first, newest first: repeatedly warming Today must not
+        # consume every continuation's budget before older dirty days progress.
+        work_days = sorted(set(dirty_tokens), reverse=True) + sorted(
+            work - set(dirty_tokens), reverse=True
+        )
 
         days_built = len(work_days)
         days_started = time.monotonic()
@@ -894,7 +1004,13 @@ def run_sync(
         finally:
             days_seconds = time.monotonic() - days_started
         if full:
-            cache.set(_day_epoch_key(user_id), now.isoformat(), timeout=None)
+            cache.set(
+                _day_epoch_key(user_id),
+                state.full_sweep_requested_at.isoformat()
+                if state.full_sweep_requested_at is not None
+                else now.isoformat(),
+                timeout=None,
+            )
 
         heavy_due = _heavy_due(state, now, full=full, today=today)
         snapshots = {
@@ -916,7 +1032,7 @@ def run_sync(
         for range_name in _ordered_ranges(user, heavy_due, only_ranges):
             if not only_ranges and not needs_rebuild(range_name):
                 continue
-            _yield_if_interactive(yield_to_interactive)
+            _yield_if_interactive(yield_to_interactive, user.id)
             _check_deadline(deadline)
             if not only_ranges:
                 _check_range_fits(user_id, range_name, deadline, bool(published))

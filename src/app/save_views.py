@@ -36,6 +36,7 @@ from app.models import (
     Status,
 )
 from app.providers import services
+from app.request_timing import boundary
 from app.services import metadata_resolution
 from app.services.episode_coordinates import (
     InvalidEpisodeCoordinateError,
@@ -204,16 +205,17 @@ def media_save(request):
         )
     else:
         try:
-            hydrated = ensure_item_metadata(
-                request.user,
-                media_type,
-                media_id,
-                source,
-                season_number,
-                identity_media_type=identity_media_type,
-                library_media_type=library_media_type,
-                edition_id=(request.POST.get("edition_id") or "").strip() or None,
-            )
+            with boundary("media_save_hydrate"):
+                hydrated = ensure_item_metadata(
+                    request.user,
+                    media_type,
+                    media_id,
+                    source,
+                    season_number,
+                    identity_media_type=identity_media_type,
+                    library_media_type=library_media_type,
+                    edition_id=(request.POST.get("edition_id") or "").strip() or None,
+                )
         except services.ProviderNotConfiguredError:
             # Setup guidance is rendered by the provider-error middleware.
             raise
@@ -290,14 +292,17 @@ def media_save(request):
         if not instance_id
         else pgettext("saved action", "Updated")
     )
-    if form.is_valid():
+    with boundary("media_save_validate"):
+        valid = form.is_valid()
+    if valid:
         if isinstance(instance, (Season, TV)):
             media = form.save(commit=False)
             media._pending_end_date = form.cleaned_data.get("end_date")
             # Recorded in history so an automatic change can be told apart
             # from the user's own edit (#1133).
             media._change_reason = USER_EDIT_REASON
-            media.save()
+            with boundary("media_save_persist"):
+                media.save()
             if (
                 isinstance(media, Season)
                 and old_status == Status.COMPLETED.value
@@ -317,7 +322,8 @@ def media_save(request):
                 with contextlib.suppress(RewatchAlreadyCompleteError):
                     media.start_rewatch()
         else:
-            media = form.save()
+            with boundary("media_save_persist"):
+                media = form.save()
         if (
             media_type == MediaTypes.BOOK.value
             and "koreader_document_id" in request.POST
@@ -348,7 +354,8 @@ def media_save(request):
                             "That KOReader document ID is already linked to another book."
                         ),
                     )
-        BasicMedia.objects.annotate_max_progress([media], media_type)
+        with boundary("media_save_progress"):
+            BasicMedia.objects.annotate_max_progress([media], media_type)
         image_url = form.cleaned_data.get("image_url")
         if image_url and media.item.image != image_url:
             media.item.image = image_url
