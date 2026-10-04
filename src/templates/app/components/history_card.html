@@ -197,6 +197,35 @@
     </div>
       {% endwith %}
     {% endwith %}
+    <p class="media-card-year text-xs text-[var(--color-text-muted)] mt-1">
+      {# History-specific info: episode label, play count, or timestamp #}
+      {% if history_mode == "release" %}
+        <span class="text-[var(--color-link)] font-medium">{% translate "Released" %}</span>
+        <span class="ml-1">{{ entry.played_at_local|user_date_format:user }}</span>
+      {% else %}
+        {% if entry.progress_display and entry.media_type == MediaTypes.GAME.value or entry.progress_display and entry.media_type == MediaTypes.BOARDGAME.value %}
+          <span class="text-[var(--color-link)] font-medium">{{ entry.progress_display }}</span>
+          <span class="ml-1">{{ entry.date_range_display }}</span>
+        {% elif entry.media_type == MediaTypes.MOVIE.value %}
+          <span class="text-[var(--color-link)] font-medium">{% blocktranslate trimmed with value_1=entry.play_count|default:1 count count=entry.play_count|default:1 %}{{ value_1 }} play{% plural %}{{ value_1 }} plays{% endblocktranslate %}</span>
+          <span class="ml-1">{{ entry.played_at_local|user_datetime_format:user }}</span>
+        {% elif entry.media_type == MediaTypes.MUSIC.value %}
+          <span class="text-[var(--color-link)] font-medium">{% blocktranslate trimmed with value_1=entry.play_count|default:1 count count=entry.play_count|default:1 %}{{ value_1 }} play{% plural %}{{ value_1 }} plays{% endblocktranslate %}</span>
+          <span class="ml-1">{{ entry.time_range_display }}</span>
+        {% elif entry.media_type == MediaTypes.PODCAST.value %}
+          <span class="text-[var(--color-link)] font-medium">{% blocktranslate trimmed with value_1=entry.play_count|default:1 count count=entry.play_count|default:1 %}{{ value_1 }} play{% plural %}{{ value_1 }} plays{% endblocktranslate %}</span>
+          <span class="ml-1">{{ entry.played_at_local|user_datetime_format:user }}</span>
+        {% elif entry.episode_label %}
+          <span class="text-[var(--color-link)] font-medium">{{ entry.episode_label }}</span>
+          <span class="ml-1">{{ entry.played_at_local|user_datetime_format:user }}</span>
+        {% elif entry.episode_code %}
+          <span class="text-[var(--color-link)] font-medium">{{ entry.episode_code }}</span>
+          <span class="ml-1">{{ entry.played_at_local|user_datetime_format:user }}</span>
+        {% else %}
+          {{ entry.played_at_local|user_datetime_format:user }}
+        {% endif %}
+      {% endif %}
+    </p>
     {% tile_lines entry.media_type entry.item entry %}
   </div>
 
