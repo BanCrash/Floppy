@@ -6,14 +6,24 @@ from http import HTTPStatus as HTTP  # noqa: N814
 
 from django.db.models import prefetch_related_objects
 from django_celery_results.models import TaskResult
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema
 from rest_framework import views as drf_views
 from rest_framework.response import Response
 
 from app.forms import CollectionEntryForm
 from app.models import BasicMedia, CollectionEntry, Item, MediaTypes
 
+from .contract_serializers import DetailErrorSerializer
+from .fork_helpers import get_or_create_provider_item
 from .fork_serializers import CollectionEntrySerializer
-from .helpers import paginate_data, parse_limit_offset
+from .helpers import (
+    check_source_type,
+    check_valid_type,
+    paginate_data,
+    parse_limit_offset,
+    resolve_item_queryset,
+)
 from .serializers import serialize_data
 
 logger = logging.getLogger(__name__)
@@ -225,6 +235,172 @@ class CollectionEntryView(drf_views.APIView):
                 status=HTTP.NOT_FOUND,
             )
         entry.delete()
+        return Response(status=HTTP.NO_CONTENT)
+
+
+# /api/v1/media/[media_type]/[source]/[media_id]/collection/
+# /api/v1/media/tv/[source]/[media_id]/[season_number]/episodes/[episode_number]/collection/
+class MediaCollectionView(drf_views.APIView):
+    """Mark a title as owned, addressed by provider id instead of item id.
+
+    Mirrors the web UI's collection_quick_add for clients (a downloader, a
+    media server script) that know a TMDB/TVDB id but not Floppy's item id.
+    Shows are collected per episode, so `tv` is accepted on the episode route
+    only.
+    """
+
+    _RESOLUTION_MAX_LENGTH = CollectionEntry._meta.get_field("resolution").max_length
+
+    def _identity(self, media_type, source, season_number, episode_number):
+        """Return ``(lookup_media_type, error_response)`` for the route."""
+        if episode_number is not None:
+            if media_type != MediaTypes.TV.value:
+                return None, Response(
+                    {"detail": "Episodes are supported only for 'tv' media type."},
+                    status=HTTP.BAD_REQUEST,
+                )
+            lookup_media_type = MediaTypes.EPISODE.value
+        elif not check_valid_type(media_type):
+            return None, Response(
+                {"detail": "Unsupported media type."},
+                status=HTTP.BAD_REQUEST,
+            )
+        elif media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            return None, Response(
+                {"detail": "Shows are collected per episode. Use the episode route."},
+                status=HTTP.BAD_REQUEST,
+            )
+        else:
+            lookup_media_type = media_type
+
+        if not check_source_type(media_type, source):
+            return None, Response(
+                {"detail": f"Cannot query `{source}` for `{media_type}` media type"},
+                status=HTTP.BAD_REQUEST,
+            )
+        return lookup_media_type, None
+
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            201: OpenApiTypes.OBJECT,
+            400: DetailErrorSerializer,
+            404: DetailErrorSerializer,
+            502: DetailErrorSerializer,
+        },
+    )
+    def put(
+        self,
+        request,
+        media_type,
+        source,
+        media_id,
+        season_number=None,
+        episode_number=None,
+    ):
+        """Add the title to the collection, creating the item when unknown.
+
+        Idempotent: an existing entry is returned, not duplicated. Optional
+        body field `resolution` (e.g. "1080p") is stored on the entry and
+        replaces the stored value on a repeat call, so a quality upgrade
+        updates the same entry.
+        """
+        season_number = int(season_number) if season_number is not None else None
+        episode_number = int(episode_number) if episode_number is not None else None
+        lookup_media_type, error = self._identity(
+            media_type,
+            source,
+            season_number,
+            episode_number,
+        )
+        if error:
+            return error
+
+        resolution = request.data.get("resolution") or ""
+        if (
+            not isinstance(resolution, str)
+            or len(resolution) > self._RESOLUTION_MAX_LENGTH
+        ):
+            return Response(
+                {"detail": "Invalid 'resolution'."},
+                status=HTTP.BAD_REQUEST,
+            )
+
+        item, error = get_or_create_provider_item(
+            lookup_media_type,
+            source,
+            media_id,
+            season_number=season_number,
+            episode_number=episode_number,
+        )
+        if error:
+            return error
+
+        entry = CollectionEntry.objects.filter(user=request.user, item=item).first()
+        status = HTTP.OK
+        if entry is None:
+            entry = CollectionEntry.objects.create(
+                user=request.user,
+                item=item,
+                resolution=resolution,
+            )
+            status = HTTP.CREATED
+        elif resolution and entry.resolution != resolution:
+            entry.resolution = resolution
+            entry.save(update_fields=["resolution", "updated_at"])
+
+        return Response(
+            serialize_data(entry, serializer_class=CollectionEntrySerializer),
+            status=status,
+        )
+
+    @extend_schema(
+        responses={
+            204: None,
+            400: DetailErrorSerializer,
+            404: DetailErrorSerializer,
+        },
+    )
+    def delete(
+        self,
+        request,
+        media_type,
+        source,
+        media_id,
+        season_number=None,
+        episode_number=None,
+    ):
+        """Remove the title from the collection."""
+        season_number = int(season_number) if season_number is not None else None
+        episode_number = int(episode_number) if episode_number is not None else None
+        lookup_media_type, error = self._identity(
+            media_type,
+            source,
+            season_number,
+            episode_number,
+        )
+        if error:
+            return error
+
+        item = resolve_item_queryset(
+            media_id,
+            source,
+            lookup_media_type,
+            season_number=season_number,
+            episode_number=episode_number,
+        ).first()
+        deleted = 0
+        if item is not None:
+            deleted, _ = CollectionEntry.objects.filter(
+                user=request.user,
+                item=item,
+            ).delete()
+        if not deleted:
+            return Response(
+                {"detail": "Collection entry not found."},
+                status=HTTP.NOT_FOUND,
+            )
         return Response(status=HTTP.NO_CONTENT)
 
 
