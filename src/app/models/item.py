@@ -472,7 +472,15 @@ class Item(CalendarTriggerMixin, models.Model):
             "provider_game_lengths",
             "watch_providers",
         ]
+        update_fields = kwargs.get("update_fields")
+        deferred_fields = self.get_deferred_fields()
         for field_name in json_object_fields:
+            if (
+                update_fields is not None
+                and field_name not in update_fields
+                and field_name in deferred_fields
+            ):
+                continue
             value = getattr(self, field_name, None)
             if value is None:
                 setattr(self, field_name, {})

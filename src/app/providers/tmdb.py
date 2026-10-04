@@ -3,6 +3,7 @@ import logging
 from datetime import timedelta
 from types import SimpleNamespace
 
+import redis
 import requests
 from django.conf import settings
 from django.core.cache import cache
@@ -32,6 +33,8 @@ SEARCH_CACHE_TIMEOUT = 60 * 60
 # Season blobs are the largest single thing Floppy caches (full episode lists),
 # so they expire sooner than the show payload they hang off.
 SEASON_CACHE_TIMEOUT = 60 * 60 * 12
+ABSENT_SEASON_CACHE_TIMEOUT = 60 * 5
+_ABSENT_SEASON = {"_tmdb_absent_season": True}
 # build_filter_data_from_items() requests this catalog on every media-list
 # render. A cold cache during a TMDB outage must not repeat both provider
 # requests (each carrying the full request timeout) on every single render,
@@ -46,9 +49,9 @@ TV_DETAIL_SEASON_APPEND_RESPONSES = (
     "season/{season}/credits",
     "season/{season}/watch/providers",
 )
-TMDB_SEASON_CACHE_VERSION = 4
-# Bumped when the movie payload gained provider_external_ids (issue #1066)
-# and again for release_types (digital and physical dates per region).
+# v5 can hold confirmed-absence markers; older workers must not read that shape.
+TMDB_SEASON_CACHE_VERSION = 5
+# Bumped for provider_external_ids and regional digital/physical release dates.
 TMDB_MOVIE_CACHE_VERSION = 3
 # Media-details carousel (trailer + photos): fetched lazily, its own cache
 # entry, independent of the movie/tv/season append_to_response payloads above.
@@ -621,7 +624,7 @@ def movie(media_id, language=None):
     return data
 
 
-def get_cached_seasons(media_id, season_numbers, language=None):
+def get_cached_seasons(media_id, season_numbers, language=None, *, missing_seasons=None):
     """Check cache for seasons and return cached data and list of uncached seasons.
 
     One get_many rather than a get per season: a 40-season show meant 40 round
@@ -639,7 +642,10 @@ def get_cached_seasons(media_id, season_numbers, language=None):
     uncached_seasons = []
     for key, season_number in keys.items():
         season_data = found.get(key)
-        if season_data:
+        if season_data == _ABSENT_SEASON:
+            if missing_seasons is not None:
+                missing_seasons.add(season_number)
+        elif season_data:
             cached_data[f"season/{season_number}"] = season_data
         else:
             uncached_seasons.append(season_number)
@@ -956,7 +962,7 @@ def get_tvdb_episode_image_map(tvdb_id, season_number, *, tmdb_media_id=None):
     return episode_images
 
 
-def fetch_and_cache_seasons(media_id, season_numbers, tv_data, language=None):
+def fetch_and_cache_seasons(media_id, season_numbers, tv_data, language=None, *, missing_seasons=None):
     """Fetch uncached seasons from API and cache them."""
     url = f"{base_url}/tv/{media_id}"
     max_seasons_per_request = _tv_detail_max_seasons_per_request()
@@ -1024,6 +1030,40 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data, language=None):
         for season_number in season_subset:
             season_key = f"season/{season_number}"
             if season_key not in response:
+                # Missing append data alone is not proof of absence. Require a
+                # complete, valid root catalogue excluding this coordinate.
+                # Specials retain their existing independent TVDB fallback.
+                catalogue = response.get("seasons")
+                count = response.get("number_of_seasons")
+                if (
+                    type(season_number) is int
+                    and season_number > 0
+                    and isinstance(catalogue, list)
+                    and type(count) is int
+                    and count >= 0
+                    and all(
+                        isinstance(entry, dict)
+                        and type(entry.get("season_number")) is int
+                        and entry["season_number"] >= 0
+                        for entry in catalogue
+                    )
+                ):
+                    listed = {entry["season_number"] for entry in catalogue}
+                    if (
+                        len(listed) == len(catalogue)
+                        and len({number for number in listed if number > 0}) == count
+                        and season_number not in listed
+                    ):
+                        if missing_seasons is not None:
+                            missing_seasons.add(season_number)
+                        # The import-local memo still needs confirmed absence
+                        # when Redis is unavailable. This write is best effort.
+                        with contextlib.suppress(redis.RedisError):
+                            cache.set(
+                                _season_cache_key(media_id, season_number, language),
+                                _ABSENT_SEASON,
+                                ABSENT_SEASON_CACHE_TIMEOUT,
+                            )
                 logger.warning(
                     "Season %s not found in %s response; skipping cache update",
                     season_number,
@@ -1071,7 +1111,7 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data, language=None):
     return result_data, fetched_tv_data
 
 
-def tv_with_seasons(media_id, season_numbers, language=None):
+def tv_with_seasons(media_id, season_numbers, language=None, *, missing_seasons=None):
     """Return the metadata for the tv show with seasons appended to the response."""
     if not season_numbers:
         return tv(media_id, language)
@@ -1088,6 +1128,7 @@ def tv_with_seasons(media_id, season_numbers, language=None):
         media_id,
         season_numbers,
         language,
+        missing_seasons=missing_seasons,
     )
 
     if tv_data is None and not uncached_seasons:
@@ -1099,6 +1140,7 @@ def tv_with_seasons(media_id, season_numbers, language=None):
             uncached_seasons,
             tv_data,
             language,
+            missing_seasons=missing_seasons,
         )
 
         if fetched_tv_data is not None:
