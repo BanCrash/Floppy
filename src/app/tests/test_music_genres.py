@@ -206,22 +206,38 @@ class ScrobbleGenreFillTests(TestCase):
             musicbrainz_release_group_id="release-group-1",
         )
 
-        def fill(album):
-            album.genres = ["Drone"]
-            album.save(update_fields=["genres"])
-            return True
-
-        with patch(
-            "app.services.music_scrobble.populate_album_implied_genres",
-            side_effect=fill,
-        ) as mock_fill:
+        with (
+            patch(
+                "app.providers.musicbrainz.get_release_group_genres",
+                return_value=["Drone"],
+            ) as mock_genres,
+            patch("app.providers.musicbrainz.get_genre_parents", return_value=[]),
+        ):
             music = self._scrobble()
 
-        mock_fill.assert_called_once()
+        mock_genres.assert_called_with("release-group-1")
         music.album.refresh_from_db()
         music.item.refresh_from_db()
+        # The release group's list wins over the artist fallback.
         self.assertEqual(music.album.genres, ["Drone"])
         self.assertEqual(music.item.genres, ["Drone"])
         # The artist keeps its own list; only empty rows are filled.
         artist.refresh_from_db()
         self.assertEqual(artist.genres, ["Ambient"])
+
+    def test_release_group_without_genres_keeps_the_artist_fallback(self):
+        artist = Artist.objects.create(name="Scrobble Artist", genres=["Ambient"])
+        Album.objects.create(
+            title="Scrobble Album",
+            artist=artist,
+            musicbrainz_release_group_id="release-group-2",
+        )
+
+        with patch(
+            "app.providers.musicbrainz.get_release_group_genres",
+            return_value=[],
+        ):
+            music = self._scrobble()
+
+        music.album.refresh_from_db()
+        self.assertEqual(music.album.genres, ["Ambient"])

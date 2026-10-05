@@ -250,6 +250,15 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
     if album and not getattr(event, "defer_cover_prefetch", False):
         if album_needs_genre_fill:
             try:
+                # The album may already hold the artist's genres, which
+                # populate_album_implied_genres would keep, so put the release
+                # group's own list on the album first.
+                release_group_genres = musicbrainz.get_release_group_genres(
+                    album.musicbrainz_release_group_id,
+                )
+                if release_group_genres:
+                    album.genres = list(release_group_genres)
+                    album.save(update_fields=["genres"])
                 populate_album_implied_genres(album)
             except Exception as exc:  # pragma: no cover - defensive network guard
                 logger.debug(
