@@ -364,6 +364,11 @@ class ListsView(drf_views.APIView):
 
     def post(self, request):
         """Create a new custom list for the authenticated user."""
+        if getattr(request.auth, "writable_list_ids", None):
+            return Response(
+                {"detail": "This token may only write to its bound lists."},
+                status=HTTP.FORBIDDEN,
+            )
         user = request.user
         body = request.data
 
@@ -889,6 +894,19 @@ class MediaTypeListView(drf_views.APIView):
         if not check_valid_type(media_type, complete=True):
             return Response(
                 {"detail": "Unsupported media type."},
+                status=HTTP.BAD_REQUEST,
+            )
+
+        if media_type == MediaTypes.VIDEO.value:
+            # No provider can look a video up, so a new one is created by its
+            # first play instead.
+            return Response(
+                {
+                    "detail": (
+                        "Videos are created by posting a play to "
+                        "/api/v1/videos/{source}/{media_id}/plays/."
+                    ),
+                },
                 status=HTTP.BAD_REQUEST,
             )
 

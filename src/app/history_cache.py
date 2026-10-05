@@ -62,26 +62,33 @@ from app.history_cache_utils import (  # noqa: F401
     HISTORY_DAY_PREFIX,
     HISTORY_DAYS_PER_PAGE,
     HISTORY_ENTRIES_PER_DAY_PAGE,
+    HISTORY_ERA_TIMEOUT,
     HISTORY_INDEX_PREFIX,
     HISTORY_REFRESH_LOCK_MAX_AGE,
     HISTORY_REFRESH_LOCK_PREFIX,
     HISTORY_STALE_AFTER,
     HISTORY_WARM_DAYS,
+    _bump_history_era,
     _cache_key,
     _coerce_genre_list,
     _coerce_timedelta,
     _coverage_repair_key,
+    _current_history_era,
     _date_from_day_key,
     _day_cache_key,
     _day_key_for_date,
     _day_key_from_value,
     _get_rss_kb,
+    _history_era_key,
     _localize_datetime,
     _music_history_user_q,
     _normalize_logging_style,
     _refresh_lock_key,
     _resolve_genres,
     _resolve_music_genres,
+    _touch_history_era,
+    _typed_history_index_key,
+    _typed_history_index_registry_key,
     expand_history_media_types,
     history_day_key,
     history_day_keys_for_range,
@@ -92,6 +99,7 @@ from app.history_entry_builders import (  # noqa: F401
     _build_episode_entry,
     _build_movie_entry,
     _build_music_album_entries,
+    _build_video_play_entry,
     _format_boardgame_plays,
     _format_game_hours,
     _get_episode_display_title,
@@ -964,6 +972,7 @@ def build_history_days(
         "comics": 0,
         "manga": 0,
         "anime": 0,
+        "videos": 0,
     }
 
     # Parse date filters
@@ -1455,6 +1464,26 @@ def build_history_days(
             entry["play_count"] = play_count
             entries.append(entry)
             entry_counts["movies"] += 1
+
+    if process_all or MediaTypes.VIDEO.value in media_type_filter:
+        from app.models import VideoPlay
+
+        plays = (
+            VideoPlay.objects.filter(video__user=user)
+            .select_related("video__item")
+            .defer(*history_deferred_item_fields("video__item"))
+        )
+        if start_date:
+            plays = plays.filter(end_date__gte=start_date)
+        if end_date:
+            plays = plays.filter(end_date__lte=end_date)
+        if target_media_id:
+            plays = plays.filter(video__item__media_id=target_media_id)
+        for play in plays:
+            entry = _build_video_play_entry(play)
+            if entry:
+                entries.append(entry)
+                entry_counts["videos"] += 1
 
     reading_entries = (
         _build_reading_entries(
