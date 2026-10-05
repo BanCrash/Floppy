@@ -1,5 +1,6 @@
 import json
 import logging
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from django.conf import settings
@@ -181,8 +182,7 @@ def _lookup_unlistened_recording(track):
 def _recording_genre_names(recording):
     """Return title-cased genre labels from a MusicBrainz recording payload."""
     return [
-        name.title()
-        for name in _nonempty_genre_names((recording or {}).get("genres"))
+        name.title() for name in _nonempty_genre_names((recording or {}).get("genres"))
     ]
 
 
@@ -232,6 +232,36 @@ def _album_display_genres(album):
     if album is None:
         return []
     return sync_services._music_item_direct_genres(album)
+
+
+def _play_link_label(url):
+    """Return the play-link label for a SoundCloud or Spotify URL."""
+    host = (urlparse(url or "").hostname or "").lower()
+    if host == "soundcloud.com" or host.endswith(".soundcloud.com"):
+        return "SoundCloud"
+    if host == "spotify.com" or host.endswith(".spotify.com"):
+        return "Spotify"
+    return ""
+
+
+def _external_play_links(tracks_with_data):
+    """Return one play chip per distinct SoundCloud or Spotify URL on this album."""
+    links = {}
+    seen_urls = set()
+    for track_data in tracks_with_data:
+        url = track_data.get("origin_url") or ""
+        label = _play_link_label(url)
+        if not label or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        if label in links:
+            label = track_data["track"].title or url
+        base_label, suffix = label, 2
+        while label in links:
+            label = f"{base_label} ({suffix})"
+            suffix += 1
+        links[label] = url
+    return links
 
 
 def _selected_music_release(user, album):
@@ -1078,10 +1108,15 @@ def _render_music_album_details(request, artist, album):
         if music_entry and music_entry.item_id:
             collection_entry = collection_entries_by_item_id.get(music_entry.item_id)
 
+        origin_url = _safe_origin_url(
+            getattr(music_entry, "origin_url", "") if music_entry else "",
+        )
         tracks_with_data.append(
             {
                 "track": track,
                 "music": music_entry,
+                "origin_url": origin_url,
+                "origin_label": _play_link_label(origin_url),
                 "history": (
                     list(music_entry.history.all().order_by("-end_date"))
                     if music_entry
@@ -1160,6 +1195,7 @@ def _render_music_album_details(request, artist, album):
     detail_link_sections = view_barrel._build_detail_link_sections(
         {
             "source_url": album_details.get("musicbrainz_url", ""),
+            "external_links": _external_play_links(tracks_with_data),
         },
         MediaTypes.MUSIC.value,
         Sources.MUSICBRAINZ.value,
@@ -1299,10 +1335,7 @@ def _render_music_track_details(request, track):
             track_genres = _recording_genre_names(recording)
         recording_display = _recording_display(track, recording)
     album_display_image = album.image or settings.IMG_NONE
-    if (
-        recording_display["image"]
-        and album_display_image in ("", settings.IMG_NONE)
-    ):
+    if recording_display["image"] and album_display_image in ("", settings.IMG_NONE):
         album_display_image = recording_display["image"]
     context = {
         "user": request.user,
