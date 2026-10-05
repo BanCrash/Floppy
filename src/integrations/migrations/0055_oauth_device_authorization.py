@@ -10,7 +10,7 @@ import integrations.oauth_models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("integrations", "0048_oauth_client_registry"),
+        ("integrations", "0054_oauth_client_registry"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

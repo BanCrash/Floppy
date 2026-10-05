@@ -8,7 +8,7 @@ import integrations.oauth_models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("integrations", "0047_merge_20260910_1141"),
+        ("integrations", "0053_importchunkreceipt_importoverwritetarget_and_more"),
     ]
 
     operations = [

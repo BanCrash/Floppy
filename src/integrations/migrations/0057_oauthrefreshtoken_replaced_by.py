@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("integrations", "0050_oauth_token_exchange"),
+        ("integrations", "0056_oauth_token_exchange"),
     ]
 
     operations = [

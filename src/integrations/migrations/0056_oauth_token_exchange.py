@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("integrations", "0049_oauth_device_authorization"),
+        ("integrations", "0055_oauth_device_authorization"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
