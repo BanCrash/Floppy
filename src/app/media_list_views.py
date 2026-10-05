@@ -2496,6 +2496,24 @@ def media_list(request, media_type):
             [entry.media for entry in media_page.object_list if entry.media is not None]
         )
 
+    if media_type == MediaTypes.VIDEO.value:
+        # Reuse the music card subtitle slot for "Channel · length".
+        for entry in media_page.object_list:
+            video = entry.media
+            if video is None:
+                continue
+            parts = [video.channel] if video.channel else []
+            if video.length_seconds:
+                minutes, seconds = divmod(video.length_seconds, 60)
+                hours, minutes = divmod(minutes, 60)
+                parts.append(
+                    f"{hours}:{minutes:02d}:{seconds:02d}"
+                    if hours
+                    else f"{minutes}:{seconds:02d}",
+                )
+            video.home_music_card = True
+            video.card_subtitle_text = " · ".join(parts)
+
     if media_type == MediaTypes.GAME.value:
         if not collection_platforms_by_item_id:
             _page_item_ids = {

@@ -128,12 +128,12 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["title"], "Test Movie")
         self.assertContains(
             response,
-            'href="/history?media_type=movie&media_id=238&source=tmdb"',
+            f'hx-get="{reverse("activity_sessions_modal")}?media_type=movie&media_id=238&source=tmdb"',
             html=False,
         )
         self.assertContains(
             response,
-            'class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center"',
+            'class="order-1 mt-5 mb-6 flex flex-col gap-3 md:order-2 md:flex-row md:flex-wrap md:items-center"',
             html=False,
         )
 
@@ -583,14 +583,14 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn(
-            'class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center"',
+            'class="order-1 mb-6 flex flex-col gap-3 md:order-2 md:flex-row md:flex-wrap md:items-center"',
             content,
         )
         self.assertIn(
-            'class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap"', content
+            'class="flex w-full items-center gap-2 md:w-auto md:flex-wrap"', content
         )
         self.assertIn(
-            'class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-[var(--color-surface-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-colors duration-200 hover:bg-[var(--color-surface-muted)] cursor-pointer sm:size-11 sm:w-11"',
+            'class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-[var(--color-surface-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm transition-colors duration-200 hover:bg-[var(--color-surface-muted)] cursor-pointer md:size-11 md:w-11"',
             content,
         )
         self.assertIn("Add to tracker", content)
@@ -630,6 +630,48 @@ class MediaDetailsViewTests(TestCase):
         # come first, score chips move below them, then the synopsis.
         self.assertLess(content.index("Add to tracker"), content.index("tmdb-logo.png"))
         self.assertLess(content.index("tmdb-logo.png"), content.index("Test overview"))
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_genres_move_to_tag_tooltip_only_when_viewer_has_one(
+        self, mock_get_metadata
+    ):
+        """The carousel layout hides the sidebar Genres card, so only a page
+        that also renders the tag tooltip (not a public view) may mark it hidden.
+        """
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test overview",
+            "genres": ["Action", "Science Fiction"],
+            "details": {},
+            "related": {},
+        }
+        detail_url = reverse(
+            "media_details",
+            kwargs={
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "media_id": "238",
+                "title": "test-movie",
+            },
+        )
+
+        response = self.client.get(detail_url, {"fragment": "secondary"})
+        self.assertContains(response, "detail-sidebar-genres--in-tooltip")
+        genre_section = response.context["detail_tag_sections"][0]
+        self.assertEqual(genre_section["title"], "Genres")
+        self.assertEqual(
+            [entry["label"] for entry in genre_section["entries"]],
+            ["Action", "Science Fiction"],
+        )
+
+        self.client.logout()
+        response = self.client.get(detail_url, {"fragment": "secondary"})
+        self.assertContains(response, "detail-sidebar-genres")
+        self.assertNotContains(response, "detail-sidebar-genres--in-tooltip")
 
     @patch("app.providers.services.get_media_metadata")
     def test_comic_volume_issue_rows_render_shared_action_buttons(
@@ -904,7 +946,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn(
-            'class="flex flex-col-reverse md:flex-row gap-0 md:gap-10"', content
+            'class="detail-secondary-layout flex flex-col-reverse md:flex-row gap-0 md:gap-10"', content
         )
         self.assertIn('class="detail-media-grid"', content)
         self.assertIn("window.matchMedia('(max-width: 768px)').matches", content)
@@ -3770,7 +3812,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "123,456 ratings")
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
+            'class="detail-score-card-shell order-2 mt-0 mb-5 w-full sm:order-1 sm:mt-4"',
             html=False,
         )
 
@@ -3940,8 +3982,8 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         soup = BeautifulSoup(response.content, "html.parser")
-        chip = soup.find("span", class_="sr-only", string="IMDb score").parent
-        self.assertEqual(chip.name, "button")
+        source_icon = soup.find("span", class_="sr-only", string="IMDb score").parent
+        self.assertEqual(source_icon.name, "span")
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_hides_imdb_score_card_without_data(self, mock_get_metadata):
@@ -4011,7 +4053,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "42,000 votes")
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
+            'class="detail-score-card-shell order-2 mt-0 mb-5 w-full sm:order-1 sm:mt-4"',
             html=False,
         )
 
@@ -4049,6 +4091,7 @@ class MediaDetailsViewTests(TestCase):
             "media_type": MediaTypes.TV.value,
             "source": Sources.TMDB.value,
             "image": "http://example.com/image.jpg",
+            "external_links": {"trakt": "https://trakt.tv/shows/test-tv-show"},
             "details": {},
             "related": {},
         }
@@ -4072,6 +4115,10 @@ class MediaDetailsViewTests(TestCase):
         )
         self.assertContains(response, "trakt-logo.svg")
         self.assertContains(response, fragment_url)
+        self.assertContains(response, "View series graph")
+        self.assertContains(response, 'role="dialog"', html=False)
+        self.assertContains(response, 'href="https://trakt.tv/shows/test-tv-show"')
+        self.assertContains(response, "Trakt")
 
         fragment = self.client.get(fragment_url)
         self.assertEqual(fragment.status_code, 200)
@@ -4180,7 +4227,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            '<div class="mb-3 sm:mb-1 text-center md:text-start">',
+            '<div class="mb-3 md:mb-1 text-center md:text-start">',
             html=False,
         )
         self.assertContains(
@@ -4268,14 +4315,14 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Progress: 1/8")
         self.assertContains(response, "2026-03-01 - 2026-03-12")
         self.assertContains(response, "1h 30min watched")
-        self.assertIn('<div class="mb-3 sm:mb-1 text-center md:text-start">', content)
+        self.assertIn('<div class="mb-3 md:mb-1 text-center md:text-start">', content)
         self.assertIn(
-            'class="flex w-full items-center justify-center gap-0.5 whitespace-nowrap text-[13px] tracking-[-0.01em] sm:hidden cursor-pointer"',
+            'class="flex w-full items-center justify-center gap-0.5 whitespace-nowrap text-[13px] tracking-[-0.01em] md:hidden cursor-pointer"',
             content,
         )
         self.assertIn("1h 30min (1/8)", content)
         self.assertIn(
-            'class="hidden w-full flex-wrap items-center justify-center gap-y-1 sm:flex md:justify-start cursor-pointer"',
+            'class="hidden w-full flex-wrap items-center justify-center gap-y-1 md:flex md:justify-start cursor-pointer"',
             content,
         )
         self.assertNotContains(response, "Your History")
@@ -4346,17 +4393,17 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "3h 10min watched")
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
+            'class="detail-score-card-shell order-2 mt-0 mb-5 w-full sm:order-1 sm:mt-4"',
             html=False,
         )
         self.assertContains(
             response,
-            'class="w-full sm:w-auto sm:shrink-0"',
+            'class="w-full md:w-auto md:shrink-0"',
             html=False,
         )
         self.assertContains(
             response,
-            'class="relative inline-flex w-full sm:w-auto"',
+            'class="relative inline-flex w-full md:w-auto"',
             html=False,
         )
         self.assertContains(response, 'aria-label="More tracking actions"', html=False)

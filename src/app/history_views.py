@@ -563,6 +563,7 @@ def _filter_history_by_enabled_media_types(history_days, user):
 
 
 def _enabled_history_media_types(user):
+    """Return the media types History may show, or None for no restriction."""
     enabled_types = user.get_enabled_media_types()
     if not enabled_types:
         return None
