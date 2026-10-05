@@ -1582,10 +1582,11 @@ def build_stats_for_day(
             )
         for play in video_plays:
             seconds = play.get("video__length_seconds") or play.get("progress") or 0
-            runtime_minutes = seconds // 60
+            # Fractional minutes, so a 45 second video still counts and long
+            # ones do not lose up to a minute per play.
+            runtime_minutes = seconds / 60
             if runtime_minutes <= 0:
                 missing_runtime += 1
-                continue
             localized = stats._localize_datetime(play["end_date"])
             plays_by_type[MediaTypes.VIDEO.value] += 1
             play_count += 1

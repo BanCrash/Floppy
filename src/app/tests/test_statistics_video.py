@@ -49,3 +49,14 @@ class VideoStatisticsTests(TestCase):
         data = get_statistics_data(self.user, start_date=None, end_date=None)
 
         self.assertFalse(data["video_consumption"].get("has_data"))
+
+    def test_a_sub_minute_video_still_counts_as_a_play(self):
+        tz = timezone.get_current_timezone()
+        day = datetime.datetime(2026, 9, 1, 12, 0, tzinfo=tz)
+        clip = self._video("clip", 45)
+        clip.upsert_play("youtube:clip:2026-09-01", 45, end_date=day)
+
+        data = get_statistics_data(self.user, start_date=None, end_date=None)
+
+        self.assertTrue(data["video_consumption"]["has_data"])
+        self.assertEqual(data["minutes_per_media_type"][MediaTypes.VIDEO.value], 0.75)
