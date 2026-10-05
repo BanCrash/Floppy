@@ -66,7 +66,7 @@ def _default_field_ids(media_type):
     if media_type == MediaTypes.BOOK.value:
         return ["release_year", "series_position", "progress"]
     if media_type == MediaTypes.EPISODE.value:
-        return ["episode_code", "release_year"]
+        return []
     return ["release_year", "progress"]
 
 
