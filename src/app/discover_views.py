@@ -1,12 +1,13 @@
 import json
 import logging
 import time
+from functools import wraps
 from http import HTTPStatus
 from uuid import uuid4
 
 from django.apps import apps
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
@@ -47,6 +48,18 @@ DISCOVER_FAST_LOCAL_PLANNING_MEDIA_TYPES = {
     MediaTypes.TV.value,
     MediaTypes.ANIME.value,
 }
+
+
+def discover_enabled_required(view):
+    """404 a Discover view for users who turned Discover off in Sidebar settings."""
+
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.show_discover:
+            raise Http404
+        return view(request, *args, **kwargs)
+
+    return wrapper
 
 
 def _coerce_discover_media_type(raw_media_type: str | None) -> str:
@@ -332,7 +345,9 @@ def _discover_planning_instance(
     if model is AlbumTracker:
         if album is None:
             return None
-        return model.objects.filter(user=user, album=album).select_related("album").first()
+        return (
+            model.objects.filter(user=user, album=album).select_related("album").first()
+        )
     if model is PodcastShowTracker:
         if show is None:
             return None
@@ -369,6 +384,7 @@ def _invalidate_discover_after_action(
 
 @login_required
 @require_GET
+@discover_enabled_required
 def discover_page(request):
     """Render Discover page with selected media rows."""
     raw_param = request.GET.get("media_type")
@@ -410,6 +426,7 @@ def discover_page(request):
 
 @login_required
 @require_GET
+@discover_enabled_required
 def discover_rows(request):
     """Render Discover rows partial for HTMX row switching."""
     selected_media_type = _resolve_discover_media_type_for_user(
@@ -436,6 +453,7 @@ def discover_rows(request):
 
 @login_required
 @require_POST
+@discover_enabled_required
 def refresh_discover(request):
     """Invalidate the active Discover tab cache and queue a background refresh."""
     media_type = _resolve_discover_media_type_for_user(
@@ -502,6 +520,7 @@ def _discover_provider_error_response(error, title, active_media_type):
 
 @login_required
 @require_POST
+@discover_enabled_required
 def discover_action(request):
     """Handle Discover quick actions and return the updated rows fragment."""
     from app import views as view_barrel
@@ -973,6 +992,7 @@ def _build_track_modal_discover_tab_context(user, metadata_item):
 
 @login_required
 @require_POST
+@discover_enabled_required
 def discover_toggle_hidden(request):
     """Toggle the hidden status of an item from Discover."""
     from app import views as view_barrel

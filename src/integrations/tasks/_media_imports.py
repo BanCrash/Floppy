@@ -2,10 +2,11 @@ import logging
 
 from celery import current_task, shared_task
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.utils import timezone
 
 import events
-from app import cache_safety, history_cache
+from app import backfill_queue, cache_safety, history_cache, statistics_sync
 from app.mixins import disable_fetch_releases
 from integrations import connection_health, import_progress
 from integrations.imports import (
@@ -25,6 +26,7 @@ from integrations.imports import (
     kitsu,
     komga,
     mal,
+    mangabaka,
     mdblist,
     mylar,
     plex,
@@ -84,10 +86,38 @@ def import_media(
     task_id = current_task.request.id if current_task and current_task.request else None
 
     source = getattr(importer_func, "__module__", "").rsplit(".", 1)[-1]
-    import_run = ImportRun.objects.create(user=user, source=source, task_id=task_id)
+    import_run = None
+    state = {}
+    if importer_func is trakt.importer:
+        from integrations.imports import durable
+
+        # Credentials never participate in checkpoint storage. Public/OAuth
+        # identity and mode must match the original immutable eligibility plan.
+        state["request_key"] = durable.digest([user_id, mode, oauth_username])
+        import_run = ImportRun.objects.filter(
+            user=user, source=source, cancel_requested=False,
+            prepared_state__request_key=state["request_key"],
+            status__in=[ImportRun.Status.FAILED, ImportRun.Status.RUNNING],
+        ).filter(
+            Q(lease_expires_at__isnull=True) | Q(lease_expires_at__lte=timezone.now()),
+        ).order_by("started_at").first()
+        if import_run is None and ImportRun.objects.filter(
+            user=user, source=source, status__in=[ImportRun.Status.FAILED, ImportRun.Status.RUNNING],
+        ).exclude(prepared_digest="").exclude(phase="complete").exists():
+            message = "An interrupted Trakt import must resume with its original identity and mode before starting another."
+            raise helpers.MediaImportError(message)
+    if import_run is None:
+        import_run = ImportRun.objects.create(user=user, source=source, task_id=task_id, prepared_state=state)
+    else:
+        ImportRun.objects.filter(pk=import_run.pk).update(task_id=task_id)
 
     try:
-        with disable_fetch_releases(), import_progress.tracking(task_id, import_run.id):
+        with (
+            disable_fetch_releases(),
+            import_progress.tracking(task_id, import_run.id),
+            backfill_queue.defer_backfill_publication(),
+            statistics_sync.coalesce_import_changes(user_id) as statistics_changes,
+        ):
             if oauth_username is None:
                 imported_counts, warnings = importer_func(
                     identifier,
@@ -103,6 +133,7 @@ def import_media(
                     username=oauth_username,
                     **extra_kwargs,
                 )
+            statistics_changes["unchanged"] = not has_imported_media(imported_counts)
     except BaseException:
         # BaseException so a soft time limit or worker shutdown still leaves a
         # record. RUNNING only: a cancel has already marked the row CANCELLED.
@@ -116,7 +147,11 @@ def import_media(
         raise
 
     created_count, updated_count = import_run_counts(imported_counts)
-    ImportRun.objects.filter(id=import_run.id).update(
+    import_run.refresh_from_db()
+    completion = ImportRun.objects.filter(id=import_run.id)
+    if import_run.prepared_digest:
+        completion = completion.filter(status=ImportRun.Status.RUNNING, cancel_requested=False)
+    completed = completion.update(
         status=ImportRun.Status.COMPLETED,
         created_count=created_count,
         updated_count=updated_count,
@@ -124,13 +159,25 @@ def import_media(
         failed_count=imported_counts.get("failed", 0),
         finished_at=timezone.now(),
     )
+    if import_run.prepared_digest and not completed:
+        message = "Import cancelled; committed chunks remain recoverable."
+        raise helpers.MediaImportError(message)
 
     # Imports run inside disable_fetch_releases(), so per-item calendar triggers are
     # suppressed and a catch-up reload is needed -- but only when something actually
     # landed. Recurring importers poll on a 2-hour schedule and usually import
     # nothing; firing an unscoped global reload each time was re-walking the whole
     # library (and holding the single celery-queue worker) for no reason.
-    if has_imported_media(imported_counts) and importer_func == gpodder.importer:
+    import_run.refresh_from_db()
+    if import_run.prepared_digest:
+        from integrations.imports import durable
+
+        try:
+            durable.publish_pending(import_run)
+        except BaseException:
+            ImportRun.objects.filter(pk=import_run.pk).update(status=ImportRun.Status.FAILED)
+            raise
+    elif has_imported_media(imported_counts) and importer_func == gpodder.importer:
         # GPodder saves each play through the ORM, so post_save already marked
         # the touched history and statistics days, and the importer queues a
         # calendar reload for just the items it created. It polls every 15
@@ -205,12 +252,19 @@ def _queue_post_import_collection_update(user_id, importer_func):
 
 
 @shared_task(name="Import from Trakt")
-def import_trakt(user_id, mode, token=None, username=None):
+def import_trakt(user_id, mode, token=None, username=None, redirect_uri=None):
     """Celery task for importing media data from Trakt.
 
     Can import using either OAuth (token provided) or public username.
     """
-    return import_media(trakt.importer, token, user_id, mode, username)
+    return import_media(
+        trakt.importer,
+        token,
+        user_id,
+        mode,
+        username,
+        redirect_uri=redirect_uri,
+    )
 
 
 @shared_task(name="Import from MDBList")
@@ -269,6 +323,12 @@ def import_anilist(user_id, mode, token=None, username=None):
 def import_kitsu(username, user_id, mode):
     """Celery task for importing anime and manga data from Kitsu."""
     return import_media(kitsu.importer, username, user_id, mode)
+
+
+@shared_task(name="Import from MangaBaka")
+def import_mangabaka(token, user_id, mode):
+    """Celery task for importing a MangaBaka library from an API token."""
+    return import_media(mangabaka.importer, token, user_id, mode)
 
 
 # Task name stays "Import from Yamtrack": it is persisted in celery result
@@ -394,6 +454,13 @@ def import_goodreads_dotted(file, user_id, mode):
 def import_hardcover(file, user_id, mode):
     """Celery task for importing media data from Hardcover."""
     return _run_file_import(hardcover.importer, file, user_id, mode)
+
+
+@shared_task(name="Import from Hardcover Account")
+def import_hardcover_account(user_id, mode="new", username=None):
+    """Sync the user's Hardcover library through its official API."""
+    del username
+    return import_media(hardcover.sync_importer, None, user_id, mode)
 
 
 @shared_task(name="Import from StoryGraph")

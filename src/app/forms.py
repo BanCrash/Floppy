@@ -293,6 +293,10 @@ class RatingScaleFormMixin:
     def _apply_rating_scale(self):
         if not self.user or "score" not in self.fields:
             return
+        if not self.user.ratings_enabled:
+            # Dropping the field keeps the stored score untouched on save.
+            del self.fields["score"]
+            return
         scale_max = self.user.rating_scale_max
         self.fields["score"].widget.attrs.update(
             {

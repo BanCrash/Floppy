@@ -21,7 +21,7 @@ from app import providers
 from app.db_retry import run_retryable_db_operation
 from app.history_cache_utils import history_deferred_item_fields
 from app.models import Episode, MediaTypes, Status
-from app.services.completion import normalize_completed_entry
+from app.services.completion import normalize_completed_entries
 from integrations import import_progress
 from integrations.models import ImportRun
 
@@ -386,7 +386,7 @@ def _fetch_season_metadata_with_retry(season, max_retries=3, base_delay=0.5):
             time.sleep(base_delay * attempt)
 
 
-def _backfill_completed_season_episodes(seasons):
+def _backfill_completed_season_episodes(seasons, *, prepare_only=False):
     """Create the missing Episode rows for seasons bulk-created as Completed.
 
     Bulk imports persist Season instances via bulk_create, which bypasses
@@ -405,7 +405,7 @@ def _backfill_completed_season_episodes(seasons):
         if season.pk is not None and season.status == Status.COMPLETED.value
     ]
     if not completed_seasons:
-        return []
+        return ([], []) if prepare_only else []
 
     existing_season_ids = set(
         Episode.objects.filter(
@@ -443,14 +443,15 @@ def _backfill_completed_season_episodes(seasons):
                 "the missing episodes.",
             )
 
+    if prepare_only:
+        return episodes_to_create, warnings
     if episodes_to_create:
         created_episodes = bulk_create_with_history(
             episodes_to_create,
             Episode,
             batch_size=500,
         )
-        for episode in created_episodes:
-            normalize_completed_entry(episode)
+        normalize_completed_entries(created_episodes)
 
     return warnings
 
@@ -522,23 +523,16 @@ def _deduplicate_season_related_tv_item_rows(seasons):
     return deduplicated
 
 
-def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
-    """Bulk create all media objects.
-
-    Returns warning messages for any episodes skipped because no matching
-    season could be found, and for any seasons whose Completed-status
-    episode backfill failed, for callers that want to surface them.
-    """
+def prepare_bulk_media(bulk_media_list, user, *, exclude_tv_ids=(), exclude_season_ids=(), prepare_only=False):
+    """Resolve incoming coordinates before the durable persistence boundary."""
     from integrations.episode_orders import resolve_incoming, season_for_target
-
-    warnings = []
 
     # A source season's aggregate status is not a destination season status:
     # alternate orders may split or combine those groups.
     active_shows = set(
         app.models.TV.objects.filter(
             user=user, active_episode_order__isnull=False,
-        ).values_list("item__source", "item__media_id"),
+        ).exclude(pk__in=exclude_tv_ids).values_list("item__source", "item__media_id"),
     )
 
     # Importers build rows using their source provider's numbering. Resolve
@@ -547,6 +541,7 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
     # order, so a user with none skips it: it cost ~3 queries per episode, two
     # thirds of the time this function spent on a large history import.
     ordered_episodes = []
+    planned_seasons = {}
     for episode in bulk_media_list.get(MediaTypes.EPISODE.value, []):
         item = episode.item
         if not active_shows or item.episode_order_id:
@@ -563,7 +558,13 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
             mapped = copy(episode)
             mapped.pk = None
             mapped.item = target
-            mapped.related_season = season_for_target(user, target)
+            if prepare_only:
+                key = (target.episode_order_id, target.season_number)
+                if key not in planned_seasons:
+                    planned_seasons[key] = season_for_target(user, target, prepare_only=True)
+                mapped.related_season = planned_seasons[key]
+            else:
+                mapped.related_season = season_for_target(user, target)
             ordered_episodes.append(mapped)
     if MediaTypes.EPISODE.value in bulk_media_list:
         bulk_media_list[MediaTypes.EPISODE.value] = ordered_episodes
@@ -574,6 +575,75 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
             if season.item.episode_order_id
             or (season.item.source, season.item.media_id) not in active_shows
         ]
+    if prepare_only:
+        new_parents = [season for season in planned_seasons.values() if season.pk is None]
+        if new_parents:
+            bulk_media_list.setdefault(MediaTypes.SEASON.value, []).extend(new_parents)
+        # Preserve the existing reference helpers' media-id/coordinate policy,
+        # but decide once against the post-delete/post-parent-create graph.
+        # A resumed chunk must not reinterpret these references after a user
+        # changes an episode order or provider identity.
+        seasons = bulk_media_list.get(MediaTypes.SEASON.value, [])
+        now = timezone.now().timestamp()
+        existing_tvs = list(app.models.TV.objects.filter(
+            user=user, item__media_id__in={row.item.media_id for row in seasons},
+        ).exclude(pk__in=exclude_tv_ids).select_related("item").only(
+            "id", "item_id", "user_id", "created_at", "item__media_id",
+        ))
+        tvs = existing_tvs + _deduplicate_unique_user_item_rows(app.models.TV, bulk_media_list.get(MediaTypes.TV.value, []))
+        ordered_tvs = sorted(enumerate(tvs), key=lambda pair: (
+            pair[1].item_id, -(pair[1].created_at.timestamp() if pair[1].created_at else now),
+            -pair[0] if pair[1].pk is None else 0,
+        ))
+        by_media_id = {row.item.media_id: row for _index, row in ordered_tvs}
+        for season in seasons:
+            if season.item.media_id in by_media_id:
+                season.related_tv = by_media_id[season.item.media_id]
+        # Canonicalize before splitting; two unsaved references can collapse
+        # onto one persisted TV, including across chunk boundaries.
+        retained = []
+        canonical = {}
+        for season in seasons:
+            key = (season.user_id, season.related_tv.item_id, season.item_id)
+            if key in canonical:
+                _merge_duplicate_media_row(canonical[key], season)
+            else:
+                canonical[key] = season
+                retained.append(season)
+        if seasons:
+            bulk_media_list[MediaTypes.SEASON.value] = retained
+        episodes = bulk_media_list.get(MediaTypes.EPISODE.value, [])
+        existing_seasons = list(app.models.Season.objects.filter(
+            user=user, item__media_id__in={row.item.media_id for row in episodes},
+        ).exclude(pk__in=exclude_season_ids).select_related("item", "related_tv").only(
+            "id", "item_id", "user_id", "created_at", "related_tv", "related_tv__item_id",
+            "item__media_id", "item__season_number",
+        ))
+        candidates = existing_seasons + retained
+        ordered_seasons = sorted(enumerate(candidates), key=lambda pair: (
+            pair[1].item_id, -(pair[1].created_at.timestamp() if pair[1].created_at else now),
+            -pair[0] if pair[1].pk is None else 0,
+        ))
+        by_coordinate = {(row.item.media_id, row.item.season_number): row for _index, row in ordered_seasons}
+        for episode in episodes:
+            key = (episode.item.media_id, episode.item.season_number)
+            if key in by_coordinate:
+                episode.related_season = by_coordinate[key]
+        return new_parents
+    return None
+
+
+
+def bulk_create_media(bulk_media_list, user, *, backfill_completed=True, prepared=False, normalize=True):
+    """Bulk create all media objects.
+
+    Returns warning messages for any episodes skipped because no matching
+    season could be found, and for any seasons whose Completed-status
+    episode backfill failed, for callers that want to surface them.
+    """
+    warnings = []
+    if not prepared:
+        prepare_bulk_media(bulk_media_list, user)
 
     for media_type in _ordered_media_types(bulk_media_list):
         bulk_media = bulk_media_list[media_type]
@@ -600,11 +670,11 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
         logger.info("Bulk importing %s", media_type)
 
         # Update references for seasons and episodes
-        if media_type == MediaTypes.SEASON.value:
+        if media_type == MediaTypes.SEASON.value and not prepared:
             logger.info("Updating references for season to existing TV shows")
             update_season_references(bulk_media, user)
             bulk_media = _deduplicate_season_related_tv_item_rows(bulk_media)
-        elif media_type == MediaTypes.EPISODE.value:
+        elif media_type == MediaTypes.EPISODE.value and not prepared:
             logger.info(
                 "Updating references for episodes to existing TV seasons",
             )
@@ -676,8 +746,8 @@ def bulk_create_media(bulk_media_list, user, *, backfill_completed=True):
             )
 
         created_media = retry_on_lock(create_media)
-        for media in created_media:
-            normalize_completed_entry(media)
+        if normalize:
+            normalize_completed_entries(created_media)
 
     # Run after every media type (including any episodes the importer supplied
     # directly) has been persisted, so the "does this season already have
@@ -710,10 +780,14 @@ def create_import_schedule(
     source,
     token=None,
     extra_kwargs=None,
+    replace_existing=False,
 ):
     """Create an import schedule.
 
     extra_kwargs: Optional dictionary of additional task kwargs to persist.
+    replace_existing: When the same schedule already exists, refresh its token
+        and extra kwargs instead of refusing. Used when a connection is redone,
+        so the schedule does not keep a dead token.
     """
     try:
         import_time = (
@@ -728,7 +802,18 @@ def create_import_schedule(
         return
 
     task_name = f"Import from {source} for {username} at {import_time} {frequency}"
-    if PeriodicTask.objects.filter(name=task_name).exists():
+    existing = PeriodicTask.objects.filter(name=task_name).first()
+    if existing and replace_existing:
+        task_kwargs = json.loads(existing.kwargs)
+        if token:
+            task_kwargs["token"] = token
+        if extra_kwargs:
+            task_kwargs.update(extra_kwargs)
+        existing.kwargs = json.dumps(task_kwargs)
+        existing.save()
+        messages.success(request, f"{source} import task updated.")
+        return
+    if existing:
         messages.error(
             request,
             "The same import task is already scheduled.",

@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
+from app import backfill_queue
 from app.models import Item, MediaTypes, Movie, Sources, Status
 from app.tasks import cleanup_task_results
 from integrations.imports import helpers
@@ -66,6 +67,74 @@ class ImportRunProvenanceTests(TestCase):
         run = ImportRun.objects.get(user=self.user)
         self.assertEqual(run.status, ImportRun.Status.FAILED)
         self.assertIsNotNone(run.finished_at)
+
+    @override_settings(TESTING=False)
+    @patch("app.tasks_genre.populate_genre_backfill_queue.apply_async")
+    @patch("app.tasks_credits.populate_credits_backfill_queue.apply_async")
+    @patch("app.tasks_runtime.populate_runtime_backfill_queue.apply_async")
+    def test_import_boundary_defers_production_enrichment_and_cleans_up_on_failure(
+        self, runtime_drain, credits_drain, genre_drain
+    ):
+        from app.tasks_credits import (
+            CREDITS_BACKFILL_ITEMS_QUEUE_KEY,
+            CREDITS_BACKFILL_ITEMS_SCHEDULED_KEY,
+        )
+        from app.tasks_genre import (
+            GENRE_BACKFILL_ITEMS_QUEUE_KEY,
+            GENRE_BACKFILL_ITEMS_SCHEDULED_KEY,
+        )
+        from app.tasks_runtime import (
+            RUNTIME_BACKFILL_ITEMS_QUEUE_KEY,
+            RUNTIME_BACKFILL_ITEMS_SCHEDULED_KEY,
+        )
+
+        queue_pairs = (
+            (RUNTIME_BACKFILL_ITEMS_QUEUE_KEY, RUNTIME_BACKFILL_ITEMS_SCHEDULED_KEY),
+            (GENRE_BACKFILL_ITEMS_QUEUE_KEY, GENRE_BACKFILL_ITEMS_SCHEDULED_KEY),
+            (CREDITS_BACKFILL_ITEMS_QUEUE_KEY, CREDITS_BACKFILL_ITEMS_SCHEDULED_KEY),
+        )
+        drains = (runtime_drain, credits_drain, genre_drain)
+        for pair in queue_pairs:
+            self.addCleanup(backfill_queue.clear, *pair)
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                for pair in queue_pairs:
+                    backfill_queue.clear(*pair)
+                for drain in drains:
+                    drain.reset_mock()
+
+                def importer(*args, fail=fail):
+                    with self.captureOnCommitCallbacks(execute=True):
+                        item = Item.objects.create(
+                            media_id=f"boundary-{fail}",
+                            source=Sources.TMDB.value,
+                            media_type=MediaTypes.TV.value,
+                            title="Import boundary show",
+                        )
+                    for queue_key, _ in queue_pairs:
+                        self.assertEqual(backfill_queue.members(queue_key), {item.pk})
+                    for drain in drains:
+                        drain.assert_not_called()
+                    if fail:
+                        raise helpers.MediaImportError("failed after Item creation")
+                    return {"created": 0}, []
+
+                if fail:
+                    with self.assertRaisesMessage(
+                        helpers.MediaImportError, "failed after Item creation"
+                    ):
+                        import_media(importer, None, self.user.id, "new")
+                else:
+                    import_media(importer, None, self.user.id, "new")
+                for drain in drains:
+                    drain.assert_called_once_with(countdown=10, kwargs={})
+                run = ImportRun.objects.filter(user=self.user).latest("id")
+                self.assertEqual(
+                    run.status,
+                    ImportRun.Status.FAILED if fail else ImportRun.Status.COMPLETED,
+                )
+                self.assertIsNotNone(run.finished_at)
+                self.assertIsNone(backfill_queue._deferred_drains.get())
 
     @patch("app.statistics_cache.invalidate_all_statistics_days")
     @patch("integrations.tasks._media_imports.history_cache.invalidate_history_cache")

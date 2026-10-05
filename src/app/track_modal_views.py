@@ -1,6 +1,7 @@
 import logging
 from contextlib import suppress
 from datetime import UTC, date
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from django.apps import apps
@@ -234,13 +235,63 @@ def _track_modal_release_runtime_minutes(media_type, *candidates):
     return ""
 
 
-def _track_modal_date_suggestion(label, iso_date, runtime_minutes=""):
-    """Normalize a single labeled date suggestion for the shared date/time picker."""
+def _track_modal_date_suggestion(label, iso_date, runtime_minutes="", extras=()):
+    """Normalize a labeled date suggestion for the shared date/time picker.
+
+    ``extras`` are further ``{"label", "date"}`` quick dates offered next to it.
+    """
     return {
         "label": label,
         "date": iso_date or "",
         "runtime_minutes": runtime_minutes or "",
+        "extras": list(extras),
     }
+
+
+def _library_panel_url(source, media_type, media_id, season_number, episode_number):
+    """Return the URL that lazy-loads Radarr/Sonarr/Seerr details for a title."""
+    query = urlencode(
+        {
+            key: value
+            for key, value in (
+                ("season_number", season_number),
+                ("episode_number", episode_number),
+            )
+            if value is not None
+        },
+    )
+    url = reverse("library_panel", args=[source, media_type, media_id])
+    return f"{url}?{query}" if query else url
+
+
+RELEASE_TYPE_SHORTCUT_LABELS = {
+    "digital": gettext_noop("Digital release"),
+    "physical": gettext_noop("Physical release"),
+}
+
+
+def _track_modal_other_release_dates(media_type, item, user):
+    """Return a movie's stored digital and physical dates for the user's region.
+
+    Read from the calendar's events, so opening the modal never calls a provider.
+    """
+    if media_type != MediaTypes.MOVIE.value or item is None:
+        return []
+
+    from events.models import Event
+
+    events = (
+        Event.objects.filter(item=item, region=user.watch_provider_region)
+        .exclude(release_type="")
+        .order_by("release_type", "datetime")
+    )
+    return [
+        {
+            "label": RELEASE_TYPE_SHORTCUT_LABELS[event.release_type],
+            "date": event.datetime.date().isoformat(),
+        }
+        for event in events
+    ]
 
 
 def _rewatch_action(media, media_type):
@@ -776,10 +827,17 @@ def _render_standard_track_modal(
         ),
         base_metadata,
     )
+    other_release_dates = _track_modal_other_release_dates(
+        media_type,
+        metadata_item,
+        request.user,
+    )
     date_suggestion = _track_modal_date_suggestion(
-        "Release Date",
+        # Name the theatrical date once a digital or physical one sits beside it.
+        gettext_noop("Theatrical release") if other_release_dates else "Release Date",
         release_date_shortcut,
         release_date_runtime_minutes,
+        other_release_dates,
     )
     rewatch_action = _rewatch_action(media, media_type)
 
@@ -912,8 +970,16 @@ def _render_standard_track_modal(
             request.user,
             metadata_item,
         )
-    if media_type == MediaTypes.EPISODE.value and episode_number is not None:
+    if (
+        (media_type == MediaTypes.EPISODE.value and episode_number is not None)
+        or (media_type == MediaTypes.SEASON.value and season_number is not None)
+        or media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+    ):
         context["collection_tab_available"] = True
+        if source in (Sources.TMDB.value, Sources.TVDB.value):
+            context["library_panel_url"] = _library_panel_url(
+                source, media_type, media_id, season_number, episode_number
+            )
         context["collection_context"] = build_collection_modal_context(
             request,
             source,

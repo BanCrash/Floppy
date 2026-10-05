@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model, login
 from django.contrib.sessions.exceptions import SessionInterrupted
 from django.db import DatabaseError, connection
 from django.db.utils import OperationalError
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, resolve_url
 from django.urls import reverse
 from django.utils import translation
@@ -163,6 +163,8 @@ class RequestPerformanceLoggingMiddleware:
     def __init__(self, get_response):
         """Initialize the middleware with the get_response callable."""
         self.get_response = get_response
+        if settings.PERF_LOG_ENABLED:
+            request_timing.install_boundaries()
 
     def __call__(self, request):
         """Time the request and count its queries, logging when over thresholds."""
@@ -175,9 +177,12 @@ class RequestPerformanceLoggingMiddleware:
             query_count["total"] += 1
             query_started = time.perf_counter()
             try:
-                return execute(sql, params, many, context)
+                with request_timing.boundary("db"):
+                    return execute(sql, params, many, context)
             finally:
-                query_count["seconds"] += time.perf_counter() - query_started
+                elapsed = time.perf_counter() - query_started
+                query_count["seconds"] += elapsed
+                request_timing.record_sql(sql, elapsed)
 
         provider_tally, tally_token = request_timing.begin()
         with self._inflight_lock:
@@ -196,11 +201,30 @@ class RequestPerformanceLoggingMiddleware:
         cpu_ms = (time.thread_time() - cpu_start) * 1000
         db_ms = query_count["seconds"] * 1000
         provider_ms = provider_tally["seconds"] * 1000
+        boundaries = provider_tally["boundaries"]
+        breakdown = {
+            f"{name}_ms": boundaries.get(name, 0.0) * 1000
+            for name in ("cache", "broker", "db_connect", "render", *sorted(
+                set(boundaries) - {"cache", "broker", "db_connect", "render", "db", "provider"},
+            ))
+        }
+        # Exclusive wall spans partition elapsed time. CPU is an overlapping
+        # diagnostic, not another duration to subtract from this remainder.
+        breakdown["unclassified_ms"] = max(
+            0.0, duration_ms - sum(boundaries.values()) * 1000
+        )
+        boundary_fields = " ".join(
+            f"{name}={value:.1f}" for name, value in breakdown.items()
+        )
 
         if getattr(getattr(request, "user", None), "is_authenticated", False):
             response["Server-Timing"] = (
                 f"total;dur={duration_ms:.0f}, cpu;dur={cpu_ms:.1f}, "
                 f"db;dur={db_ms:.1f}, provider;dur={provider_ms:.1f}"
+                + "".join(
+                    f", {name.removesuffix('_ms')};dur={value:.1f}"
+                    for name, value in breakdown.items()
+                )
             )
 
         if (
@@ -209,7 +233,7 @@ class RequestPerformanceLoggingMiddleware:
         ):
             logger.info(
                 "slow_request method=%s path=%s status=%s duration_ms=%.0f queries=%s "
-                "cpu_ms=%.1f db_ms=%.1f provider_ms=%.1f provider_calls=%s inflight=%s",
+                "cpu_ms=%.1f db_ms=%.1f provider_ms=%.1f provider_calls=%s inflight=%s %s",
                 request.method,
                 request.path,
                 response.status_code,
@@ -220,6 +244,7 @@ class RequestPerformanceLoggingMiddleware:
                 provider_ms,
                 provider_tally["calls"],
                 inflight,
+                boundary_fields,
             )
         return response
 
@@ -318,6 +343,12 @@ setTimeout(() => location.replace(location.href), Math.min(5000, 250 * 2 ** Math
 
     def process_exception(self, request, exception):
         """Handle exceptions that weren't caught in __call__."""
+        from integrations.import_scope import ImportOverwriteConflictError
+
+        if isinstance(exception, ImportOverwriteConflictError):
+            response = JsonResponse({"detail": str(exception)}, status=409)
+            response["Retry-After"] = "1"
+            return response
         response = self._contention_response(request, exception)
         if response is not None:
             return response

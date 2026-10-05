@@ -584,7 +584,7 @@ class ProviderNotConfiguredError(ProviderAPIError):
         Exception.__init__(self, message)
 
 
-def raise_not_found_error(provider, media_id, media_type="item"):
+def raise_not_found_error(provider, media_id, media_type="item", *, confirmed_absent=False):
     """
     Raise a 404 ProviderAPIError for when a media item is not found.
 
@@ -609,7 +609,9 @@ def raise_not_found_error(provider, media_id, media_type="item"):
     )()
     mock_error = requests.exceptions.HTTPError(response=mock_response)
 
-    raise ProviderAPIError(provider, mock_error, error_msg)
+    error = ProviderAPIError(provider, mock_error, error_msg)
+    error.confirmed_absent = confirmed_absent
+    raise error
 
 
 def _get_tmdb_proxy_url():
@@ -1120,13 +1122,18 @@ def get_media_metadata(
 
     def tmdb_season_metadata():
         """Return TMDB season metadata or raise a not-found error."""
-        seasons = tmdb.tv_with_seasons(media_id, season_numbers, language)
-        season_key = f"season/{season_numbers[0]}"
+        missing_seasons = set()
+        seasons = tmdb.tv_with_seasons(
+            media_id, season_numbers, language, missing_seasons=missing_seasons
+        )
+        requested_season = tmdb._normalize_season_numbers(season_numbers)[0]
+        season_key = f"season/{requested_season}"
         if season_key not in seasons:
             raise_not_found_error(
                 Sources.TMDB.value,
                 media_id,
                 media_type=f"season {season_numbers[0]}",
+                confirmed_absent=requested_season in missing_seasons,
             )
         season_data = seasons[season_key]
         if not season_data.get("cast"):

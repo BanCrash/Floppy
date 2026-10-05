@@ -9,6 +9,10 @@ from app.models import MediaTypes, Sources
 from app.providers import mangabaka, services
 
 
+def _tag(name, name_path, series_count, **flags):
+    return {"name": name, "name_path": name_path, "series_count": series_count, **flags}
+
+
 def _series(**overrides):
     series = {
         "id": 84926,
@@ -29,22 +33,40 @@ def _series(**overrides):
         "published": {"start_date": "1989-08-25", "end_date": None},
         "genres": ["action", "boys_love"],
         "tags_v2": [
-            {"name": "Dark Fantasy", "is_genre": False, "weight": "core"},
-            {"name": "Hero Dies", "is_spoiler": True, "weight": "core"},
-            {"name": "Gore", "is_genre": False, "weight": "incidental"},
-            {"name": "Action", "is_genre": True, "weight": "defining"},
+            _tag("Dark Fantasy", "Themes > Dark Fantasy", 3000),
+            _tag("Demons", "Character Types > Demons", 5151),
+            _tag("Hero Dies", "Themes > Hero Dies", 4000, is_spoiler=True),
+            _tag("Action", "Genres > Action", 9000, is_genre=True),
+            _tag("Gore", "Sexual Content > Gore", 5000),
+            _tag("Sex Slave", "Character Types > Victims > Sex Slave", 5000),
+            _tag("Rare", "Themes > Rare", 10),
+            _tag("Ongoing", "Work Info > Ongoing", 9000),
         ],
     }
     series.update(overrides)
     return series
 
 
-def _search_page(count=1):
+def _search_page(count=1, rows=None, next_page=None):
     return {
         "status": 200,
-        "pagination": {"count": count, "page": 1, "limit": 30},
-        "data": [_series()],
+        "pagination": {"count": count, "page": 1, "limit": 30, "next": next_page},
+        "data": [_series()] if rows is None else rows,
     }
+
+
+def _route(*, series=None, similar=None, related=None):
+    """Answer by URL, since one detail page makes several MangaBaka requests."""
+
+    def respond(_provider, _method, url, **_kwargs):
+        if url.endswith("/similar"):
+            return {"status": 200, "data": similar or []}
+        series_id = url.rsplit("/", 1)[1]
+        if series_id in (related or {}):
+            return {"status": 200, "data": related[series_id]}
+        return {"status": 200, "data": series}
+
+    return respond
 
 
 class MangaBakaProviderTests(TestCase):
@@ -79,25 +101,47 @@ class MangaBakaProviderTests(TestCase):
         self.assertEqual(params["page"], 2)
 
     @patch("app.providers.mangabaka.services.api_request")
-    def test_search_excludes_novels_and_adult_by_default(self, mock_request):
+    def test_search_sends_user_agent_and_keeps_mainstream_erotica(self, mock_request):
         mock_request.return_value = _search_page()
 
         mangabaka.search("berserk", 1)
 
-        params = mock_request.call_args.kwargs["params"]
-        self.assertEqual(params["type_not"], ["novel"])
-        self.assertEqual(params["not_content_rating"], ["erotica", "pornographic"])
+        kwargs = mock_request.call_args.kwargs
+        # MangaBaka 403s the default python-requests User-Agent.
+        self.assertEqual(kwargs["headers"], {"User-Agent": "Mozilla/5.0"})
+        # Berserk is rated erotica, so that tier must stay visible.
+        self.assertEqual(
+            kwargs["params"]["content_rating"],
+            ["safe", "suggestive", "erotica"],
+        )
+
+    @patch("app.providers.mangabaka.services.api_request")
+    def test_search_drops_novels_and_explicit_genres(self, mock_request):
+        mock_request.return_value = _search_page(
+            count=4,
+            rows=[
+                _series(id=1, title="Manga"),
+                _series(id=2, title="Novel", type="novel"),
+                _series(id=3, title="Fan work", genres=["doujinshi"]),
+                _series(id=4, title="Mystery", genres=["adult", "mystery"]),
+            ],
+        )
+
+        titles = [row["title"] for row in mangabaka.search("x", 1)["results"]]
+
+        self.assertEqual(titles, ["Manga", "Mystery"])
 
     @override_settings(MANGABAKA_NSFW=True)
     @patch("app.providers.mangabaka.services.api_request")
     def test_search_nsfw_setting_drops_the_adult_filter(self, mock_request):
-        mock_request.return_value = _search_page()
+        mock_request.return_value = _search_page(
+            rows=[_series(id=3, title="Fan work", genres=["doujinshi"])],
+        )
 
-        mangabaka.search("berserk", 1)
+        results = mangabaka.search("berserk", 1)["results"]
 
-        params = mock_request.call_args.kwargs["params"]
-        self.assertNotIn("not_content_rating", params)
-        self.assertEqual(params["type_not"], ["novel"])
+        self.assertNotIn("content_rating", mock_request.call_args.kwargs["params"])
+        self.assertEqual([row["title"] for row in results], ["Fan work"])
 
     @patch("app.providers.mangabaka.services.api_request")
     def test_search_cached_per_nsfw_state(self, mock_request):
@@ -132,7 +176,7 @@ class MangaBakaProviderTests(TestCase):
 
     @patch("app.providers.mangabaka.services.api_request")
     def test_manga_metadata(self, mock_request):
-        mock_request.return_value = {"status": 200, "data": _series()}
+        mock_request.side_effect = _route(series=_series())
 
         data = mangabaka.manga("84926")
 
@@ -148,27 +192,42 @@ class MangaBakaProviderTests(TestCase):
         self.assertEqual(data["details"]["status"], "Releasing")
         self.assertEqual(data["details"]["start_date"], "1989-08-25")
         self.assertEqual(data["details"]["authors"], ["MIURA Kentarou"])
-        # Spoiler, genre and incidental tags stay out.
-        self.assertEqual(data["details"]["tags"], ["Dark Fantasy"])
+        # Spoiler, genre, sexual-content, victim, rare and work-info tags stay
+        # out, and the most widely shared theme comes first.
+        self.assertEqual(data["details"]["tags"], ["Demons", "Dark Fantasy"])
         self.assertEqual(
-            mock_request.call_args.args[2],
+            data["authors_full"],
+            [
+                {
+                    "person_id": "MIURA Kentarou",
+                    "name": "MIURA Kentarou",
+                    "image": settings.IMG_NONE,
+                    "role": "Author",
+                    "sort_order": 0,
+                },
+            ],
+        )
+        self.assertEqual(
+            mock_request.call_args_list[0].kwargs["headers"],
+            {"User-Agent": "Mozilla/5.0"},
+        )
+        self.assertEqual(
+            mock_request.call_args_list[0].args[2],
             "https://api.mangabaka.org/v1/series/84926",
         )
 
     @patch("app.providers.mangabaka.services.api_request")
     def test_completed_series_sets_max_progress(self, mock_request):
-        mock_request.return_value = {
-            "status": 200,
-            "data": _series(status="completed", total_chapters="71"),
-        }
+        mock_request.side_effect = _route(
+            series=_series(status="completed", total_chapters="71"),
+        )
 
         self.assertEqual(mangabaka.manga("1")["max_progress"], 71)
 
     @patch("app.providers.mangabaka.services.api_request")
     def test_sparse_series_still_parses(self, mock_request):
-        mock_request.return_value = {
-            "status": 200,
-            "data": _series(
+        mock_request.side_effect = _route(
+            series=_series(
                 description=None,
                 rating=None,
                 genres=[],
@@ -178,7 +237,7 @@ class MangaBakaProviderTests(TestCase):
                 status="completed",
                 total_chapters=None,
             ),
-        }
+        )
 
         data = mangabaka.manga("2")
 
@@ -187,6 +246,7 @@ class MangaBakaProviderTests(TestCase):
         self.assertIsNone(data["genres"])
         self.assertIsNone(data["max_progress"])
         self.assertIsNone(data["details"]["tags"])
+        self.assertEqual(data["authors_full"], [])
         self.assertIsNone(data["details"]["authors"])
 
     @patch("app.providers.mangabaka.services.api_request")
@@ -202,14 +262,16 @@ class MangaBakaProviderTests(TestCase):
         cases = [
             (_series(), True, False),
             (_series(type="novel"), False, False),
-            (_series(content_rating="erotica"), False, True),
+            # Mainstream seinen such as Berserk is rated erotica.
+            (_series(content_rating="erotica"), True, False),
             (_series(content_rating="pornographic"), False, True),
+            (_series(genres=["doujinshi"]), False, True),
             (_series(content_rating="suggestive"), True, False),
         ]
         for series, searchable, nsfw_unlocks in cases:
             with self.subTest(type=series["type"], rating=series.get("content_rating")):
                 cache.clear()
-                mock_request.return_value = {"status": 200, "data": series}
+                mock_request.side_effect = _route(series=series)
                 metadata = mangabaka.manga("1")
 
                 self.assertEqual(mangabaka.is_searchable(metadata), searchable)
@@ -233,3 +295,120 @@ class MangaBakaProviderTests(TestCase):
         )
 
         self.assertIsNone(result)
+
+
+class MangaBakaRelatedTests(TestCase):
+    """Related series, recommendations and author pages (API mocked)."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch("app.providers.mangabaka.services.api_request")
+    def test_related_and_recommendations(self, mock_request):
+        mock_request.side_effect = _route(
+            series=_series(
+                relationships_v2=[
+                    {"relation_type": "sequel", "to_series_id": 7},
+                    {"relation_type": "adaptation", "to_series_id": 8},
+                ],
+            ),
+            related={"7": _series(id=7, title="Sequel")},
+            similar=[
+                {"score": 0.2, "series": _series(id=11, title="Low")},
+                {"score": 0.9, "series": _series(id=12, title="High")},
+                {"score": 0.8, "series": _series(id=7, title="Sequel")},
+                {"score": 0.7, "series": _series(id=13, title="Novel", type="novel")},
+                {"score": 0.6, "series": _series(id=14, genres=["hentai"])},
+            ],
+        )
+
+        related = mangabaka.manga("84926")["related"]
+
+        self.assertEqual(
+            [(row["media_id"], row["relation_type"]) for row in related["related_manga"]],
+            [("7", "sequel")],
+        )
+        # Highest score first; the sequel, novel and explicit rows are dropped.
+        self.assertEqual(
+            [row["title"] for row in related["recommendations"]],
+            ["High", "Low"],
+        )
+
+    @patch("app.providers.mangabaka.services.api_request")
+    def test_related_failure_does_not_break_the_page(self, mock_request):
+        def respond(_provider, _method, url, **_kwargs):
+            if url.endswith(("/similar", "/7")):
+                raise requests.exceptions.HTTPError(response=MagicMock(status_code=500))
+            return {
+                "status": 200,
+                "data": _series(
+                    relationships_v2=[{"relation_type": "sequel", "to_series_id": 7}],
+                ),
+            }
+
+        mock_request.side_effect = respond
+
+        related = mangabaka.manga("84926")["related"]
+
+        self.assertEqual(related, {"related_manga": [], "recommendations": []})
+
+    def test_author_name_variants_start_with_the_credited_name(self):
+        variants = mangabaka.author_name_variants("MIURA Kentaro")
+
+        self.assertEqual(variants[0], "MIURA Kentaro")
+        self.assertIn("Kentarou MIURA", variants)
+        self.assertLessEqual(len(variants), mangabaka.MAX_NAME_VARIANTS)
+        self.assertEqual(mangabaka.author_name_variants("Oda"), ["Oda"])
+
+    @patch("app.providers.mangabaka.services.api_request")
+    def test_author_profile_merges_spellings_and_skips_other_people(self, mock_request):
+        by_staff = {
+            "MIURA Kentaro": [_series(id=1, title="Short", authors=["MIURA Kentaro"], artists=[])],
+            "Kentarou MIURA": [
+                _series(id=2, title="Long", authors=["Kentarou Miura"], artists=[]),
+                # Same surname, different person: an anthology credit.
+                _series(
+                    id=3,
+                    title="Anthology",
+                    authors=["Miura Taro"],
+                    artists=[],
+                ),
+                # Already returned under the other spelling.
+                _series(id=1, title="Short", authors=["MIURA Kentaro"], artists=[]),
+            ],
+        }
+
+        def respond(_provider, _method, _url, params=None, **_kwargs):
+            return _search_page(rows=by_staff.get(params["staff"], []))
+
+        mock_request.side_effect = respond
+
+        profile = mangabaka.author_profile("MIURA Kentaro")
+
+        self.assertEqual(
+            [row["title"] for row in profile["bibliography"]],
+            ["Short", "Long"],
+        )
+        self.assertEqual(profile["name"], "MIURA Kentaro")
+        self.assertLessEqual(
+            mock_request.call_count,
+            mangabaka.MAX_BIBLIOGRAPHY_REQUESTS,
+        )
+
+    @patch("app.providers.mangabaka.services.api_request")
+    def test_author_profile_pages_and_respects_the_request_budget(self, mock_request):
+        mock_request.return_value = _search_page(
+            rows=[_series(authors=["Oda"])],
+            next_page=2,
+        )
+
+        mangabaka.author_profile("Oda")
+
+        self.assertEqual(
+            mock_request.call_count,
+            mangabaka.MAX_BIBLIOGRAPHY_REQUESTS,
+        )
+        self.assertEqual(
+            [c.kwargs["params"]["page"] for c in mock_request.call_args_list[:3]],
+            [1, 2, 3],
+        )

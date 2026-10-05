@@ -35,7 +35,11 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.translation import gettext
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import (
+    require_GET,
+    require_http_methods,
+    require_POST,
+)
 
 import users
 from app import helpers as app_helpers
@@ -47,19 +51,21 @@ from app.providers import credentials, services
 from app.redis_diagnosis import queue_failure_message
 from app.services import metadata_resolution
 from integrations import (
-    audiobookshelf_cover as abs_cover_proxy,
-)
-from integrations import (
+    arr_library,
     exports,
     gpodder_api,
     koito_api,
     lastfm_api,
     pocketcasts_api,
     psn_api,
+    seerr_api,
     stremio_catalog,
     stremio_queue,
     tasks,
     xbox_api,
+)
+from integrations import (
+    audiobookshelf_cover as abs_cover_proxy,
 )
 from integrations import plex as plex_api
 from integrations import plex_cover as plex_cover_proxy
@@ -763,6 +769,7 @@ def _finish_trakt_connection(request, oauth_result, state_data):
             user_id=request.user.id,
             mode=mode,
             username=oauth_result["username"],
+            redirect_uri=oauth_result.get("redirect_uri"),
         ) is False:
             return
         messages.info(request, "The task to import media from Trakt has been queued.")
@@ -775,6 +782,8 @@ def _finish_trakt_connection(request, oauth_result, state_data):
             import_time,
             "Trakt",
             token=enc_token,
+            extra_kwargs={"redirect_uri": oauth_result.get("redirect_uri")},
+            replace_existing=True,
         )
 
 
@@ -1354,6 +1363,35 @@ def import_mal(request):
             "MyAnimeList",
         )
     return _integration_redirect(request, connected_slug="myanimelist")
+
+
+@require_POST
+def import_mangabaka(request):
+    """View for importing a manga library from MangaBaka.
+
+    MangaBaka exposes no public per-user API, so the Personal Access Token is
+    the only credential. That also means there is no username to key a
+    recurring schedule on, which is why this import runs once.
+    """
+    token = (request.POST.get("token") or "").strip()
+    if not token:
+        messages.error(request, "MangaBaka API token is required.")
+        return _integration_redirect(request, connected_slug="mangabaka")
+
+    if request.POST.get("frequency", "once") != "once":
+        messages.error(request, "MangaBaka imports run once only.")
+        return _integration_redirect(request, connected_slug="mangabaka")
+
+    tasks.import_mangabaka.delay(
+        token=helpers.encrypt(token),
+        user_id=request.user.id,
+        mode=request.POST["mode"],
+    )
+    messages.info(
+        request,
+        "The task to import media from MangaBaka has been queued.",
+    )
+    return _integration_redirect(request, connected_slug="mangabaka")
 
 
 @require_POST
@@ -4621,6 +4659,36 @@ def import_hardcover(request):
 
 
 @require_POST
+def hardcover_sync(request):
+    """Sync the user's Hardcover library now, or on the chosen import schedule."""
+    if not credentials.has_user_value("hardcover", request.user):
+        messages.error(request, "Save your Hardcover API key before syncing.")
+        return _integration_redirect(request)
+
+    mode = request.POST["mode"]
+    frequency = request.POST["frequency"]
+    if frequency == "once":
+        if _queue_task_or_message(
+            request,
+            tasks.import_hardcover_account,
+            user_id=request.user.id,
+            mode=mode,
+        ) is not False:
+            messages.info(request, "Hardcover sync queued.")
+    else:
+        helpers.create_import_schedule(
+            username=request.user.username,
+            request=request,
+            mode=mode,
+            frequency=frequency,
+            import_time=request.POST["time"],
+            source="Hardcover Account",
+            extra_kwargs={"user_id": request.user.id},
+        )
+    return _integration_redirect(request, connected_slug="hardcover")
+
+
+@require_POST
 def import_storygraph(request):
     """View for importing books data from StoryGraph CSV."""
     file = request.FILES.get("storygraph_csv")
@@ -5676,3 +5744,122 @@ def match_reference_status(request, reference_id, status):
     else:
         messages.error(request, "Unknown match decision.")
     return redirect("integrations")
+
+
+@require_http_methods(["GET", "POST"])
+def seerr_request(request, media_type, media_id):
+    """Show a title's Seerr state, and request it (or some seasons) on POST."""
+    user = request.user
+    if (
+        media_type not in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        or not user.seerr_url
+        or not user.seerr_api_key
+        or not user.seerr_user_id
+    ):
+        return HttpResponseNotFound()
+
+    error = None
+    summary = None
+    try:
+        client = seerr_api.SeerrClient.for_user(user)
+        if request.method == "POST":
+            seasons = [
+                int(number)
+                for number in request.POST.getlist("season")
+                if number.isdigit()
+            ]
+            client.request(
+                media_type,
+                media_id,
+                user.seerr_user_id,
+                seasons=seasons or None,
+            )
+        summary = seerr_api.summarize(media_type, client.media(media_type, media_id))
+    except (seerr_api.SeerrError, helpers.MediaImportError) as exc:
+        error = str(exc)
+
+    return render(
+        request,
+        "integrations/seerr_request.html",
+        {
+            "media_type": media_type,
+            "media_id": media_id,
+            "summary": summary,
+            "error": error,
+            "seerr_page_url": f"{user.seerr_url}/{media_type}/{media_id}",
+        },
+    )
+
+
+def _int_or_none(value):
+    """Return `value` as an int, or None when it is blank or not a number."""
+    return int(value) if str(value or "").isdigit() else None
+
+
+@require_http_methods(["GET", "POST"])
+def library_panel(request, source, media_type, media_id):
+    """Show Radarr/Sonarr details and Seerr requests for a title; POST searches."""
+    user = request.user
+    params = request.POST if request.method == "POST" else request.GET
+    season = _int_or_none(params.get("season_number"))
+    episode = _int_or_none(params.get("episode_number"))
+
+    message = error = ""
+    if request.method == "POST":
+        error = arr_library.start_search(
+            user,
+            params.get("app"),
+            _int_or_none(params.get("instance_id")),
+            params.get("kind"),
+            _int_or_none(params.get("arr_id")),
+            _int_or_none(params.get("season")),
+        )
+        message = "" if error else f"Search started in {params.get('app')}."
+
+    panels = arr_library.library_panels(
+        user, source, media_type, media_id, season, episode
+    )
+
+    seerr_requests = None
+    seerr_error = ""
+    if (
+        user.seerr_url
+        and user.seerr_api_key
+        and source == Sources.TMDB.value
+        and media_type
+        in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+            MediaTypes.EPISODE.value,
+        )
+    ):
+        seerr_type = (
+            MediaTypes.MOVIE.value
+            if media_type == MediaTypes.MOVIE.value
+            else MediaTypes.TV.value
+        )
+        try:
+            seerr_requests = seerr_api.requests_for(
+                seerr_api.SeerrClient.for_user(user).media(seerr_type, media_id),
+                season_number=(
+                    None if media_type == MediaTypes.TV.value else season
+                ),
+            )
+        except (seerr_api.SeerrError, helpers.MediaImportError) as exc:
+            seerr_error = str(exc)
+
+    return render(
+        request,
+        "integrations/library_panel.html",
+        {
+            "panels": panels,
+            "message": message,
+            "error": error,
+            "seerr_requests": seerr_requests,
+            "seerr_error": seerr_error,
+            "panel_url": request.path,
+            "season_number": season,
+            "episode_number": episode,
+        },
+    )

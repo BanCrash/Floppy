@@ -75,6 +75,7 @@ urlpatterns = [
         name="import_anilist_public",
     ),
     path("import/kitsu", views.import_kitsu, name="import_kitsu"),
+    path("import/mangabaka", views.import_mangabaka, name="import_mangabaka"),
     path("import/yamtrack", views.import_yamtrack, name="import_yamtrack"),
     path("import/clz", views.import_clz, name="import_clz"),
     path("import/hltb", views.import_hltb, name="import_hltb"),
@@ -137,6 +138,11 @@ urlpatterns = [
         "import/audiobookshelf",
         views.import_audiobookshelf,
         name="import_audiobookshelf",
+    ),
+    path(
+        "import/hardcover/sync",
+        views.hardcover_sync,
+        name="hardcover_sync",
     ),
     path(
         "import/kavita/connect",
@@ -278,6 +284,16 @@ urlpatterns = [
         "webhook/jellyseerr/<str:token>",
         views.jellyseerr_webhook,
         name="jellyseerr_webhook",
+    ),
+    path(
+        "library/<str:source>/<str:media_type>/<str:media_id>/",
+        views.library_panel,
+        name="library_panel",
+    ),
+    path(
+        "seerr/<str:media_type>/<int:media_id>/",
+        views.seerr_request,
+        name="seerr_request",
     ),
     path(
         "webhook/seerr/global/",

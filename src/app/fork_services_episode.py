@@ -166,6 +166,8 @@ def resolve_or_create_season(
     source,
     season_number,
     library_media_type="",
+    *,
+    prepare_only=False,
 ):
     """Return the user's tracked Season row, creating it if it doesn't exist.
 
@@ -207,15 +209,22 @@ def resolve_or_create_season(
                 "image": season_image,
             },
         )
-        related_season = Season.objects.create(
+        related_season = Season(
             item=item,
             user=user,
             score=None,
             status=Status.IN_PROGRESS.value,
             notes="",
         )
+        if prepare_only:
+            # Ordered destinations belong to an already tracked show. Resolve
+            # its identity without committing a tracking parent before sealing.
+            related_season.related_tv = related_season.get_tv()
+        else:
+            related_season.save()
 
-        logger.info("%s did not exist, it was created successfully.", related_season)
+        if not prepare_only:
+            logger.info("%s did not exist, it was created successfully.", related_season)
 
     _sync_library_media_type(related_season, library_media_type)
     return related_season

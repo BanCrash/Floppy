@@ -23,7 +23,7 @@ from app.models import Item, MediaTypes, Sources, Status
 from app.providers import tmdb
 from app.services import metadata_resolution
 from app.stats_music import COUNTRY_NAME_MAP
-from users.models import HISTORY_VIEW_TYPE, TimeFormatChoices
+from users.models import ALL_SEARCH_TYPE, HISTORY_VIEW_TYPE, TimeFormatChoices
 from users.templatetags.user_tags import user_date_format, user_time_format
 
 register = template.Library()
@@ -604,6 +604,8 @@ def media_type_readable(media_type):
 @register.filter
 def media_type_readable_plural(media_type):
     """Return the readable media type in plural form."""
+    if media_type == ALL_SEARCH_TYPE:
+        return _("All")
     # English suffixes do not produce correct plurals in other languages.
     return {
         MediaTypes.TV: _("TV Shows"),
@@ -966,6 +968,36 @@ def music_album_url(album):
     )
 
 
+@register.filter
+def music_track_url(track):
+    """Return the canonical shared media-details URL for a music track."""
+    if track is None or isinstance(track, dict):
+        return ""
+
+    track_id = getattr(track, "id", None)
+    album = getattr(track, "album", None)
+    if track_id is None or album is None or getattr(album, "id", None) is None:
+        return ""
+
+    artist = getattr(album, "artist", None)
+    artist_id = getattr(artist, "id", None)
+    artist_name = getattr(artist, "name", None)
+    return reverse(
+        "music_track_details",
+        kwargs={
+            "artist_id": artist_id or 0,
+            "artist_slug": _music_slug(
+                artist_name or "Unknown Artist",
+                artist_id or "artist",
+            ),
+            "album_id": album.id,
+            "album_slug": _music_slug(album.title, album.id),
+            "track_id": track_id,
+            "track_slug": _music_slug(getattr(track, "title", ""), track_id),
+        },
+    )
+
+
 def _studio_slug(value, fallback):
     """Return a stable slug with a safe fallback for studio links."""
     normalized = slug(value or "")
@@ -1074,7 +1106,7 @@ def get_search_media_types(user):
         enabled_types = user.get_enabled_media_types()
 
     # Filter and format the types for search
-    return [
+    search_types = [
         {
             "display": media_type_readable_plural(media_type),
             "value": media_type,
@@ -1082,6 +1114,10 @@ def get_search_media_types(user):
         for media_type in enabled_types
         if media_type != MediaTypes.SEASON.value
     ]
+    if user and user.is_authenticated:
+        # Library-wide search across every enabled type (#1160).
+        search_types.insert(0, {"display": _("All"), "value": ALL_SEARCH_TYPE})
+    return search_types
 
 
 def _saved_views_by_type(user):
