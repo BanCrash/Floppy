@@ -109,9 +109,9 @@ def resolve_carousel_media(media_type, source, media_id, *, season_number=None) 
         overview = None
         if (backdrop_path or backdrop_url) and logo_paths:
             overview = {
-                "url": backdrop_url or tmdb.get_carousel_image_url(backdrop_path, size="w1280"),
-                "thumb_url": backdrop_url or tmdb.get_carousel_image_url(backdrop_path, size="w300"),
-                "logo_url": tmdb.get_carousel_image_url(logo_paths[0], size="w500"),
+                "url": rewrite_image_url(backdrop_url or tmdb.get_carousel_image_url(backdrop_path, size="w1280")),
+                "thumb_url": rewrite_image_url(backdrop_url or tmdb.get_carousel_image_url(backdrop_path, size="w300")),
+                "logo_url": rewrite_image_url(tmdb.get_carousel_image_url(logo_paths[0], size="w500")),
             }
             removed_overview = False
             remaining_photos = []
@@ -147,9 +147,9 @@ def resolve_carousel_media(media_type, source, media_id, *, season_number=None) 
         overview = None
         if data.get("hero_image_id") and data.get("logo_image_id"):
             overview = {
-                "url": f"https://images.igdb.com/igdb/image/upload/t_1080p/{data['hero_image_id']}.jpg",
-                "thumb_url": f"https://images.igdb.com/igdb/image/upload/t_screenshot_big_2x/{data['hero_image_id']}.jpg",
-                "logo_url": f"https://images.igdb.com/igdb/image/upload/t_logo_med/{data['logo_image_id']}.png",
+                "url": rewrite_image_url(f"https://images.igdb.com/igdb/image/upload/t_1080p/{data['hero_image_id']}.jpg"),
+                "thumb_url": rewrite_image_url(f"https://images.igdb.com/igdb/image/upload/t_screenshot_big_2x/{data['hero_image_id']}.jpg"),
+                "logo_url": rewrite_image_url(f"https://images.igdb.com/igdb/image/upload/t_logo_med/{data['logo_image_id']}.png"),
             }
             removed_overview = False
             remaining_photos = []

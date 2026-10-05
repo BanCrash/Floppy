@@ -42,6 +42,35 @@ class CarouselOverviewTests(SimpleTestCase):
         )
         self.assertEqual(result["photos"], [])
 
+    @patch("app.providers.tmdb.get_carousel_image_url")
+    @patch("app.providers.tmdb.carousel_media")
+    def test_overview_images_go_through_the_image_cache(self, mock_media, mock_image_url):
+        mock_media.return_value = {
+            "video": None,
+            "photos": [{"file_path": "/backdrop.jpg"}, {"file_path": "/other.jpg"}],
+            "logos": ["/logo.png"],
+            "backdrop_path": "/backdrop.jpg",
+        }
+        mock_image_url.side_effect = lambda path, size: f"{size}{path}"
+
+        with patch(
+            "app.carousel.rewrite_image_url", side_effect=lambda url: f"cached:{url}"
+        ):
+            result = carousel.resolve_carousel_media(
+                MediaTypes.MOVIE.value, Sources.TMDB.value, "42"
+            )
+
+        self.assertEqual(
+            result["overview"],
+            {
+                "url": "cached:w1280/backdrop.jpg",
+                "thumb_url": "cached:w300/backdrop.jpg",
+                "logo_url": "cached:w500/logo.png",
+            },
+        )
+        # The duplicate of the overview backdrop is still dropped from the photos.
+        self.assertEqual([p["url"] for p in result["photos"]], ["cached:w1280/other.jpg"])
+
     def test_tmdb_season_prefers_season_backdrop_and_parent_logo(self):
         season_data = {
             "video": None,
