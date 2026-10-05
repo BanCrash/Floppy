@@ -13,7 +13,7 @@ from django.dispatch import Signal
 
 logger = logging.getLogger(__name__)
 
-# Fired once after record_music_playback has a Music row.
+# Fired once per completed listen, after record_music_playback stored it.
 # kwargs: music (Music), event (MusicPlaybackEvent).
 music_listen_recorded = Signal()
 
@@ -41,9 +41,15 @@ def load_music_listen_hooks():
         # @receiver holds its function weakly; without a reference to the
         # module, garbage collection silently unhooks it.
         sys.modules[module_name] = module
+        connected = list(music_listen_recorded.receivers)
         try:
             spec.loader.exec_module(module)
         except Exception:
             logger.exception("Music listen hook %s failed to load", path.name)
+            # Drop the half-loaded module and any receiver it connected first.
+            del sys.modules[module_name]
+            with music_listen_recorded.lock:
+                music_listen_recorded.receivers = connected
+                music_listen_recorded.sender_receivers_cache.clear()
             continue
         logger.info("Loaded music listen hook %s", path.name)

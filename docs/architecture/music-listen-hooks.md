@@ -1,6 +1,6 @@
 # Music listen hooks
 
-A scrobble that has a `Music` row fires `music_listen_recorded` once, from `record_music_playback`, after the existing MusicBrainz genre fill. Every ingest path that calls that function gets the signal. Core code does not branch on the source.
+A completed scrobble (not a Plex play or resume) fires `music_listen_recorded` once, from `record_music_playback`. Every ingest path that calls that function gets the signal. Core code does not branch on the source.
 
 ## Signal
 

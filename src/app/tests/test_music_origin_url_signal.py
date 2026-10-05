@@ -35,14 +35,14 @@ class MusicOriginUrlSignalTests(TestCase):
     def _receiver(self, sender, music, event, **kwargs):
         self.calls.append((music.pk, event.origin_url))
 
-    def _event(self, origin_url="", **kwargs):
+    def _event(self, origin_url="", completed=True, **kwargs):
         return MusicPlaybackEvent(
             user=self.user,
             artist_name="Dusky",
             album_title="Careless",
             track_title="Careless",
             external_ids={},
-            completed=True,
+            completed=completed,
             played_at=timezone.now(),
             origin_url=origin_url,
             **kwargs,
@@ -86,3 +86,20 @@ class MusicOriginUrlSignalTests(TestCase):
         """An over-long URL is not stored, so Postgres cannot reject the save."""
         music = record_music_playback(self._event("https://x.test/" + "a" * 600))
         self.assertEqual(Music.objects.get(pk=music.pk).origin_url, "")
+
+    def test_url_adds_no_extra_history_row(self):
+        """The URL rides the play's own save: one history row per play."""
+        first = record_music_playback(self._event(URL))
+        self.assertEqual(first.history.count(), 1)
+        second = record_music_playback(
+            self._event("https://soundcloud.com/duskymusic/other")
+        )
+        self.assertEqual(second.history.count(), 2)
+
+    def test_play_or_resume_does_not_fire_the_signal(self):
+        """Only a completed listen fires the signal."""
+        record_music_playback(self._event(URL))
+        self.calls.clear()
+        music = record_music_playback(self._event(completed=False))
+        self.assertIsNotNone(music)
+        self.assertEqual(self.calls, [])

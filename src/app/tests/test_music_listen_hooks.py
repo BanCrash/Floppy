@@ -35,3 +35,18 @@ class MusicListenHookTests(SimpleTestCase):
         with override_settings(MUSIC_HOOKS_DIR=str(FIXTURES / "broken")):
             with self.assertLogs("app.signals_music", "ERROR"):
                 load_music_listen_hooks()
+
+    def test_hook_that_fails_after_connecting_is_unhooked(self):
+        """A half-loaded hook neither stays in sys.modules nor keeps receiving."""
+        with override_settings(MUSIC_HOOKS_DIR=str(FIXTURES / "partial")):
+            with self.assertLogs("app.signals_music", "ERROR"):
+                load_music_listen_hooks()
+        gc.collect()
+        music_listen_recorded.send(sender=object, music="row", event="evt")
+        self.assertNotIn("music_listen_hook_partial", sys.modules)
+        self.assertFalse(
+            any(
+                getattr(ref(), "__name__", "") == "_capture"
+                for _, ref, *_ in music_listen_recorded.receivers
+            )
+        )

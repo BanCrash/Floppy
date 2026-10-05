@@ -163,7 +163,8 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
 
     This resolves canonical metadata (MusicBrainz when possible), ensures
     Artist/Album/Track/Item existence, and updates the per-user Music row.
-    A client origin URL is stored on the Music row when the scrobble sent one.
+    A client origin URL is stored on the Music row when the scrobble sent one,
+    in the same save as the play so history gets one row per play.
     """
     played_at = event.played_at or timezone.now()
 
@@ -239,25 +240,19 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
             _maybe_refresh_album_cover(album)
             _prefetch_missing_covers(artist, force=force_cover_prefetch)
 
-    origin_url = event.origin_url
-    if (
-        origin_url
-        and len(origin_url) <= Music._meta.get_field("origin_url").max_length
-        and music.origin_url != origin_url
-    ):
-        music.origin_url = origin_url
-        music.save(update_fields=["origin_url"])
+    if event.completed:
+        from app.signals_music import music_listen_recorded
 
-    from app.signals_music import music_listen_recorded
-
-    # send_robust: a failing hook is logged, never a failed scrobble.
-    for receiver, result in music_listen_recorded.send_robust(
-        sender=Music, music=music, event=event
-    ):
-        if isinstance(result, Exception):
-            logger.error(
-                "Music listen hook %r failed: %s", receiver, exception_summary(result)
-            )
+        # send_robust: a failing hook is logged, never a failed scrobble.
+        for receiver, result in music_listen_recorded.send_robust(
+            sender=Music, music=music, event=event
+        ):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Music listen hook %r failed: %s",
+                    receiver,
+                    exception_summary(result),
+                )
 
     return music
 
@@ -1088,6 +1083,14 @@ def _get_or_create_item(
     return item
 
 
+def _storable_origin_url(event: MusicPlaybackEvent) -> str:
+    """Return the event's origin URL, or "" when it would not fit the column."""
+    url = event.origin_url
+    if len(url) > Music._meta.get_field("origin_url").max_length:
+        return ""
+    return url
+
+
 def _update_music_entry(
     event: MusicPlaybackEvent,
     metadata: ResolvedMusicMetadata,
@@ -1120,6 +1123,7 @@ def _update_music_entry(
             "start_date": played_at,
             "end_date": played_at,
             "entry_source": event.entry_source,
+            "origin_url": _storable_origin_url(event),
         }
         import_run_id = import_progress.get_current_import_run_id()
         if import_run_id:
@@ -1192,6 +1196,10 @@ def _update_music_entry(
         # (same track within 2 minutes). Different tracks always get separate history records.
         if music.end_date != played_at:
             music.end_date = played_at
+            changed = True
+        origin_url = _storable_origin_url(event)
+        if origin_url and music.origin_url != origin_url:
+            music.origin_url = origin_url
             changed = True
         if not music.start_date:
             music.start_date = played_at
