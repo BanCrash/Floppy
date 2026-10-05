@@ -12,6 +12,10 @@ from app.models import Item, MediaTypes, Status, Video
 
 from .helpers import check_source_type
 
+# Largest value a PositiveIntegerField column stores.
+MAX_SECONDS = 2_147_483_647
+MAX_EXTERNAL_ID_LENGTH = 255
+
 
 def _end_date_from_external_id(external_id):
     """Use the trailing YYYY-MM-DD on the external id, else now.
@@ -44,11 +48,24 @@ class VideoPlayView(APIView):
                 {"detail": "title and externalId are required"},
                 status=HTTP.BAD_REQUEST,
             )
+        if len(external_id) > MAX_EXTERNAL_ID_LENGTH:
+            return Response(
+                {"detail": "externalId is too long"},
+                status=HTTP.BAD_REQUEST,
+            )
         try:
             progress_seconds = int(request.data.get("progressSeconds") or request.data.get("progress_seconds") or 0)
             length_seconds = int(request.data.get("lengthSeconds") or request.data.get("length_seconds") or 0)
         except (TypeError, ValueError):
             return Response({"detail": "seconds must be integers"}, status=HTTP.BAD_REQUEST)
+        # Negative seconds count as zero and huge ones as the column maximum,
+        # so a bad value never reaches the database.
+        progress_seconds = min(max(progress_seconds, 0), MAX_SECONDS)
+        length_seconds = min(max(length_seconds, 0), MAX_SECONDS)
+
+        # Cut to the column sizes so a long value is stored, not a 500.
+        channel = str(request.data.get("channel") or "")[:255]
+        watch_url = str(request.data.get("url") or "")[:500]
 
         # The item is shared by every user who tracks this video, so a later
         # post never renames it.
@@ -67,19 +84,19 @@ class VideoPlayView(APIView):
                 # The model defaults to Completed, which would fill the
                 # progress bar on creation. The first report decides.
                 "status": Status.IN_PROGRESS.value,
-                "channel": str(request.data.get("channel") or ""),
-                "watch_url": str(request.data.get("url") or ""),
-                "length_seconds": max(length_seconds, 0),
+                "channel": channel,
+                "watch_url": watch_url,
+                "length_seconds": length_seconds,
             },
         )
-        video.channel = str(request.data.get("channel") or video.channel)
-        video.watch_url = str(request.data.get("url") or video.watch_url)
+        video.channel = channel or video.channel
+        video.watch_url = watch_url or video.watch_url
         if length_seconds:
             video.length_seconds = length_seconds
 
         play, created = video.upsert_play(
             external_id,
-            max(progress_seconds, 0),
+            progress_seconds,
             end_date=_end_date_from_external_id(external_id),
         )
         return Response(
