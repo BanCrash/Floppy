@@ -2,7 +2,14 @@
 from http import HTTPStatus as HTTP  # noqa: N814
 from unittest.mock import Mock, patch
 
-from app.models import CollectionEntry, Item, MediaTypes, Sources
+from api.fork_views import MediaCollectionView
+from app.models import (
+    CollectionEntry,
+    CollectionEntrySource,
+    Item,
+    MediaTypes,
+    Sources,
+)
 from app.providers import services
 
 from .base import FloppyApiTestCase
@@ -104,30 +111,101 @@ class MediaCollectionTests(FloppyApiTestCase):
         )
         self.assertEqual(response.status_code, HTTP.BAD_REQUEST)
 
-    def test_delete_removes_entry(self):
-        """DELETE removes the caller's entry and 404s when there is none."""
-        item = self.items_by_type[MediaTypes.MOVIE.value][0]
-        CollectionEntry.objects.create(user=self.user1, item=item)
-        args = (MediaTypes.MOVIE.value, item.source, item.media_id)
-
-        response = self.call_api(
+    def _delete(self, item, params=None):
+        return self.call_api(
             "delete",
             "api_media_collection",
-            args=args,
+            args=(MediaTypes.MOVIE.value, item.source, item.media_id),
             headers=self.auth_headers,
+            params=params,
         )
+
+    def test_put_links_new_entry_to_the_api(self):
+        """An entry created here carries the provenance link DELETE relies on."""
+        item = self.items_by_type[MediaTypes.MOVIE.value][0]
+
+        response = self._put(item.media_id)
+
+        self.assertEqual(response.status_code, HTTP.CREATED)
+        entry = CollectionEntry.objects.get(user=self.user1, item=item)
+        self.assertTrue(
+            CollectionEntrySource.objects.filter(entry=entry, source="api").exists(),
+        )
+
+    def test_put_reuses_a_copy_added_elsewhere(self):
+        """A copy from the web form is reused and stays unlinked."""
+        item = self.items_by_type[MediaTypes.MOVIE.value][0]
+        manual = CollectionEntry.objects.create(user=self.user1, item=item)
+
+        response = self._put(item.media_id, {"resolution": "4k"})
+
+        self.assertEqual(response.status_code, HTTP.OK)
+        self.assertEqual(response.json()["id"], manual.id)
+        self.assertFalse(CollectionEntrySource.objects.filter(entry=manual).exists())
+
+    def test_delete_removes_only_the_copy_the_api_created(self):
+        """DELETE leaves copies added elsewhere; a repeat DELETE is a 404."""
+        item = self.items_by_type[MediaTypes.MOVIE.value][0]
+        self._put(item.media_id)
+        manual = CollectionEntry.objects.create(user=self.user1, item=item)
+
+        response = self._delete(item)
+        self.assertEqual(response.status_code, HTTP.NO_CONTENT)
+        self.assertEqual(
+            list(CollectionEntry.objects.filter(user=self.user1, item=item)),
+            [manual],
+        )
+
+        again = self._delete(item)
+        self.assertEqual(again.status_code, HTTP.NOT_FOUND)
+        self.assertIn("all=true", again.json()["detail"])
+        self.assertTrue(CollectionEntry.objects.filter(id=manual.id).exists())
+
+    def test_delete_all_removes_every_copy(self):
+        """all=true also removes copies added elsewhere."""
+        item = self.items_by_type[MediaTypes.MOVIE.value][0]
+        self._put(item.media_id)
+        CollectionEntry.objects.create(user=self.user1, item=item)
+
+        response = self._delete(item, {"all": "true"})
+
         self.assertEqual(response.status_code, HTTP.NO_CONTENT)
         self.assertFalse(
             CollectionEntry.objects.filter(user=self.user1, item=item).exists(),
         )
 
-        again = self.call_api(
-            "delete",
-            "api_media_collection",
-            args=args,
-            headers=self.auth_headers,
+    def test_delete_without_any_copy_is_not_found(self):
+        """DELETE with nothing collected says so."""
+        item = self.items_by_type[MediaTypes.MOVIE.value][0]
+
+        response = self._delete(item)
+
+        self.assertEqual(response.status_code, HTTP.NOT_FOUND)
+        self.assertNotIn("all=true", response.json()["detail"])
+
+    def test_losing_a_simultaneous_create_reuses_the_winning_entry(self):
+        """The unique link settles two first calls: one entry, no duplicate."""
+        item = self.items_by_type[MediaTypes.MOVIE.value][0]
+        view = MediaCollectionView()
+
+        winner, won = view._create_entry(self.user1, item, "1080p")
+        loser, lost = view._create_entry(self.user1, item, "720p")
+
+        self.assertTrue(won)
+        self.assertFalse(lost)
+        self.assertEqual(loser.id, winner.id)
+        self.assertEqual(
+            CollectionEntry.objects.filter(user=self.user1, item=item).count(),
+            1,
         )
-        self.assertEqual(again.status_code, HTTP.NOT_FOUND)
+
+    def test_put_non_object_body_rejected(self):
+        """A JSON list body is a 400, not a server error."""
+        item = self.items_by_type[MediaTypes.MOVIE.value][0]
+
+        response = self._put(item.media_id, [1])
+
+        self.assertEqual(response.status_code, HTTP.BAD_REQUEST)
 
 
 class MediaEpisodeCollectionTests(FloppyApiTestCase):

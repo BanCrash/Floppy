@@ -115,12 +115,18 @@ shown as the entry's quality.
 | `201` | Collected; the body is the new collection entry |
 | `200` | Already collected; the same entry is returned, with `resolution` updated if one was sent |
 | `204` | Removed (`DELETE`) |
-| `400` | Unsupported media type or source, or a show without season and episode |
-| `404` | The provider does not know the id, or (`DELETE`) there was no entry |
+| `400` | Unsupported media type or source, a body that is not a JSON object, or a show without season and episode |
+| `404` | The provider does not know the id, or (`DELETE`) there was nothing to remove |
 | `502` | The provider could not be reached; nothing was created, retry later |
 
 `PUT` is idempotent, so replaying a download event, or reporting a quality
-upgrade, updates one entry instead of adding copies.
+upgrade, updates one entry instead of adding copies. Two calls arriving at the
+same moment still produce one entry.
+
+`DELETE` removes only the copy the API created. A copy added by hand in
+Floppy (for example a disc with its own details) is left alone, and `DELETE`
+answers `404` when only such copies exist. Add `?all=true` to remove every
+copy of the title.
 
 Limits:
 
