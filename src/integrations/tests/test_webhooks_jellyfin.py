@@ -492,6 +492,38 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(movie.start_date, started)
         self.assertGreater(movie.end_date, movie.start_date)
 
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.movie")
+    def test_imdb_only_movie_stop_still_finds_the_play_session(
+        self,
+        mock_movie,
+        mock_find,
+    ):
+        """The Play state has no TMDB id; the Jellyfin item id still matches it."""
+        mock_find.return_value = {"movie_results": [{"id": 7219}]}
+        mock_movie.return_value = {
+            "title": "Zombie",
+            "image": "",
+            "max_progress": 1,
+            "provider_external_ids": {},
+        }
+        payload = {
+            "PlaybackPositionTicks": "2382910000",
+            "Item": {
+                "Id": "jf-1",
+                "Name": "Zombie",
+                "Type": "Movie",
+                "ProviderIds": {"Imdb": "tt0080057"},
+                "UserData": {"Played": False},
+            },
+        }
+        processor, started = self._play_then_backdate(payload, 21)
+
+        processor.process_payload({**payload, "Event": "Stop"}, self.user)
+
+        movie = Movie.objects.get(item__media_id="7219", user=self.user)
+        self.assertEqual(movie.start_date, started)
+
     @patch("app.providers.tmdb.movie")
     def test_movie_stop_without_play_falls_back_to_stop_time(self, mock_movie):
         """With no Now Playing session (e.g. a restart), behaviour is unchanged."""

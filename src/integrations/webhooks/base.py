@@ -106,6 +106,10 @@ class BaseWebhookProcessor:
         """
         return False
 
+    def _playback_rating_key(self, _payload):
+        """Return the server's own item key, as stored in Now Playing state."""
+        return
+
     def _should_record(self, event, *, played, position_seconds):
         """Check this integration's write policy before touching tracking rows.
 
@@ -1445,6 +1449,7 @@ class BaseWebhookProcessor:
             user.id,
             playback_media_type=MediaTypes.MOVIE.value,
             media_id=media_id,
+            rating_key=self._playback_rating_key(payload),
         )
         if started_at is None or started_at > now:
             started_at = None
