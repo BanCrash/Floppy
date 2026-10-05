@@ -190,6 +190,9 @@ class OAuthDeviceAuthorization(models.Model):
         requested_scopes: list[str],
     ) -> tuple[OAuthDeviceAuthorization, str, str]:
         """Create an authorisation while storing only digests of its raw codes."""
+        cls.objects.filter(
+            expires_at__lt=timezone.now() - timedelta(days=1),
+        ).delete()
         raw_device_code = f"flp_device_{secrets.token_urlsafe(32)}"
         raw_user_code = "".join(
             secrets.choice(_USER_CODE_ALPHABET) for _ in range(8)

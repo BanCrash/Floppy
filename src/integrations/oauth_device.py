@@ -6,6 +6,7 @@ import json
 from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_not_required, login_required
+from django.core.cache import cache
 from django.http import HttpRequest, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -19,6 +20,20 @@ from integrations.oauth_models import (
     OAuthDeviceAuthorization,
 )
 from integrations.oauth_scope_info import normalise_scopes, scope_details
+
+DEVICE_AUTHORIZATION_LIMIT = 10
+DEVICE_AUTHORIZATION_WINDOW_SECONDS = 60
+
+
+def _rate_limited(request: HttpRequest) -> bool:
+    """Count this caller's code requests in the current minute window."""
+    caller = request.META.get("HTTP_X_REAL_IP") or request.META.get("REMOTE_ADDR", "")
+    key = f"oauth_device_authorization:{caller}"
+    cache.add(key, 0, timeout=DEVICE_AUTHORIZATION_WINDOW_SECONDS)
+    try:
+        return cache.incr(key) > DEVICE_AUTHORIZATION_LIMIT
+    except ValueError:  # the key expired between add and incr
+        return False
 
 
 def _no_store(response: JsonResponse) -> JsonResponse:
@@ -56,6 +71,15 @@ def _request_data(request: HttpRequest) -> dict[str, object]:
 @require_POST
 def oauth_device_authorization(request: HttpRequest) -> JsonResponse:
     """Issue short-lived device and user codes for a registered public client."""
+    if _rate_limited(request):
+        response = _oauth_error(
+            "slow_down",
+            "Too many device code requests. Try again in a minute.",
+            status=429,
+        )
+        response["Retry-After"] = str(DEVICE_AUTHORIZATION_WINDOW_SECONDS)
+        return response
+
     data = _request_data(request)
     client_id = str(data.get("client_id") or "").strip()
     if not client_id:

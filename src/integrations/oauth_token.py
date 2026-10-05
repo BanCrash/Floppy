@@ -237,6 +237,11 @@ def _exchange_refresh_token(
 
         refresh_token.revoked_at = timezone.now()
         refresh_token.save(update_fields=["revoked_at"])
+        if refresh_token.access_token_id is not None:
+            IntegrationToken.objects.filter(
+                pk=refresh_token.access_token_id,
+                revoked_at__isnull=True,
+            ).update(revoked_at=refresh_token.revoked_at)
         raw_access_token, new_raw_refresh_token = _issue_token_pair(
             user=refresh_token.user,
             client=client,

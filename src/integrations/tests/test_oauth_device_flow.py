@@ -1,8 +1,11 @@
+from datetime import timedelta
 from http import HTTPStatus as HTTP  # noqa: N814
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed
 
 from api.authentication import authenticate_token
@@ -22,6 +25,7 @@ class OAuthDeviceFlowTests(TestCase):
 
     def setUp(self):
         """Create users and a minimally privileged public OAuth client."""
+        cache.clear()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(username="oauth-user")
         self.other_user = user_model.objects.create_user(username="oauth-other")
@@ -226,6 +230,8 @@ class OAuthDeviceFlowTests(TestCase):
 
         _user, refreshed_access = authenticate_token(refreshed_payload["access_token"])
         self.assertEqual(refreshed_access.scopes, ["catalog:read"])
+        with self.assertRaises(AuthenticationFailed):
+            authenticate_token(token_payload["access_token"])
 
         broaden = self.client.post(
             reverse("oauth_token"),
@@ -425,3 +431,33 @@ class OAuthDeviceFlowTests(TestCase):
         )
         self.assertTrue(payload["token_endpoint"].endswith(reverse("oauth_token")))
         self.assertTrue(payload["revocation_endpoint"].endswith(reverse("oauth_revoke")))
+
+    def test_device_authorization_endpoint_is_rate_limited(self):
+        """An anonymous caller cannot create unlimited device authorisations."""
+        for _ in range(10):
+            self.issue_device_code()
+
+        response = self.client.post(
+            reverse("oauth_device_authorization"),
+            {"client_id": self.oauth_client.client_id},
+        )
+
+        self.assertEqual(response.status_code, HTTP.TOO_MANY_REQUESTS)
+        self.assertEqual(response.json()["error"], "slow_down")
+        self.assertEqual(OAuthDeviceAuthorization.objects.count(), 10)
+
+    def test_issuing_a_device_code_deletes_long_expired_authorizations(self):
+        """Expired device authorisations do not accumulate forever."""
+        stale, _device_code, _user_code = OAuthDeviceAuthorization.issue(
+            client=self.oauth_client,
+            requested_scopes=["catalog:read"],
+        )
+        OAuthDeviceAuthorization.objects.filter(pk=stale.pk).update(
+            expires_at=timezone.now() - timedelta(days=2),
+        )
+
+        fresh = self.issue_device_code()
+
+        self.assertFalse(OAuthDeviceAuthorization.objects.filter(pk=stale.pk).exists())
+        self.assertEqual(OAuthDeviceAuthorization.objects.count(), 1)
+        self.assertIn("device_code", fresh)
