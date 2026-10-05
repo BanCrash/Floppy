@@ -475,9 +475,6 @@
   .col-span-2 {
     grid-column: span 2 / span 2;
   }
-  .col-span-full {
-    grid-column: 1 / -1;
-  }
   .col-start-1 {
     grid-column-start: 1;
   }
@@ -1813,9 +1810,6 @@
     @supports (color: color-mix(in lab, red, red)) {
       border-color: color-mix(in oklab, var(--color-gray-400) 28%, transparent);
     }
-  }
-  .border-gray-500 {
-    border-color: var(--color-gray-500);
   }
   .border-gray-600 {
     border-color: var(--color-gray-600);
@@ -4927,11 +4921,6 @@
   .sm\:grid-cols-4 {
     @media (width >= 40rem) {
       grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
-  }
-  .sm\:grid-cols-\[minmax\(0\,12rem\)_1fr\] {
-    @media (width >= 40rem) {
-      grid-template-columns: minmax(0,12rem) 1fr;
     }
   }
   .sm\:flex-col {
