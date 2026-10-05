@@ -90,11 +90,13 @@ class VideoPlayApiTests(FloppyApiTestCase):
         self._post(title="Renamed Title")
         self.assertEqual(Item.objects.get(media_id="vid1").title, "First Title")
 
-    def test_video_pages_that_do_not_exist_yet_are_not_found(self):
-        """The list page is a 404, not a server error."""
+    def test_video_list_page_renders(self):
+        """The Videos list shows what the play endpoint created."""
         self._post()
         self.client.force_login(self.user1)
-        self.assertEqual(self.client.get("/medialist/video").status_code, 404)
+        response = self.client.get("/medialist/video")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media_list"].paginator.count, 1)
 
     def test_video_details_page_renders_from_the_stored_item(self):
         """History links here, so it must render without a provider."""

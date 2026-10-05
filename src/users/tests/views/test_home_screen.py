@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
+from django.core.cache import cache
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -570,6 +571,8 @@ class HomeScreenViewTests(TestCase):
         )
 
     def test_library_row_lists_in_progress_videos(self):
+        # Home rows are cached per user id, which every test reuses.
+        cache.clear()
         self._set_enabled_media_types(MediaTypes.VIDEO.value)
 
         item = Item.objects.create(
