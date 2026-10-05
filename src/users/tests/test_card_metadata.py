@@ -66,3 +66,83 @@ class CardMetadataTests(SimpleTestCase):
         apply_absorbed_preference(user, display_field, "hover")
         user.card_metadata["types"]["movie"]["display"] = "always"
         self.assertIs(absorbed_preference_value(user, display_field), OMIT)
+
+
+class HandRolledCardTests(SimpleTestCase):
+    """Hand-rolled cards follow the profile of their own media type."""
+
+    @staticmethod
+    def _user(types):
+        return SimpleNamespace(
+            card_metadata=parse_card_metadata({"version": 1, "types": types})
+        )
+
+    def test_rating_visibility_uses_the_given_media_type(self):
+        """A music card hides a zero score even when the context has no item."""
+        from app.templatetags.app_tags import score_is_visible
+
+        user = self._user(
+            {
+                "music": {
+                    "fields": ["artist"],
+                    "options": {"rating": {"hide_zero": True}},
+                }
+            }
+        )
+        context = {"user": user}
+        self.assertFalse(score_is_visible(context, 0, "music"))
+        self.assertTrue(score_is_visible(context, 0, "movie"))
+
+    def test_artist_field_reads_structured_album_credits(self):
+        """A multi-artist album with no legacy artist still shows its artists."""
+        from users.card_metadata import _artist
+
+        credits = [
+            SimpleNamespace(artist=SimpleNamespace(name="A"), join_phrase=" & "),
+            SimpleNamespace(artist=SimpleNamespace(name="B"), join_phrase=""),
+        ]
+        album = SimpleNamespace(
+            artist=None,
+            artist_credits=SimpleNamespace(all=lambda: credits),
+        )
+        self.assertEqual(_artist(album, None, None), "A & B")
+
+    def test_subtitle_class_defers_to_per_line_visibility(self):
+        """A hover line on an 'always' type must not get the card-level class."""
+        from app.templatetags.app_tags import card_subtitle_class
+
+        user = self._user(
+            {
+                "music": {
+                    "display": "always",
+                    "fields": ["artist", "release_year"],
+                    "lines": [
+                        {"fields": ["artist"], "display": "dormant"},
+                        {"fields": ["release_year"], "display": "hover"},
+                    ],
+                }
+            }
+        )
+        self.assertEqual(card_subtitle_class({"user": user}, "music"), "")
+        plain = self._user({"music": {"display": "always"}})
+        self.assertIn(
+            "media-card-subtitle-always", card_subtitle_class({"user": plain}, "music")
+        )
+
+    def test_title_classes_only_follow_a_customised_title(self):
+        """Default titles keep a card's own clamps; edited titles add classes."""
+        from app.templatetags.app_tags import card_title_classes
+
+        default = self._user({"music": {"fields": ["artist"]}})
+        self.assertEqual(card_title_classes({"user": default}, "music"), "")
+        edited = self._user(
+            {
+                "music": {
+                    "fields": ["artist"],
+                    "options": {"title": {"overflow": "wrap", "lines": 2}},
+                }
+            }
+        )
+        classes = card_title_classes({"user": edited}, "music")
+        self.assertIn("media-card-title-wrap", classes)
+        self.assertIn("media-card-title-rest-2", classes)

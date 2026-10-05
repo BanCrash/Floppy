@@ -161,7 +161,7 @@
               {% for artist in music_online_artists %}
                 {% if artist.artist_id %}
                   <a href="{% url 'create_artist_from_search' artist.artist_id %}"
-                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card hover:ring-2 hover:ring-indigo-500 transition-all group block{% card_subtitle_class 'music' %}">
+                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card hover:ring-2 hover:ring-indigo-500 transition-all group block{% card_subtitle_class 'music' %}{% card_title_classes 'music' %}">
                     <div class="relative">
                       {% if artist.image and artist.image != IMG_NONE %}
                         <img alt="{{ artist.name }}"
@@ -188,7 +188,7 @@
                     </div>
                   </a>
                 {% else %}
-                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card{% card_subtitle_class 'music' %}">
+                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card{% card_subtitle_class 'music' %}{% card_title_classes 'music' %}">
                     <div class="relative">
                       {% if artist.image and artist.image != IMG_NONE %}
                         <img alt="{{ artist.name }}"
@@ -219,7 +219,7 @@
               {% for release in music_online_releases %}
                 {% if release.release_id %}
                   <a href="{% url 'create_album_from_search' release.release_id %}"
-                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group block{% card_subtitle_class 'music' %}">
+                     class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group block{% card_subtitle_class 'music' %}{% card_title_classes 'music' %}">
                     <div class="relative">
                       {% if release.image and release.image != IMG_NONE %}
                         <img alt="{{ release.title }}"
@@ -243,7 +243,7 @@
                     </div>
                   </a>
                 {% else %}
-                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square{% card_subtitle_class 'music' %}">
+                  <div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card-square{% card_subtitle_class 'music' %}{% card_title_classes 'music' %}">
                     <div class="relative">
                       <div class="w-full aspect-[1/1] bg-[var(--color-surface-alt)] flex items-center justify-center">
                         {% include "app/icons/speaker.svg" with classes="w-12 h-12 text-gray-600" %}

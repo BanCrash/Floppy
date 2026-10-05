@@ -650,13 +650,28 @@ def _named(obj, attr):
     return _text(getattr(value, "name", None) or getattr(value, "title", None))
 
 
+def _credited_artists(album):
+    """Return the album's structured artist credits as one display string."""
+    from app.templatetags.app_tags import music_artist_join_phrase
+
+    credits_manager = getattr(album, "artist_credits", None)
+    if credits_manager is None:
+        return None
+    parts = []
+    for credit in credits_manager.all():
+        name = _text(getattr(credit.artist, "name", None))
+        if name:
+            parts.append(f"{name}{music_artist_join_phrase(credit.join_phrase)}")
+    return _text("".join(parts)) if parts else None
+
+
 def _artist(item, media, user):
     for obj in (item, media):
-        name = _named(obj, "artist")
+        name = _credited_artists(obj) or _named(obj, "artist")
         if name:
             return name
         album = _from_obj(obj, "album")
-        name = _named(album, "artist")
+        name = _credited_artists(album) or _named(album, "artist")
         if name:
             return name
         name = _text(_from_obj(obj, "artist_name"))

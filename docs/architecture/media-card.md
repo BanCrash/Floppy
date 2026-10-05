@@ -97,6 +97,9 @@ Known remaining duplication:
 Subtitle lines come from `User.card_metadata`, one profile per media type plus `person`.
 `src/users/card_metadata.py` is the registry. `card_context` resolves the profile for the
 shared card. Hand-rolled cards call `{% card_lines %}`. `display` is `hover` or `always`.
+Rows (episode rows, calendar rows) have no hover state, so their hover lines are always
+visible. Hand-rolled poster cards add the saved title treatment with `{% card_title_classes %}`,
+and only once the user has changed a title option, so unchanged cards keep their own clamps.
 The poster progress bar follows the `progress` field. A zero score is hidden per type
 via `options.rating.hide_zero`.
 

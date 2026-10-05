@@ -398,7 +398,7 @@
            class="detail-media-grid">
         {% for person in episode_metadata.cast|slice:":20" %}
           <div x-show="shouldShowDetailCard({{ forloop.counter0 }})"
-               class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% card_subtitle_class 'person' %}">
+               class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% card_subtitle_class 'person' %}{% card_title_classes 'person' %}">
             <div class="relative">
               {% if person.person_id and person.name %}
                 <a href="{% url 'person_detail' source=source person_id=person.person_id name=person.name|slug %}">
@@ -465,7 +465,7 @@
            class="detail-media-grid">
         {% for person in episode_metadata.crew|slice:":20" %}
           <div x-show="shouldShowDetailCard({{ forloop.counter0 }})"
-               class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% card_subtitle_class 'person' %}">
+               class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% card_subtitle_class 'person' %}{% card_title_classes 'person' %}">
             <div class="relative">
               {% if person.person_id and person.name %}
                 <a href="{% url 'person_detail' source=source person_id=person.person_id name=person.name|slug %}">

@@ -2073,12 +2073,56 @@ def card_field_on(context, media_type, field_id):
 @register.simple_tag(takes_context=True)
 def card_subtitle_class(context, media_type=None):
     """Return the always-visible subtitle class, or an empty string."""
-    from users.card_metadata import DISPLAY_ALWAYS, subtitle_display
+    from users.card_metadata import (
+        DISPLAY_ALWAYS,
+        DISPLAY_HOVER,
+        resolve_profile,
+        subtitle_display,
+    )
 
     user = context.get("user") or getattr(context.get("request"), "user", None)
+    # A card-level always class would reveal lines the user set to hover.
+    lines = resolve_profile(user, media_type).get("lines") or []
+    if any(line.get("display") == DISPLAY_HOVER for line in lines):
+        return ""
     if subtitle_display(user, media_type) == DISPLAY_ALWAYS:
         return " media-card-subtitle-always"
     return ""
+
+
+@register.simple_tag(takes_context=True)
+def card_title_classes(context, media_type=None):
+    """Return the saved title treatment as classes for a hand-rolled card.
+
+    Empty while the type keeps the default treatment, so those cards keep their
+    own title clamps until the user changes a title option.
+    """
+    from users.card_metadata import (
+        TITLE_LINE_ALL,
+        default_title_options,
+        resolve_profile,
+        title_options,
+    )
+
+    user = context.get("user") or getattr(context.get("request"), "user", None)
+    title = title_options(resolve_profile(user, media_type))
+    if title == default_title_options():
+        return ""
+    classes = [
+        f"media-card-title-{title['overflow']}",
+        f"media-card-title-{title['hover']}",
+    ]
+    if title["lines"] == TITLE_LINE_ALL:
+        classes += ["media-card-title-multiline", "media-card-title-lines-all"]
+    else:
+        classes.append(f"media-card-title-rest-{title['lines']}")
+        if title["lines"] > 1:
+            classes.append("media-card-title-multiline")
+    if title["hover_lines"] == TITLE_LINE_ALL:
+        classes.append("media-card-title-hover-all")
+    else:
+        classes.append(f"media-card-title-hover-{title['hover_lines']}")
+    return " " + " ".join(classes)
 
 
 @register.inclusion_tag("app/components/card_lines.html", takes_context=True)

@@ -3308,3 +3308,11 @@ html.light .theme-toggle-icon-moon {
     opacity: 0.6;
   }
 }
+
+/* Title line counts for hand-rolled cards (see card_title_classes). */
+.media-card-title-rest-1 { --card-title-rest-lines: 1; }
+.media-card-title-rest-2 { --card-title-rest-lines: 2; }
+.media-card-title-rest-3 { --card-title-rest-lines: 3; }
+.media-card-title-hover-1 { --card-title-hover-lines: 1; }
+.media-card-title-hover-2 { --card-title-hover-lines: 2; }
+.media-card-title-hover-3 { --card-title-hover-lines: 3; }

@@ -5,7 +5,7 @@
   shared rating picker (see media_card_rate_button.html); without it, a read-only value.
   Visibility follows the card profile for this media type.
 {% endcomment %}
-{% score_is_visible rating_value as show_score %}
+{% score_is_visible rating_value rating_media_type as show_score %}
 {% if not user.ratings_enabled %}
 {% elif rate_url %}
   {% if show_score %}
