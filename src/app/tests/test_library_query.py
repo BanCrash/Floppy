@@ -399,6 +399,8 @@ class LargeTvBatchTests(LibraryQueryTestCase):
         Episode.objects.bulk_create(
             Episode(item=item, related_season=season) for item, season in zip(episode_items, season_rows)
         )
+        # Episode.item is nullable: such a row must not break the batch.
+        Episode.objects.bulk_create([Episode(item=None, related_season=season_rows[0])])
 
         batch = [executor_module.Candidate(item) for item in tv_items]
         executor_module._attach_media(self.user, batch, {executor_module.filter_registry.NEEDS_MEDIA})
@@ -410,6 +412,8 @@ class LargeTvBatchTests(LibraryQueryTestCase):
             for season in candidate.media.seasons.all()
             for episode in season.episodes.all()
         ]
-        self.assertEqual(len(episodes), shows * seasons_per_show)
+        with_items = [episode for episode in episodes if episode.item_id]
+        self.assertEqual(len(with_items), shows * seasons_per_show)
+        self.assertEqual(len(episodes), len(with_items) + 1)
         with self.assertNumQueries(0):
-            self.assertTrue(all(episode.item.episode_number == 1 for episode in episodes))
+            self.assertTrue(all(episode.item.episode_number == 1 for episode in with_items))

@@ -209,11 +209,13 @@ class _EpisodeItemsAfterSelection(ImportScopedQuerySet):
         loading = self._result_cache is None
         super()._fetch_all()
         if loading:
+            # Episode.item is nullable; leave those rows without an item.
             items = Item.objects.defer("watch_providers").in_bulk(
-                {episode.item_id for episode in self._result_cache},
+                {episode.item_id for episode in self._result_cache if episode.item_id},
             )
             for episode in self._result_cache:
-                episode.item = items[episode.item_id]
+                if episode.item_id:
+                    episode.item = items[episode.item_id]
 
 
 class MediaManager(models.Manager.from_queryset(ImportScopedQuerySet)):
