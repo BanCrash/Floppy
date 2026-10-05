@@ -3025,8 +3025,15 @@ def _build_row_section(
             )
         return not image or image == settings.IMG_NONE
 
-    poll_for_covers = media_type in SQUARE_HOME_MEDIA_TYPES and any(
-        _entry_missing_cover(e) for e in section_entries
+    # A mixed row decides per entry: only its music and podcast cards poll.
+    poll_for_covers = any(
+        _entry_missing_cover(e)
+        for e in section_entries
+        if media_type in SQUARE_HOME_MEDIA_TYPES
+        or (
+            media_type == HOME_ALL_MEDIA_TYPE
+            and e.item.media_type in SQUARE_HOME_MEDIA_TYPES
+        )
     )
     return {
         "row_id": row.id,

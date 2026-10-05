@@ -35,8 +35,8 @@ from django_celery_beat.models import PeriodicTask
 from django_celery_results.models import TaskResult
 
 from api import scopes as api_scopes
+from app import cache_utils, history_cache, image_cache, statistics_cache
 from app import helpers as app_helpers
-from app import history_cache, image_cache, statistics_cache
 from app.discover.feeds import get_external_row_definitions
 from app.discover.registry import DISCOVER_MEDIA_TYPES
 from app.models import (
@@ -749,6 +749,8 @@ def sidebar(request):
 
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)
+            # Mixed Home rows depend on which media types are enabled.
+            cache_utils.clear_home_row_cache_for_user(request.user.id)
             messages.success(request, "Settings updated successfully.")
         else:
             messages.info(request, "No changes to save.")

@@ -294,6 +294,78 @@ class HomeScreenViewTests(TestCase):
                         {"Mixed Movie", "Mixed Game"},
                     )
 
+    def test_all_media_row_updates_when_a_media_type_is_disabled_in_the_sidebar(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self._set_enabled_media_types(MediaTypes.MOVIE.value, MediaTypes.GAME.value)
+        for media_type, model, source in (
+            (MediaTypes.MOVIE.value, Movie, Sources.TMDB.value),
+            (MediaTypes.GAME.value, Game, Sources.IGDB.value),
+        ):
+            item = Item.objects.create(
+                title=f"Mixed {media_type}",
+                media_id=f"sidebar-{media_type}",
+                media_type=media_type,
+                source=source,
+            )
+            model.objects.create(
+                item=item, user=self.user, status=Status.IN_PROGRESS.value
+            )
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=HOME_ALL_MEDIA_TYPE,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=MediaSortChoices.TITLE,
+            direction=DirectionChoices.ASC,
+            filters={"status": [Status.IN_PROGRESS.value]},
+        )
+
+        def mixed_titles():
+            groups = home_screen.build_home_page_groups(self.user, items_limit=10)
+            mixed = next(g for g in groups if g["media_type"] == HOME_ALL_MEDIA_TYPE)
+            return {entry.item.title for entry in mixed["rows"][0]["items"]}
+
+        self.assertEqual(mixed_titles(), {"Mixed movie", "Mixed game"})
+
+        response = self.client.post(
+            reverse("sidebar"),
+            {
+                "media_types_checkboxes": [MediaTypes.MOVIE.value],
+                "sidebar_media_type_order": MediaTypes.MOVIE.value,
+            },
+        )
+
+        self.assertRedirects(response, reverse("sidebar"))
+        self.user.refresh_from_db()
+        self.assertEqual(mixed_titles(), {"Mixed movie"})
+
+    def test_all_media_row_polls_for_missing_music_artwork(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+        self._set_enabled_media_types(MediaTypes.MOVIE.value, MediaTypes.MUSIC.value)
+        item = Item.objects.create(
+            title="Mixed Track",
+            media_id="mixed-track",
+            media_type=MediaTypes.MUSIC.value,
+            source=Sources.MANUAL.value,
+            image=settings.IMG_NONE,
+        )
+        Music.objects.create(item=item, user=self.user, status=Status.IN_PROGRESS.value)
+        row = HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=HOME_ALL_MEDIA_TYPE,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=MediaSortChoices.TITLE,
+            direction=DirectionChoices.ASC,
+            filters={"status": [Status.IN_PROGRESS.value]},
+        )
+
+        section = home_screen._build_row_section(
+            self.user, row, HOME_ALL_MEDIA_TYPE, 10
+        )
+
+        self.assertTrue(section["poll_for_covers"])
+
     def test_all_media_in_progress_chip_uses_library_family_and_can_be_disabled(self):
         cache.clear()
         self.addCleanup(cache.clear)
