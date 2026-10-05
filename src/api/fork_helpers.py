@@ -144,6 +144,7 @@ def get_or_create_provider_item(
     source,
     media_id,
     *,
+    user=None,
     season_number=None,
     episode_number=None,
     library_media_type=None,
@@ -152,7 +153,8 @@ def get_or_create_provider_item(
 
     An item Floppy has never seen is created from provider metadata, the same
     way the web UI creates one, so an external client can address a title by
-    its provider id without tracking it first.
+    its provider id without tracking it first. Metadata is fetched in the
+    user's preferred language.
     """
     item = helpers.resolve_item_queryset(
         media_id,
@@ -166,7 +168,13 @@ def get_or_create_provider_item(
         return item, None
 
     not_found = Response({"detail": "Media not found."}, status=HTTP.NOT_FOUND)
-    if source == Sources.MANUAL.value:
+    if source == Sources.MANUAL.value or metadata_resolution.is_grouped_anime_route(
+        media_type,
+        source=source,
+    ):
+        # Grouped anime is stored as TV in the anime bucket, which the
+        # list and collection lookups by "anime" cannot find, so it is not
+        # created on demand.
         return None, not_found
 
     try:
@@ -176,6 +184,7 @@ def get_or_create_provider_item(
             source,
             [season_number] if season_number is not None else None,
             episode_number=episode_number,
+            language=metadata_resolution.metadata_language_default(user),
         )
     except services.ProviderAPIError as error:
         if error.status_code == HTTP.NOT_FOUND:

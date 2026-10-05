@@ -87,7 +87,8 @@ Limits:
 
 - Lists do not hold single episodes.
 - A season can only be added when Floppy already has that season; movies and
-  shows are created on demand.
+  shows are created on demand. Anime on the TMDB or TVDB route is not created
+  on demand (it is stored as TV in the anime bucket); use `tv` for it.
 - Smart lists are filled from their rules, so write to manual lists only. A
   smart list with a `Planning` status rule is the way to read "everything in
   Planning" through the list endpoint.

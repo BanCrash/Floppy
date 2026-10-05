@@ -1982,6 +1982,7 @@ class MediaListDetailView(drf_views.APIView):
             media_type,
             source,
             media_id,
+            user=request.user,
             library_media_type=request.data.get("library_media_type")
             or request.query_params.get("library_media_type"),
         )

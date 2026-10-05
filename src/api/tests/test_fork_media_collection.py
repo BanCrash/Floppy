@@ -100,6 +100,41 @@ class MediaCollectionTests(FloppyApiTestCase):
         self.assertEqual(response.status_code, HTTP.BAD_GATEWAY)
         self.assertFalse(Item.objects.filter(media_id="987654").exists())
 
+    @patch(METADATA_PATH)
+    def test_put_fetches_metadata_in_the_users_language(self, mock_metadata):
+        """A new title is created in the caller's preferred metadata language."""
+        self.user1.metadata_language = "de-DE"
+        self.user1.save(update_fields=["metadata_language"])
+        mock_metadata.return_value = {
+            "media_id": "987654",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.MOVIE.value,
+            "title": "Frischer Film",
+            "image": "https://example.com/fresh.jpg",
+        }
+
+        response = self._put("987654")
+
+        self.assertEqual(response.status_code, HTTP.CREATED)
+        self.assertEqual(mock_metadata.call_args.kwargs["language"], "de-DE")
+
+    @patch(METADATA_PATH)
+    def test_list_add_does_not_create_grouped_anime(self, mock_metadata):
+        """TMDB anime is stored as TV in the anime bucket, so it is not created."""
+        list_id = self.lists_by_name["favorites"].id
+
+        response = self.call_api(
+            "put",
+            "api_media_list_detail",
+            args=(MediaTypes.ANIME.value, Sources.TMDB.value, "987654", list_id),
+            payload={},
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, HTTP.NOT_FOUND)
+        mock_metadata.assert_not_called()
+        self.assertFalse(Item.objects.filter(media_id="987654").exists())
+
     def test_put_show_rejected_on_item_route(self):
         """Shows are collected per episode."""
         response = self.call_api(

@@ -395,6 +395,7 @@ class MediaCollectionView(drf_views.APIView):
             lookup_media_type,
             source,
             media_id,
+            user=request.user,
             season_number=season_number,
             episode_number=episode_number,
         )
