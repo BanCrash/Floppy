@@ -34,6 +34,7 @@ import users
 from app.models.choices import MediaTypes, Sources, Status
 from app.models.discovery import ItemTag
 from app.models.item import Item
+from integrations.import_scope import ImportScopedQuerySet
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +197,7 @@ def item_ids_with_json_array_value_ci(item_json_field: str, normalized_target: s
     ).values("id")
 
 
-class MediaManager(models.Manager):
+class MediaManager(models.Manager.from_queryset(ImportScopedQuerySet)):
     """Custom manager for media models."""
 
     def get_historical_models(self):
@@ -821,7 +822,7 @@ class MediaManager(models.Manager):
         # Store the number of repeats for display
         display_media.repeats = len(all_media_entries)
 
-    def _apply_prefetch_related(self, queryset, media_type, list_mode=False):
+    def _apply_prefetch_related(self, queryset, media_type, list_mode=False, *, compact_episodes=False):
         """Apply appropriate prefetch_related based on media type.
 
         list_mode=True narrows the episode queryset to only the fields required
@@ -831,11 +832,47 @@ class MediaManager(models.Manager):
         TV = apps.get_model("app", "TV")
         Season = apps.get_model("app", "Season")
         Episode = apps.get_model("app", "Episode")
+        episode_qs = Episode.objects.select_related("item")
+        if compact_episodes and (queryset.model == TV or media_type == MediaTypes.SEASON.value):
+            # Window sorting runs over every watch. Joining the catalogue here
+            # copies its wide JSON/text columns into every intermediate row.
+            # Fetch Items only after the window has selected its representatives.
+            episode_qs = Episode.objects.prefetch_related(
+                Prefetch("item", queryset=Item.objects.defer("watch_providers")),
+            )
+            # Read-only card/ranking graphs need per-identity counts and date
+            # bounds, not one Python Episode/Item pair per historical watch.
+            partition = [F("related_season_id"), F("item_id")]
+            aggregates = {
+                "_card_total_count": Count("pk"),
+                "_card_completed_count": Count("pk", filter=Q(status=Status.COMPLETED.value)),
+                "_card_dropped_count": Count("pk", filter=Q(status=Status.DROPPED.value)),
+                "_card_first_end": Min("end_date"),
+                "_card_last_end": Max("end_date"),
+            }
+            season_lookup = "related_season__related_tv_id" if queryset.model == TV else "related_season_id"
+            # Different Items sharing one episode number can interleave in
+            # next-air-date ordering. Keep their raw rows rather than change
+            # tie semantics during identity correction or alternate ordering.
+            ambiguous_seasons = (
+                Episode.objects.filter(**{f"{season_lookup}__in": queryset.order_by().values("pk")})
+                .order_by().values("related_season_id", "item__episode_number")
+                .annotate(item_count=Count("item_id", distinct=True))
+                .filter(item_count__gt=1).values("related_season_id")
+            )
+            episode_qs = episode_qs.annotate(
+                **{name: Window(expression, partition_by=partition) for name, expression in aggregates.items()},
+                _card_position=Window(RowNumber(), partition_by=partition, order_by=F("pk").asc()),
+                _card_is_summary=Case(
+                    When(related_season_id__in=Subquery(ambiguous_seasons), then=models.Value(False)),
+                    When(related_season__rewatch_started_at__isnull=True, then=models.Value(True)),
+                    default=models.Value(False), output_field=models.BooleanField(),
+                ),
+            ).filter(Q(_card_is_summary=False) | Q(_card_position=1))
         # Apply media-specific prefetches
         if media_type == MediaTypes.TV.value or (
             media_type == MediaTypes.ANIME.value and queryset.model == TV
         ):
-            episode_qs = Episode.objects.select_related("item")
             if list_mode:
                 # Load only the fields accessed in the list path:
                 # ep.item.episode_number, ep.item.release_datetime (the
@@ -847,6 +884,7 @@ class MediaManager(models.Manager):
                     "id",
                     "end_date",
                     "status",
+                    "created_at",
                     "related_season_id",
                     "item__id",
                     "item__episode_number",
@@ -888,7 +926,7 @@ class MediaManager(models.Manager):
             return base_queryset.select_related("related_tv__item").prefetch_related(
                 Prefetch(
                     "episodes",
-                    queryset=Episode.objects.select_related("item"),
+                    queryset=episode_qs,
                 ),
             )
 
@@ -1010,7 +1048,17 @@ class MediaManager(models.Manager):
                     getattr(getattr(episode, "item", None), "episode_number", 0) or 0
                 ),
             )
-            return episodes
+            # Preserve the old watch-row sequence for next-air-date lookup,
+            # but carry only the prefix containing the requested position.
+            # Repeated watches of one Item have the same release datetime.
+            prefix = []
+            needed = progress_index + 1
+            for episode in episodes:
+                count = episode._card_total_count if getattr(episode, "_card_is_summary", False) else 1
+                prefix.extend([episode] * min(count, needed - len(prefix)))
+                if len(prefix) >= needed:
+                    break
+            return prefix
 
         media_type = getattr(item, "media_type", None)
         progress_index = _progress_index()

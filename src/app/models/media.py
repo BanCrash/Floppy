@@ -19,6 +19,7 @@ from app import providers
 from app.models.choices import MediaTypes, Sources, Status
 from app.models.item import Item
 from app.models.manager import MediaManager
+from integrations.import_scope import ImportScopedManager, ImportScopedQuerySet
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ class Media(models.Model):
     # with it in the generic CSV export/import column mapping (both would
     # otherwise share the header name "source").
     entry_source = models.CharField(max_length=50, blank=True, default="")
+    objects = ImportScopedManager()
 
     class Meta:
         """Meta options for the model."""
@@ -764,7 +766,7 @@ class Manga(Media):
         _percentage_decrease_progress(self)
 
 
-class ActiveAnimeQuerySet(models.QuerySet):
+class ActiveAnimeQuerySet(ImportScopedQuerySet):
     """Anime rows that have not been migrated into grouped series."""
 
     def active(self):
@@ -794,7 +796,7 @@ class Anime(Media):
 
     tracker = FieldTracker()
     objects = ActiveAnimeManager()
-    all_objects = models.Manager()  # noqa: DJ012  # manager order is significant; objects must stay the default
+    all_objects = ImportScopedManager()  # manager order is significant; objects must stay the default
 
     def save(self, *args, **kwargs):
         """Save, then auto-migrate a completed flat MAL anime to episode tracking.
@@ -960,6 +962,7 @@ class MoviePlay(models.Model):
     end_date = models.DateTimeField(null=True, blank=True)
     external_id = models.CharField(max_length=255, null=True, blank=True)
     entry_source = models.CharField(max_length=50, blank=True, default="")
+    objects = ImportScopedManager()
 
     class Meta:
         """Meta options for MoviePlay."""

@@ -51,6 +51,14 @@ if os.environ.get("FLOPPY_PROCESS_ROLE") != "interactive":
 
 
 @worker_ready.connect
+def _enable_fault_log(**_kwargs):
+    """Record the traceback of a fatal signal in a worker (see run_state)."""
+    from config import run_state
+
+    run_state.enable_fault_log()
+
+
+@worker_ready.connect
 def _freeze_parent_image(**_kwargs):
     """Move this worker's imported image out of the garbage collector's reach.
 

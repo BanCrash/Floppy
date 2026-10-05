@@ -9,7 +9,7 @@
      {% if rating_chip_oob %}hx-swap-oob="true"{% endif %}
      class="contents">
   {% with rating_plays=episode|rating_plays %}
-  {% if not public_view and episode and rating_plays and current_instance %}
+  {% if user.ratings_enabled and not public_view and episode and rating_plays and current_instance %}
     {% with ep_score=rating_plays.0.score %}
     <div x-data="{
       showRatingPopup: false,

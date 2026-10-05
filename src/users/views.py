@@ -27,6 +27,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -51,6 +52,7 @@ from app.models import (
 )
 from app.providers import credentials, tmdb
 from app.templatetags import app_tags
+from config import run_state
 from integrations import exports, plex, seerr_api, stremio_catalog, tasks
 from integrations.imports import plex as plex_import
 from integrations.imports import trakt as trakt_imports
@@ -2202,6 +2204,7 @@ def export_data(request):
 def advanced(request):
     """Render the advanced settings page."""
     image_stats = image_cache.cache_stats()
+    log_files = _log_files(Path(settings.LOG_FILE).name)
     bug_report_body = (
         f"**Floppy version:** {settings.VERSION}\n\n"
         "**Describe the issue:**\n\n\n"
@@ -2217,6 +2220,10 @@ def advanced(request):
         "bug_report_title": "[BUG] ",
         "bug_report_body": bug_report_body,
         "media_types": DELETABLE_MEDIA_TYPES,
+        "logs_since": _first_log_time(log_files[0]) if log_files else "",
+        "last_unclean_exit": parse_datetime(
+            (run_state.read_state() or {}).get("last_unclean_at") or "",
+        ),
     }
     return render(request, "users/advanced.html", context)
 
@@ -2250,29 +2257,54 @@ def clear_image_cache(request):
     return redirect("advanced")
 
 
-@require_GET
-def export_logs(request):
-    """Return recent application logs, with secrets redacted, as a text file."""
-    from pathlib import Path
-
-    from app.log_safety import redact_secrets
-
-    log_path = Path(settings.LOG_FILE)
+def _log_files(name):
+    """Return a log file in the log directory and its rotated backups, oldest first."""
+    log_path = Path(settings.LOG_FILE).parent / name
     backups = sorted(
-        log_path.parent.glob(f"{log_path.name}.*"),
+        (p for p in log_path.parent.glob(f"{name}.*") if p.suffix[1:].isdigit()),
         key=lambda p: int(p.suffix[1:]),
         reverse=True,
     )
-    raw_logs = "".join(
-        p.read_text(encoding="utf-8", errors="replace")
-        for p in [*backups, log_path]
-        if p.exists()
-    )
+    return [p for p in [*backups, log_path] if p.exists()]
 
-    sanitized_logs = redact_secrets(raw_logs)
+
+def _first_log_time(path):
+    """Return the timestamp on a log file's first line, e.g. 2026-10-02 13:39:14."""
+    try:
+        with path.open(errors="replace") as log:
+            return log.readline()[1:20]
+    except OSError:
+        return ""
+
+
+@require_GET
+def export_logs(request):
+    """Return recent application logs, with secrets redacted, as a text file.
+
+    Streamed one line at a time: the logs can be tens of megabytes and the
+    container this runs in may already be short of memory. After floppy.log come
+    the process manager's log and any crash tracebacks (see config.run_state).
+    """
+    from app.log_safety import redact_secrets
+
+    log_name = Path(settings.LOG_FILE).name
+    sections = [(log_name, _log_files(log_name))]
+    sections += [(n, _log_files(n)) for n in ("supervisord.log", "faulthandler.log")]
+
+    def lines():
+        for title, found in sections:
+            paths = [path for path in found if path.stat().st_size]
+            if not paths:
+                continue
+            if title != log_name:
+                yield f"\n===== {title} =====\n"
+            for path in paths:
+                with path.open(encoding="utf-8", errors="replace") as log:
+                    for line in log:
+                        yield redact_secrets(line)
 
     filename = f"floppy-logs-{timezone.localtime():%Y%m%d-%H%M%S}.txt"
-    response = HttpResponse(sanitized_logs, content_type="text/plain")
+    response = StreamingHttpResponse(lines(), content_type="text/plain")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 

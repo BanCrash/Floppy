@@ -6,7 +6,8 @@
   Visibility follows the tile profile for this media type.
 {% endcomment %}
 {% score_is_visible rating_value as show_score %}
-{% if rate_url %}
+{% if not user.ratings_enabled %}
+{% elif rate_url %}
   {% if show_score %}
     {% include "app/components/media_card_rate_button.html" with rating_shown=rating_value|score_display:user %}
   {% else %}
