@@ -26,6 +26,9 @@ def oauth_authorization_server_metadata(request: HttpRequest) -> JsonResponse:
         JsonResponse(
             {
                 "issuer": issuer,
+                "registration_endpoint": request.build_absolute_uri(
+                    reverse("oauth_register")
+                ),
                 "device_authorization_endpoint": request.build_absolute_uri(
                     reverse("oauth_device_authorization")
                 ),

@@ -431,6 +431,9 @@ class OAuthDeviceFlowTests(TestCase):
         )
         self.assertTrue(payload["token_endpoint"].endswith(reverse("oauth_token")))
         self.assertTrue(payload["revocation_endpoint"].endswith(reverse("oauth_revoke")))
+        self.assertTrue(
+            payload["registration_endpoint"].endswith(reverse("oauth_register"))
+        )
 
     def test_device_authorization_endpoint_is_rate_limited(self):
         """An anonymous caller cannot create unlimited device authorisations."""
@@ -461,3 +464,73 @@ class OAuthDeviceFlowTests(TestCase):
         self.assertFalse(OAuthDeviceAuthorization.objects.filter(pk=stale.pk).exists())
         self.assertEqual(OAuthDeviceAuthorization.objects.count(), 1)
         self.assertIn("device_code", fresh)
+
+    def register(self, **data):
+        """Post to the registration endpoint as an anonymous app."""
+        return self.client.post(reverse("oauth_register"), data)
+
+    def test_app_can_register_itself_and_run_the_whole_flow(self):
+        """A brand-new app gets a client ID, a code, and a token after approval."""
+        registered = self.register(client_name="  Living   Room TV ")
+
+        self.assertEqual(registered.status_code, HTTP.CREATED)
+        payload = registered.json()
+        self.assertEqual(payload["client_name"], "Living Room TV")
+        self.assertEqual(payload["token_endpoint_auth_method"], "none")
+        self.assertIn(OAUTH_DEVICE_CODE_GRANT, payload["grant_types"])
+
+        device = self.client.post(
+            reverse("oauth_device_authorization"),
+            {"client_id": payload["client_id"], "scope": "catalog:read"},
+        ).json()
+        self.client.force_login(self.user)
+        page = self.client.get(reverse("oauth_device"), {"user_code": device["user_code"]})
+        self.assertContains(page, "Living Room TV")
+        self.assertContains(page, "Unverified application")
+        self.client.post(
+            reverse("oauth_device"),
+            {"user_code": device["user_code"], "action": "approve"},
+        )
+        self.client.logout()
+        token = self.client.post(
+            reverse("oauth_token"),
+            {
+                "grant_type": OAUTH_DEVICE_CODE_GRANT,
+                "client_id": payload["client_id"],
+                "device_code": device["device_code"],
+            },
+        )
+        self.assertEqual(token.status_code, HTTP.OK)
+        self.assertEqual(token.json()["scope"], "catalog:read")
+
+    def test_registration_rejects_missing_and_overlong_names(self):
+        """The app must give a name, and a short one."""
+        for data in ({}, {"client_name": "   "}, {"client_name": "x" * 61}):
+            response = self.register(**data)
+            self.assertEqual(response.status_code, HTTP.BAD_REQUEST)
+            self.assertEqual(response.json()["error"], "invalid_client_metadata")
+
+    def test_registration_is_rate_limited(self):
+        """An anonymous caller cannot create unlimited clients."""
+        for _ in range(10):
+            self.assertEqual(self.register(client_name="App").status_code, HTTP.CREATED)
+
+        response = self.register(client_name="App")
+
+        self.assertEqual(response.status_code, HTTP.TOO_MANY_REQUESTS)
+        self.assertEqual(response.json()["error"], "slow_down")
+
+    def test_registering_deletes_old_clients_nobody_signed_in_with(self):
+        """Unused registrations disappear after a day; ones with a sign-in stay."""
+        self.approve_and_exchange()  # gives self.oauth_client a refresh token
+        unused = OAuthClient.register_public_client(name="Unused")
+        old = timezone.now() - timedelta(days=2)
+        OAuthClient.objects.filter(pk__in=[unused.pk, self.oauth_client.pk]).update(
+            created_at=old
+        )
+
+        self.register(client_name="New")
+
+        self.assertFalse(OAuthClient.objects.filter(pk=unused.pk).exists())
+        self.assertTrue(OAuthClient.objects.filter(pk=self.oauth_client.pk).exists())
+        self.assertTrue(OAuthClient.objects.filter(name="New").exists())

@@ -28,8 +28,23 @@ to request is published rather than guessed.
 
 ### Preferred: OAuth device flow
 
-A registered public client should use Floppy's OAuth device flow instead of
-asking the user to copy a long-lived token.
+A public client should use Floppy's OAuth device flow instead of asking the
+user to copy a long-lived token.
+
+First introduce your app once per Floppy server and keep the returned
+`client_id`. The name is shown to the user, who sees it marked "Unverified".
+Limit: 10 requests a minute, name up to 60 characters. A registration that no
+one ever signed in with is deleted after a day; if the device endpoint answers
+`invalid_client`, register again.
+
+```http
+POST /oauth/register
+
+client_name=Nuvio on Living Room TV
+```
+
+The reply is `201` with `client_id`, `client_name`, `grant_types` and
+`token_endpoint_auth_method` (`none`).
 
 Discover the endpoints and supported scopes from:
 

@@ -120,6 +120,14 @@ class OAuthClient(models.Model):
             grant_types=grants,
         )
 
+    @classmethod
+    def delete_unused(cls) -> None:
+        """Drop clients a day after registering if nobody ever signed in with them."""
+        cls.objects.filter(
+            created_at__lt=timezone.now() - timedelta(days=1),
+            refresh_tokens__isnull=True,
+        ).delete()
+
     def allows_scope(self, scope: str) -> bool:
         """Return whether this active client may request the supplied scope."""
         return self.is_active and scope in self.allowed_scopes

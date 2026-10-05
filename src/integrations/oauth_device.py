@@ -23,12 +23,13 @@ from integrations.oauth_scope_info import normalise_scopes, scope_details
 
 DEVICE_AUTHORIZATION_LIMIT = 10
 DEVICE_AUTHORIZATION_WINDOW_SECONDS = 60
+CLIENT_NAME_MAX_LENGTH = 60
 
 
-def _rate_limited(request: HttpRequest) -> bool:
-    """Count this caller's code requests in the current minute window."""
+def _rate_limited(request: HttpRequest, bucket: str) -> bool:
+    """Count this caller's requests to one endpoint in the current minute window."""
     caller = request.META.get("HTTP_X_REAL_IP") or request.META.get("REMOTE_ADDR", "")
-    key = f"oauth_device_authorization:{caller}"
+    key = f"{bucket}:{caller}"
     cache.add(key, 0, timeout=DEVICE_AUTHORIZATION_WINDOW_SECONDS)
     try:
         return cache.incr(key) > DEVICE_AUTHORIZATION_LIMIT
@@ -56,6 +57,12 @@ def _oauth_error(
     )
 
 
+def _too_many_requests(description: str) -> JsonResponse:
+    response = _oauth_error("slow_down", description, status=429)
+    response["Retry-After"] = str(DEVICE_AUTHORIZATION_WINDOW_SECONDS)
+    return response
+
+
 def _request_data(request: HttpRequest) -> dict[str, object]:
     if request.content_type == "application/json":
         try:
@@ -69,16 +76,48 @@ def _request_data(request: HttpRequest) -> dict[str, object]:
 @login_not_required
 @csrf_exempt
 @require_POST
+def oauth_register(request: HttpRequest) -> JsonResponse:
+    """Let an app introduce itself and receive a client ID (RFC 7591 style).
+
+    Every client made here is unverified: the approval page says so and shows
+    the name the app chose, so a user can refuse a name they do not recognise.
+    """
+    if _rate_limited(request, "oauth_register"):
+        return _too_many_requests("Too many registrations. Try again in a minute.")
+
+    data = _request_data(request)
+    name = " ".join(str(data.get("client_name") or "").split())
+    name = "".join(char for char in name if char.isprintable())
+    if not name:
+        return _oauth_error("invalid_client_metadata", "client_name is required.")
+    if len(name) > CLIENT_NAME_MAX_LENGTH:
+        return _oauth_error(
+            "invalid_client_metadata",
+            f"client_name must be at most {CLIENT_NAME_MAX_LENGTH} characters.",
+        )
+
+    OAuthClient.delete_unused()
+    client = OAuthClient.register_public_client(name=name)
+    return _no_store(
+        JsonResponse(
+            {
+                "client_id": client.client_id,
+                "client_name": client.name,
+                "grant_types": client.grant_types,
+                "token_endpoint_auth_method": "none",
+            },
+            status=201,
+        )
+    )
+
+
+@login_not_required
+@csrf_exempt
+@require_POST
 def oauth_device_authorization(request: HttpRequest) -> JsonResponse:
     """Issue short-lived device and user codes for a registered public client."""
-    if _rate_limited(request):
-        response = _oauth_error(
-            "slow_down",
-            "Too many device code requests. Try again in a minute.",
-            status=429,
-        )
-        response["Retry-After"] = str(DEVICE_AUTHORIZATION_WINDOW_SECONDS)
-        return response
+    if _rate_limited(request, "oauth_device_authorization"):
+        return _too_many_requests("Too many device code requests. Try again in a minute.")
 
     data = _request_data(request)
     client_id = str(data.get("client_id") or "").strip()

@@ -2,7 +2,11 @@
 
 from django.urls import path
 
-from integrations.oauth_device import oauth_device, oauth_device_authorization
+from integrations.oauth_device import (
+    oauth_device,
+    oauth_device_authorization,
+    oauth_register,
+)
 from integrations.oauth_management import oauth_applications, oauth_revoke_application
 from integrations.oauth_metadata import (
     oauth_authorization_server_metadata,
@@ -17,6 +21,7 @@ urlpatterns = [
         oauth_authorization_server_metadata,
         name="oauth_authorization_server_metadata",
     ),
+    path("oauth/register", oauth_register, name="oauth_register"),
     path(
         "oauth/device/authorization",
         oauth_device_authorization,
