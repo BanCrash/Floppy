@@ -258,6 +258,7 @@
                         hx-trigger="click"
                         @click="seerrOpen = true">{% include "app/icons/download.svg" with classes="w-4 h-4" %}</button>
 
+                <template x-teleport="body">
                 <div x-show="seerrOpen"
                 @mousedown.self="seerrOpen = false"
                      x-cloak
@@ -267,6 +268,7 @@
                     <div id="{% component_id 'seerr' media %}"></div>
                   </div>
                 </div>
+                </template>
               </div>
             {% endif %}
 

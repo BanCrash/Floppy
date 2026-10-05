@@ -386,6 +386,7 @@ def media_save(request):
                     "current_instance": media,
                     "return_url": return_url,
                     "track_action_update": True,
+                    "swap_oob": True,
                 },
             )
 
@@ -574,6 +575,7 @@ def media_save(request):
                     "track_open": True,
                     "track_modal_content": modal_response.content.decode(),
                     "track_action_update": True,
+                    "swap_oob": True,
                 },
             )
             response["Cache-Control"] = "no-cache, no-store, must-revalidate"
