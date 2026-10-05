@@ -367,6 +367,40 @@ class LeaseFencingTests(TestCase):
             StatisticsDirtyDay.objects.filter(user_id=self.user.id, day=day).exists()
         )
 
+    def test_lease_lost_during_full_sweep_preparation_leaves_successor_days(self):
+        from app.statistics_day_cache import _day_cache_key
+
+        with patch.object(statistics_sync, "ensure_sync"):
+            statistics_sync.run_sync(self.user.id)
+        StatisticsSyncState.objects.filter(user_id=self.user.id).update(
+            full_sweep_requested_at=timezone.now()
+        )
+        cache.clear()
+        day = timezone.localdate()
+        key = _day_cache_key(self.user.id, day)
+
+        def scan_then_steal(user):
+            # The scan outlives the lease; a successor claims it and
+            # publishes the day before the old worker resumes.
+            StatisticsSyncState.objects.filter(user_id=self.user.id).update(
+                lease_expires_at=timezone.now() - timedelta(seconds=1)
+            )
+            statistics_sync._claim_lease(self.user.id, takeover=False)
+            cache.set(key, {"owner": "successor"})
+            return [day]
+
+        with (
+            patch("app.statistics_refresh._get_sparse_activity_days", scan_then_steal),
+            patch.object(statistics_sync, "ensure_sync"),
+        ):
+            result = statistics_sync.run_sync(self.user.id)
+
+        self.assertEqual(result["status"], "lost_lease")
+        self.assertEqual(cache.get(key), {"owner": "successor"})
+        self.assertFalse(
+            StatisticsDirtyDay.objects.filter(user_id=self.user.id, day=day).exists()
+        )
+
     def test_full_sweep_marker_survives_dispossessed_worker(self):
         with patch.object(statistics_sync, "ensure_sync"):
             statistics_sync.run_sync(self.user.id)

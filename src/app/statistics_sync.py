@@ -1049,20 +1049,30 @@ def run_sync(
                 # retain unfinished days across continuations and worker death;
                 # a lost cache marker only repeats this safe preparation.
                 sweep_days = _get_sparse_activity_days(user)
-                StatisticsDirtyDay.objects.bulk_create(
-                    [
-                        StatisticsDirtyDay(
-                            user_id=user_id, day=day, token=uuid.uuid4(), marked_at=now
-                        )
-                        for day in sweep_days
-                    ],
-                    update_conflicts=True,
-                    unique_fields=["user", "day"],
-                    update_fields=["token", "marked_at"],
-                    batch_size=500,
-                )
-                cache.delete_many([_day_cache_key(user_id, day) for day in sweep_days])
-                cache.set(_day_epoch_key(user_id), sweep_epoch, timeout=None)
+                # The scan can outlive the lease. Renew inside the write
+                # transaction so a worker that lost it cannot rotate dirty
+                # tokens or delete day payloads its successor published.
+                with transaction.atomic():
+                    _check_lease(user_id, lease_token)
+                    StatisticsDirtyDay.objects.bulk_create(
+                        [
+                            StatisticsDirtyDay(
+                                user_id=user_id,
+                                day=day,
+                                token=uuid.uuid4(),
+                                marked_at=now,
+                            )
+                            for day in sweep_days
+                        ],
+                        update_conflicts=True,
+                        unique_fields=["user", "day"],
+                        update_fields=["token", "marked_at"],
+                        batch_size=500,
+                    )
+                    cache.delete_many(
+                        [_day_cache_key(user_id, day) for day in sweep_days]
+                    )
+                    cache.set(_day_epoch_key(user_id), sweep_epoch, timeout=None)
 
         dirty_tokens = dict(
             StatisticsDirtyDay.objects.filter(user_id=user_id).values_list(
