@@ -22,10 +22,89 @@ from app import card_surfaces, config, helpers, image_cache
 from app.models import Item, MediaTypes, Sources, Status
 from app.providers import tmdb
 from app.services import metadata_resolution
+from app.stats_music import COUNTRY_NAME_MAP
+from users.media_type_chips import media_type_chip_preferences
 from users.models import ALL_SEARCH_TYPE, HISTORY_VIEW_TYPE, TimeFormatChoices
 from users.templatetags.user_tags import user_date_format, user_time_format
 
 register = template.Library()
+COUNTRY_CODE_LENGTH = 2
+COUNTRY_CODE_BY_NAME = {
+    name.casefold(): code for code, name in COUNTRY_NAME_MAP.items()
+}
+
+
+@register.simple_tag
+def detail_promoted_facts(media_type, details):
+    """Pick existing provider facts for the desktop carousel summary."""
+    details = details if isinstance(details, dict) else {}
+    fields_by_type = {
+        MediaTypes.TV.value: (
+            ("status", _("Series status")),
+            ("format", _("Format")),
+            ("air_dates", _("Air dates")),
+            ("total_runtime", _("Total runtime")),
+            ("locale", _("Languages and country")),
+        ),
+        MediaTypes.MOVIE.value: (
+            ("format", _("Format")),
+            ("release_date", _("Release date")),
+            ("status", _("Release status")),
+            ("runtime", _("Runtime")),
+            ("certification", _("Certification")),
+            ("locale", _("Languages and country")),
+        ),
+        MediaTypes.SEASON.value: (
+            ("air_dates", _("Air dates")),
+            ("episodes", _("Episodes")),
+            ("total_runtime", _("Total runtime")),
+        ),
+        MediaTypes.GAME.value: (
+            ("release_date", _("Release date")),
+            ("platforms", _("Platforms")),
+            ("format", _("Format")),
+        ),
+    }
+    fields = []
+    suppressed_keys = set()
+    for key, default_label in fields_by_type.get(media_type, ()):
+        label = default_label
+        if key == "locale":
+            languages = details.get("languages")
+            country = details.get("country")
+            if not languages and not country:
+                continue
+            value = {"languages": languages, "country": country}
+            suppressed_keys.update(("languages", "country"))
+        elif key == "air_dates":
+            value = (details.get("first_air_date"), details.get("last_air_date"))
+            if not any(value):
+                continue
+            suppressed_keys.update(("first_air_date", "last_air_date"))
+        else:
+            value = details.get(key)
+            if value is None or value in ("", []):
+                continue
+            if (
+                media_type == MediaTypes.TV.value
+                and key == "format"
+                and details.get("status")
+            ):
+                suppressed_keys.add(key)
+                continue
+            suppressed_keys.add(key)
+            if media_type == MediaTypes.MOVIE.value and key == "runtime":
+                suppressed_keys.add("total_runtime")
+            if (
+                media_type == MediaTypes.TV.value
+                and key == "status"
+                and details.get("format")
+            ):
+                label = _("%(format)s series status") % {
+                    "format": _(details["format"])
+                }
+        fields.append({"key": key, "label": label, "value": value})
+    return {"fields": fields, "suppressed_keys": suppressed_keys}
 
 
 @register.filter
@@ -53,6 +132,17 @@ def translate_detail_value(value):
         return _("%(count)s players") % {"count": players_match.group(1)}
 
     return _(text)
+
+
+@register.filter
+def country_code(value):
+    """Compact known country names to their ISO alpha-2 code."""
+    if not value:
+        return ""
+    text = str(value).strip()
+    if len(text) == COUNTRY_CODE_LENGTH and text.isalpha():
+        return text.upper()
+    return COUNTRY_CODE_BY_NAME.get(text.casefold(), text)
 
 
 # Built-in source labels are stored lowercase ("plex"); these need casing that
@@ -153,6 +243,12 @@ def translate_history_description(value):
     if action == "Started":
         return _("Started on %(date)s") % {"date": formatted_date}
     return _("Finished on %(date)s") % {"date": formatted_date}
+
+
+@register.simple_tag
+def home_media_type_chip(user, media_type):
+    """Resolve one user's validated Home media-type label appearance."""
+    return media_type_chip_preferences(user, media_type)
 
 
 @register.simple_tag
@@ -532,6 +628,7 @@ def media_type_readable_plural(media_type):
         MediaTypes.BOARDGAME: _("Board Games"),
         MediaTypes.MUSIC: _("Music"),
         MediaTypes.PODCAST: _("Podcasts"),
+        MediaTypes.VIDEO: _("Videos"),
     }[MediaTypes(media_type)]
 
 
@@ -1935,8 +2032,106 @@ def show_media_score(rating, user):
     except (TypeError, ValueError):
         return True
 
-    hide_zero = getattr(user, "hide_zero_rating", False)
+    from users.card_metadata import hides_zero_rating
+
+    hide_zero = hides_zero_rating(user, None)
     return not hide_zero or rating_value > 0
+
+
+@register.simple_tag(takes_context=True)
+def score_is_visible(context, rating, media_type=None):
+    """Return whether ``rating`` should show for this card's media type."""
+    from users.card_metadata import hides_zero_rating, shows_score
+
+    user = context.get("user")
+    if media_type is None:
+        media_type = context.get("resolved_media_type")
+    item = context.get("item")
+    if media_type is None and item is not None:
+        media_type = getattr(item, "media_type", None)
+    if not shows_score(user, media_type):
+        return False
+    if rating is None:
+        return False
+    try:
+        rating_value = float(rating)
+    except (TypeError, ValueError):
+        return True
+    hide_zero = hides_zero_rating(user, media_type)
+    return not hide_zero or rating_value > 0
+
+
+@register.simple_tag(takes_context=True)
+def card_field_on(context, media_type, field_id):
+    """Return whether this type's profile includes ``field_id``."""
+    from users.card_metadata import field_enabled
+
+    user = context.get("user") or getattr(context.get("request"), "user", None)
+    return field_enabled(user, media_type, field_id)
+
+
+@register.simple_tag(takes_context=True)
+def card_subtitle_class(context, media_type=None):
+    """Return the always-visible subtitle class, or an empty string."""
+    from users.card_metadata import (
+        DISPLAY_ALWAYS,
+        DISPLAY_HOVER,
+        resolve_profile,
+        subtitle_display,
+    )
+
+    user = context.get("user") or getattr(context.get("request"), "user", None)
+    # A card-level always class would reveal lines the user set to hover.
+    lines = resolve_profile(user, media_type).get("lines") or []
+    if any(line.get("display") == DISPLAY_HOVER for line in lines):
+        return ""
+    if subtitle_display(user, media_type) == DISPLAY_ALWAYS:
+        return " media-card-subtitle-always"
+    return ""
+
+
+@register.simple_tag(takes_context=True)
+def card_title_classes(context, media_type=None):
+    """Return the saved title treatment as classes for a hand-rolled card.
+
+    Empty while the type keeps the default treatment, so those cards keep their
+    own title clamps until the user changes a title option.
+    """
+    from users.card_metadata import (
+        TITLE_LINE_ALL,
+        default_title_options,
+        resolve_profile,
+        title_options,
+    )
+
+    user = context.get("user") or getattr(context.get("request"), "user", None)
+    title = title_options(resolve_profile(user, media_type))
+    if title == default_title_options():
+        return ""
+    classes = [
+        f"media-card-title-{title['overflow']}",
+        f"media-card-title-{title['hover']}",
+    ]
+    if title["lines"] == TITLE_LINE_ALL:
+        classes += ["media-card-title-multiline", "media-card-title-lines-all"]
+    else:
+        classes.append(f"media-card-title-rest-{title['lines']}")
+        if title["lines"] > 1:
+            classes.append("media-card-title-multiline")
+    if title["hover_lines"] == TITLE_LINE_ALL:
+        classes.append("media-card-title-hover-all")
+    else:
+        classes.append(f"media-card-title-hover-{title['hover_lines']}")
+    return " " + " ".join(classes)
+
+
+@register.inclusion_tag("app/components/card_lines.html", takes_context=True)
+def card_lines(context, media_type, item=None, media=None):
+    """Render the enabled subtitle lines for one card."""
+    from users.card_metadata import card_lines as render_lines
+
+    user = context.get("user") or getattr(context.get("request"), "user", None)
+    return {"lines": render_lines(user, media_type, item, media)}
 
 
 @register.inclusion_tag("app/components/media_card.html", takes_context=True)

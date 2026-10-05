@@ -4,6 +4,8 @@
 
 <div id="{% component_id 'track-action' media %}"
      data-track-action-root
+     {% if polled %}data-polled{% endif %}
+     @htmx:oob-before-swap="if (trackOpen && $event.detail.fragment.querySelector('[data-polled]')) $event.preventDefault()"
      {% if swap_oob %}hx-swap-oob="outerHTML"{% endif %}
      x-data="{ trackOpen: {% if track_open %}true{% else %}false{% endif %} }"
      class="w-full sm:w-auto sm:shrink-0">
@@ -24,6 +26,7 @@
     </span>
   </button>
 
+  <template x-teleport="body">
   <div x-show="trackOpen"
   @mousedown.self="trackOpen = false"
        x-cloak
@@ -39,4 +42,5 @@
       </div>
     </div>
   </div>
+  </template>
 </div>

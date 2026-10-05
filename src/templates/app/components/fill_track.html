@@ -84,8 +84,8 @@
                   method="post"
                   action="{{ general_submit_formaction }}"
                   hx-post="{{ general_submit_formaction }}"
-                  hx-target="{% if track_action_update %}closest [data-track-action-root]{% else %}closest [data-track-modal-root]{% endif %}"
-                  hx-swap="{% if track_action_update %}outerHTML{% else %}none{% endif %}"
+                  hx-target="{% if track_action_update %}this{% else %}closest [data-track-modal-root]{% endif %}"
+                  hx-swap="none"
                   x-data="mediaForm"
                   x-init="init"
                   {% if general_existing_instance %}data-existing-instance{% endif %}
@@ -297,7 +297,7 @@
                 <li class="bg-[var(--color-surface-strong)] rounded-lg px-4 py-3">
                   <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                     <span class="text-sm text-[var(--color-text)]">
-                      {% if change.old %}{% translate change.old %} → {% endif %}{% translate change.new %}
+                      {% if change.old %}{% translate change.old %} → {% endif %}{% if change.new %}{% translate change.new %}{% else %}{% translate "No Status" %}{% endif %}
                     </span>
                     <span class="text-xs text-[var(--color-text-muted)]">{{ change.date|user_datetime_format:user }}</span>
                   </div>

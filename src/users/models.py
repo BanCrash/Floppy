@@ -25,6 +25,7 @@ from users import helpers
 PLAYBACK_WEBHOOK_SECRET_MAX_LENGTH = 128
 
 EXCLUDED_SEARCH_TYPES = [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]
+HOME_ALL_MEDIA_TYPE = "all"
 
 # Search-bar option that searches every enabled type in the user's own library
 # (tracked, collected or tagged items) instead of one provider (#1160).
@@ -35,7 +36,8 @@ VALID_SEARCH_TYPES = [
 ] + [ALL_SEARCH_TYPE]
 
 VALID_HOME_SCREEN_MEDIA_TYPES = [
-    value for value in MediaTypes.values if value != MediaTypes.EPISODE.value
+    HOME_ALL_MEDIA_TYPE,
+    *[value for value in MediaTypes.values if value != MediaTypes.EPISODE.value],
 ]
 
 MULTI_STATUS_PREFERENCE_FIELDS = {
@@ -50,6 +52,7 @@ MULTI_STATUS_PREFERENCE_FIELDS = {
     "comic_status",
     "music_status",
     "podcast_status",
+    "video_status",
     "list_detail_status",
 }
 # Score-scaling constants: a user's display scale is either 1-5 or the
@@ -409,13 +412,6 @@ class QuickSeasonUpdateChoices(models.TextChoices):
     SEASON_UPDATE = "season_update", _("Quick Season Update buttons only")
     NEXT_EPISODE = "next_episode", _("Next Episode button only")
     BOTH = "both", _("Both")
-
-
-class MediaCardSubtitleDisplayChoices(models.TextChoices):
-    """Choices for media card subtitle visibility."""
-
-    HOVER = "hover", _("On hover")
-    ALWAYS = "always", _("Always visible")
 
 
 class TitleDisplayPreferenceChoices(models.TextChoices):
@@ -792,16 +788,33 @@ class User(AbstractUser):
         choices=MediaStatusChoices,
     )
 
+    # Video preferences
+    video_enabled = models.BooleanField(default=True)
+    video_layout = models.CharField(
+        max_length=20,
+        default=LayoutChoices.GRID,
+        choices=LayoutChoices.choices,
+    )
+    video_direction = models.CharField(
+        max_length=4,
+        default=DirectionChoices.DESC,
+        choices=DirectionChoices.choices,
+    )
+    video_sort = models.CharField(
+        max_length=32,
+        default=MediaSortChoices.TITLE,
+        choices=MediaSortChoices.choices,
+    )
+    video_status = models.CharField(
+        max_length=128,
+        default=MediaStatusChoices.ALL,
+        choices=MediaStatusChoices,
+    )
+
     # UI preferences
     clickable_media_cards = models.BooleanField(
         default=False,
         help_text="Hide hover overlay on touch devices",
-    )
-    media_card_subtitle_display = models.CharField(
-        max_length=20,
-        default=MediaCardSubtitleDisplayChoices.HOVER,
-        choices=MediaCardSubtitleDisplayChoices.choices,
-        help_text="Control when media card subtitles are visible",
     )
     title_display_preference = models.CharField(
         max_length=20,
@@ -825,10 +838,6 @@ class User(AbstractUser):
     )
 
     # Progress visibility preferences
-    progress_bar = models.BooleanField(
-        default=True,
-        help_text="Show progress bar",
-    )
     hide_completed_recommendations = models.BooleanField(
         default=False,
         help_text="Hide completed media in recommendations",
@@ -840,10 +849,6 @@ class User(AbstractUser):
     show_discover = models.BooleanField(
         default=True,
         help_text="Show the Discover page and keep its caches warm",
-    )
-    hide_zero_rating = models.BooleanField(
-        default=False,
-        help_text="Hide zero ratings from media cards",
     )
     obfuscate_episodes = models.BooleanField(
         default=False,
@@ -1175,6 +1180,12 @@ class User(AbstractUser):
         help_text="Visible and ordered sections for each detail page family",
     )
 
+    card_metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Per-media-type subtitle fields shown under a card title",
+    )
+
     ui_language = models.CharField(
         max_length=10,
         default=UiLanguageChoices.AUTO,
@@ -1360,6 +1371,25 @@ class User(AbstractUser):
     home_show_media_type_headers = models.BooleanField(
         default=False,
         help_text="Show a media-type header (icon + name) above each group of home screen rows",
+    )
+    home_media_type_chips_enabled = models.BooleanField(
+        default=True,
+        help_text="Show media-type labels on mixed in-progress and finished Home rows",
+    )
+    home_media_type_chip_style = models.CharField(
+        max_length=12,
+        default="soft",
+        choices=[
+            ("solid", "Solid"),
+            ("soft", "Soft"),
+            ("outline", "Outline"),
+        ],
+        help_text="Appearance of media-type labels on mixed Home rows",
+    )
+    home_media_type_chip_colors = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Custom hexadecimal label colors keyed by media type",
     )
     home_screen_media_type_order = models.JSONField(
         default=list,
@@ -1580,12 +1610,6 @@ class User(AbstractUser):
                 condition=models.Q(duration_format__in=DurationFormatChoices.values),
             ),
             models.CheckConstraint(
-                name="media_card_subtitle_display_valid",
-                condition=models.Q(
-                    media_card_subtitle_display__in=MediaCardSubtitleDisplayChoices.values
-                ),
-            ),
-            models.CheckConstraint(
                 name="title_display_preference_valid",
                 condition=models.Q(
                     title_display_preference__in=TitleDisplayPreferenceChoices.values
@@ -1646,6 +1670,18 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="podcast_direction_valid",
                 condition=models.Q(podcast_direction__in=DirectionChoices.values),
+            ),
+            models.CheckConstraint(
+                name="video_layout_valid",
+                condition=models.Q(video_layout__in=LayoutChoices.values),
+            ),
+            models.CheckConstraint(
+                name="video_sort_valid",
+                condition=models.Q(video_sort__in=MediaSortChoices.values),
+            ),
+            models.CheckConstraint(
+                name="video_direction_valid",
+                condition=models.Q(video_direction__in=DirectionChoices.values),
             ),
             models.CheckConstraint(
                 name="quick_watch_date_valid",
@@ -2438,7 +2474,7 @@ class HomeScreenRow(models.Model):
     )
     media_type = models.CharField(
         max_length=16,
-        choices=MediaTypes.choices,
+        choices=[(HOME_ALL_MEDIA_TYPE, "All media"), *MediaTypes.choices],
     )
     position = models.PositiveIntegerField(default=0)
     enabled = models.BooleanField(default=True)

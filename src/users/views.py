@@ -35,8 +35,8 @@ from django_celery_beat.models import PeriodicTask
 from django_celery_results.models import TaskResult
 
 from api import scopes as api_scopes
+from app import cache_utils, history_cache, image_cache, statistics_cache
 from app import helpers as app_helpers
-from app import history_cache, image_cache, statistics_cache
 from app.discover.feeds import get_external_row_definitions
 from app.discover.registry import DISCOVER_MEDIA_TYPES
 from app.models import (
@@ -89,6 +89,12 @@ from users.home_screen import (
     serialize_settings_sections,
     toggle_home_row_direction,
 )
+from users.media_type_chips import (
+    HOME_MEDIA_TYPE_CHIP_STYLES,
+    HOME_MEDIA_TYPE_CHIP_TYPES,
+    default_media_type_chip_color,
+    normalize_media_type_chip_colors,
+)
 from users.models import (
     HISTORY_VIEW_TYPE,
     ActivityHistoryViewChoices,
@@ -98,7 +104,6 @@ from users.models import (
     ImportFrequencyChoices,
     ImportModeChoices,
     LogoStyleChoices,
-    MediaCardSubtitleDisplayChoices,
     MediaStatusChoices,
     MobileGridLayoutChoices,
     PlannedHomeDisplayChoices,
@@ -743,6 +748,8 @@ def sidebar(request):
 
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)
+            # Mixed Home rows depend on which media types are enabled.
+            cache_utils.clear_home_row_cache_for_user(request.user.id)
             messages.success(request, "Settings updated successfully.")
         else:
             messages.info(request, "No changes to save.")
@@ -780,18 +787,79 @@ def home_screen(request):
         except HomeScreenValidationError as exc:
             messages.error(request, str(exc))
         else:
-            request.user.home_show_media_type_headers = bool(
-                request.POST.get("show_media_type_headers"),
+            fields_to_update = []
+            show_media_type_headers = (
+                request.POST.get("show_media_type_headers") == "1"
             )
-            request.user.save(update_fields=["home_show_media_type_headers"])
+            if (
+                request.user.home_show_media_type_headers
+                != show_media_type_headers
+            ):
+                request.user.home_show_media_type_headers = show_media_type_headers
+                fields_to_update.append("home_show_media_type_headers")
+
+            if request.POST.get("home_media_type_chips_present") is not None:
+                chips_enabled = (
+                    request.POST.get("home_media_type_chips_enabled") == "1"
+                )
+                chip_style = request.POST.get("home_media_type_chip_style")
+                submitted_colors = {
+                    media_type: request.POST.get(
+                        f"home_media_type_chip_color_{media_type}"
+                    )
+                    for media_type in HOME_MEDIA_TYPE_CHIP_TYPES
+                    if f"home_media_type_chip_color_{media_type}" in request.POST
+                }
+                chip_colors = normalize_media_type_chip_colors(
+                    request.user.home_media_type_chip_colors
+                )
+                chip_colors.update(
+                    normalize_media_type_chip_colors(submitted_colors)
+                )
+
+                if request.user.home_media_type_chips_enabled != chips_enabled:
+                    request.user.home_media_type_chips_enabled = chips_enabled
+                    fields_to_update.append("home_media_type_chips_enabled")
+                if (
+                    chip_style in HOME_MEDIA_TYPE_CHIP_STYLES
+                    and request.user.home_media_type_chip_style != chip_style
+                ):
+                    request.user.home_media_type_chip_style = chip_style
+                    fields_to_update.append("home_media_type_chip_style")
+                if request.user.home_media_type_chip_colors != chip_colors:
+                    request.user.home_media_type_chip_colors = chip_colors
+                    fields_to_update.append("home_media_type_chip_colors")
+
+            if fields_to_update:
+                request.user.save(update_fields=fields_to_update)
             messages.success(request, "Home screen updated successfully.")
         return redirect("home_screen")
 
+    sections = serialize_settings_sections(request.user)
+    saved_chip_colors = normalize_media_type_chip_colors(
+        request.user.home_media_type_chip_colors
+    )
+    for section in sections:
+        media_type = section["media_type"]
+        section["media_type_chip_color"] = (
+            saved_chip_colors.get(
+                media_type,
+                default_media_type_chip_color(media_type),
+            )
+            if media_type in HOME_MEDIA_TYPE_CHIP_TYPES
+            else None
+        )
+
     context = {
         "home_screen_sections_json": json.dumps(
-            serialize_settings_sections(request.user), cls=DjangoJSONEncoder
+            sections, cls=DjangoJSONEncoder
         ),
         "show_media_type_headers": request.user.home_show_media_type_headers,
+        "media_type_chip_styles": (
+            ("solid", "Solid"),
+            ("soft", "Soft"),
+            ("outline", "Outline"),
+        ),
         "home_screen_list_search_url": reverse("home_screen_list_search"),
         "home_screen_filter_fields_url": reverse("home_screen_filter_fields"),
         "direction_choices_json": json.dumps(
@@ -962,9 +1030,7 @@ def appearance(request):
         return redirect("appearance")
 
     saved_palette = (
-        request.user.custom_theme
-        if isinstance(request.user.custom_theme, dict)
-        else {}
+        request.user.custom_theme if isinstance(request.user.custom_theme, dict) else {}
     )
     palette = {
         key: saved_palette.get(key, definition["default"])
@@ -988,6 +1054,300 @@ def appearance(request):
         ),
     }
     return render(request, "users/appearance.html", context)
+
+
+def _cards_redirect(media_type):
+    """Return the settings URL for one card type, or the first type."""
+    from users.card_metadata import PROFILE_TYPES
+
+    if media_type not in PROFILE_TYPES:
+        media_type = PROFILE_TYPES[0]
+    return redirect("cards_type", media_type=media_type)
+
+
+def _cards_catalog():
+    """Return the editor catalog with a child route for each type."""
+    from django.urls import reverse
+
+    from users.card_metadata import editor_catalog
+
+    catalog = editor_catalog()
+    for entry in catalog:
+        entry["href"] = reverse("cards_type", kwargs={"media_type": entry["id"]})
+    return catalog
+
+
+@require_http_methods(["GET", "POST"])
+def cards(request, media_type=None):
+    """Edit per-media-type subtitle fields."""
+    from users.card_metadata import (
+        PROFILE_TYPES,
+        parse_card_metadata,
+        resolve_profile,
+    )
+
+    if media_type not in PROFILE_TYPES:
+        media_type = None
+    if request.method == "POST":
+        if request.user.is_demo:
+            messages.error(request, "This section is view-only for demo accounts.")
+            return _cards_redirect(media_type)
+        request.user.card_metadata = parse_card_metadata(
+            request.POST.get("card_metadata")
+        )
+        request.user.save(update_fields=["card_metadata"])
+        messages.success(request, "Media cards updated")
+        return _cards_redirect(media_type)
+    if media_type is None:
+        return _cards_redirect(None)
+
+    saved = {
+        entry_type: resolve_profile(request.user, entry_type)
+        for entry_type in PROFILE_TYPES
+    }
+    return render(
+        request,
+        "users/cards.html",
+        {
+            "card_catalog_json": _cards_catalog(),
+            "card_saved_json": saved,
+            "card_active_type": media_type,
+        },
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def cards_preview(request):
+    """Return a real media card for the draft profile of one type."""
+    import json
+
+    from users.card_metadata import PROFILE_TYPES, parse_card_metadata
+
+    media_type = "movie"
+    draft_payload = {}
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body.decode() or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = {}
+        media_type = body.get("type") or media_type
+        draft_payload = body.get("draft") if isinstance(body.get("draft"), dict) else {}
+    else:
+        media_type = request.GET.get("type") or media_type
+        try:
+            draft_payload = json.loads(request.GET.get("draft") or "{}")
+        except json.JSONDecodeError:
+            draft_payload = {}
+    if media_type not in PROFILE_TYPES:
+        media_type = "movie"
+    if not isinstance(draft_payload, dict):
+        draft_payload = {}
+    if "types" not in draft_payload and media_type in draft_payload:
+        draft_payload = {"version": 1, "types": {media_type: draft_payload}}
+    request.user.card_metadata = parse_card_metadata(draft_payload)
+    sample = _card_preview_sample(request.user, media_type)
+    if sample is None:
+        item, media = _card_preview_stand_in(media_type)
+        public_view = True
+    else:
+        item, media = sample
+        public_view = False
+    return render(
+        request,
+        "users/cards_preview.html",
+        {
+            "item": item,
+            "media": media,
+            "preview_type": media_type,
+            "public_view": public_view,
+        },
+    )
+
+
+def _card_preview_stand_in(media_type):
+    """Return a card-shaped sample when this account has no row of the type."""
+    from types import SimpleNamespace
+
+    from django.utils import timezone
+
+    titles = {
+        "tv": "Sample Show",
+        "season": "Sample Season",
+        "episode": "Sample Episode",
+        "movie": "Sample Movie",
+        "anime": "Sample Anime",
+        "manga": "Sample Manga",
+        "game": "Sample Game",
+        "book": "Sample Book",
+        "comic": "Sample Comic",
+        "comicissue": "Sample Issue",
+        "boardgame": "Sample Board Game",
+        "music": "Sample Album",
+        "podcast": "Sample Podcast",
+        "person": "Sample Person",
+    }
+    item = {
+        "title": titles.get(media_type, "Sample"),
+        "media_type": "movie" if media_type == "person" else media_type,
+        "source": "manual",
+        "media_id": "card-preview",
+        "year": 2024,
+        "genres": ["Drama", "Thriller"],
+        "runtime": "42 min",
+        "synopsis": "A short sample line so this field has something to show.",
+        "season_number": 1,
+        "episode_number": 3,
+        "role": "Lead",
+        "character": "Lead",
+        "artist_name": "Sample Artist",
+        "author": "Sample Author",
+        "series_position": 2,
+        "show_title": "Sample Show",
+        "image": "",
+    }
+    media = SimpleNamespace(
+        id=0,
+        status="In progress",
+        progress=4,
+        max_progress=10,
+        score=8,
+        repeats=2,
+        formatted_progress="4 / 10",
+        aggregated_status="In progress",
+        last_played_at=timezone.now(),
+        is_statusless=False,
+        end_date=None,
+        aggregated_end_date=None,
+        next_event=None,
+        card_tile_url="",
+        album=None,
+        artist=None,
+    )
+    return item, media
+
+
+def _person_preview_sample(user):
+    """Return a cast card for the newest credit on this account."""
+    from types import SimpleNamespace
+
+    movie_model = apps.get_model("app", "Movie")
+    credit_model = apps.get_model("app", "ItemPersonCredit")
+    item_ids = movie_model.objects.filter(user=user).values("item_id")
+    credit = (
+        credit_model.objects.filter(item_id__in=item_ids)
+        .select_related("person", "item")
+        .order_by("-id")
+        .first()
+    )
+    if credit is None:
+        return None
+    person = credit.person
+    item = credit.item
+    return {
+        "id": person.id,
+        "title": person.name,
+        "media_type": "movie",
+        "source": item.source,
+        "media_id": item.media_id,
+        "image": person.image or item.image or "",
+        "role": credit.role or person.known_for_department,
+        "character": credit.role,
+        "department": credit.department,
+    }, SimpleNamespace(
+        id=0,
+        status="",
+        score=None,
+        progress=0,
+        is_statusless=True,
+        card_tile_url="",
+        album=None,
+        artist=None,
+        end_date=None,
+        progressed_at=None,
+    )
+
+
+def _music_preview_item(album):
+    """Return a card item for an album.
+
+    Album rows are not ``Item`` records, and the shared card looks up
+    ``media_type`` on whatever it is given.
+    """
+    artist = getattr(album, "artist", None)
+    release_date = getattr(album, "release_date", None)
+    release_id = (
+        album.musicbrainz_release_group_id or album.musicbrainz_release_id or album.id
+    )
+    return {
+        "id": album.id,
+        "title": album.title,
+        "media_type": "music",
+        "source": "musicbrainz",
+        "media_id": release_id,
+        "image": album.image or "",
+        "genres": album.genres or [],
+        "release_date": release_date,
+        "year": release_date.year if release_date else None,
+        "artist_name": getattr(artist, "name", None) or "",
+    }
+
+
+def _card_preview_sample(user, media_type):
+    """Return ``(item, media)`` for the user's newest row of this type."""
+    model_names = {
+        "movie": "Movie",
+        "tv": "TV",
+        "season": "Season",
+        "episode": "Episode",
+        "anime": "Anime",
+        "manga": "Manga",
+        "game": "Game",
+        "book": "Book",
+        "comic": "Comic",
+        "comicissue": "ComicIssue",
+        "boardgame": "BoardGame",
+        "podcast": "Podcast",
+    }
+    if media_type == "music":
+        music_model = apps.get_model("app", "Music")
+        music = (
+            music_model.objects.filter(user=user)
+            .select_related("item", "album", "album__artist", "artist", "track")
+            .order_by("-id")
+            .first()
+        )
+        if music is not None:
+            return music.item, music
+        tracker_model = apps.get_model("app", "AlbumTracker")
+        tracker = (
+            tracker_model.objects.filter(user=user)
+            .select_related("album", "album__artist")
+            .order_by("-id")
+            .first()
+        )
+        if tracker is None or tracker.album_id is None:
+            return None
+        return _music_preview_item(tracker.album), tracker
+    if media_type == "person":
+        return _person_preview_sample(user)
+    model_name = model_names.get(media_type)
+    if model_name is None:
+        return None
+    try:
+        model = apps.get_model("app", model_name)
+    except LookupError:
+        return None
+    if not hasattr(model, "item"):
+        return None
+    sample = model.objects.select_related("item")
+    if media_type == "episode":
+        sample = sample.filter(related_season__user=user)
+    else:
+        sample = sample.filter(user=user)
+    media = sample.order_by("-id").first()
+    if media is None:
+        return None
+    return media.item, media
 
 
 @require_http_methods(["GET", "POST"])
@@ -1050,7 +1410,6 @@ def preferences(request):
         activity_history_view = request.POST.get("activity_history_view")
         game_logging_style = request.POST.get("game_logging_style")
         mobile_grid_layout = request.POST.get("mobile_grid_layout")
-        media_card_subtitle_display = request.POST.get("media_card_subtitle_display")
         title_display_preference = request.POST.get("title_display_preference")
         top_talent_sort_by = request.POST.get("top_talent_sort_by")
         rating_scale = request.POST.get("rating_scale")
@@ -1058,8 +1417,6 @@ def preferences(request):
             "hide_completed_recommendations"
         )
         show_recommendations_raw = request.POST.get("show_recommendations")
-        hide_zero_rating_raw = request.POST.get("hide_zero_rating")
-        progress_bar_raw = request.POST.get("progress_bar")
         # Read these as None-when-absent. The header theme toggle posts only
         # `theme` to this endpoint, so defaulting an absent field to its
         # "off" value silently reset preferences the user never touched.
@@ -1105,11 +1462,7 @@ def preferences(request):
             request.user.date_format = date_format
             fields_to_update.append("date_format")
 
-        if (
-            theme
-            and theme in ThemeChoices.values
-            and request.user.theme != theme
-        ):
+        if theme and theme in ThemeChoices.values and request.user.theme != theme:
             request.user.theme = theme
             fields_to_update.append("theme")
 
@@ -1184,15 +1537,6 @@ def preferences(request):
             fields_to_update.append("mobile_grid_layout")
 
         if (
-            media_card_subtitle_display
-            and media_card_subtitle_display
-            in [choice[0] for choice in MediaCardSubtitleDisplayChoices.choices]
-            and request.user.media_card_subtitle_display != media_card_subtitle_display
-        ):
-            request.user.media_card_subtitle_display = media_card_subtitle_display
-            fields_to_update.append("media_card_subtitle_display")
-
-        if (
             title_display_preference
             and title_display_preference
             in [choice[0] for choice in TitleDisplayPreferenceChoices.choices]
@@ -1236,18 +1580,6 @@ def preferences(request):
             if request.user.show_recommendations != show_recommendations:
                 request.user.show_recommendations = show_recommendations
                 fields_to_update.append("show_recommendations")
-
-        if hide_zero_rating_raw is not None:
-            hide_zero_rating = hide_zero_rating_raw == "1"
-            if request.user.hide_zero_rating != hide_zero_rating:
-                request.user.hide_zero_rating = hide_zero_rating
-                fields_to_update.append("hide_zero_rating")
-
-        if progress_bar_raw is not None:
-            progress_bar = progress_bar_raw == "1"
-            if request.user.progress_bar != progress_bar:
-                request.user.progress_bar = progress_bar
-                fields_to_update.append("progress_bar")
 
         if (
             quick_season_update_mobile is not None
@@ -1301,9 +1633,7 @@ def preferences(request):
             fields_to_update.append("watch_provider_region")
 
         metadata_language = request.POST.get("metadata_language", "")
-        if metadata_language in {
-            choice[0] for choice in metadata_language_choices
-        }:
+        if metadata_language in {choice[0] for choice in metadata_language_choices}:
             if request.user.metadata_language != metadata_language:
                 request.user.metadata_language = metadata_language
                 fields_to_update.append("metadata_language")
@@ -1657,9 +1987,7 @@ def import_data(request):
             enabled=True,
         ).first()
         if audiobookshelf_periodic_task and audiobookshelf_periodic_task.interval:
-            audiobookshelf_poll_interval = (
-                audiobookshelf_periodic_task.interval.every
-            )
+            audiobookshelf_poll_interval = audiobookshelf_periodic_task.interval.every
 
     # Get Last.fm periodic task status
     lastfm_periodic_task = None
@@ -2783,8 +3111,9 @@ def integration_token_context(user):
     """Return the named-token context for the integrations page."""
     return {
         "integration_tokens": list(
-            IntegrationToken.objects.filter(user=user, revoked_at__isnull=True)
-            .order_by("-created_at"),
+            IntegrationToken.objects.filter(
+                user=user, revoked_at__isnull=True
+            ).order_by("-created_at"),
         ),
         "integration_scope_choices": [
             {
@@ -3028,9 +3357,7 @@ def update_plex_webhook_share(request):
         messages.error(request, "Enter one or more Plex usernames for this share.")
         return redirect("integrations")
 
-    duplicate_usernames = {
-        username.casefold() for username in plex_usernames
-    }
+    duplicate_usernames = {username.casefold() for username in plex_usernames}
     existing_shares = (
         PlexWebhookShare.objects.filter(owner=user)
         .exclude(pk=share.pk or None)

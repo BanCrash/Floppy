@@ -364,6 +364,11 @@ class ListsView(drf_views.APIView):
 
     def post(self, request):
         """Create a new custom list for the authenticated user."""
+        if getattr(request.auth, "writable_list_ids", None):
+            return Response(
+                {"detail": "This token may only write to its bound lists."},
+                status=HTTP.FORBIDDEN,
+            )
         user = request.user
         body = request.data
 
@@ -892,6 +897,19 @@ class MediaTypeListView(drf_views.APIView):
                 status=HTTP.BAD_REQUEST,
             )
 
+        if media_type == MediaTypes.VIDEO.value:
+            # No provider can look a video up, so a new one is created by its
+            # first play instead.
+            return Response(
+                {
+                    "detail": (
+                        "Videos are created by posting a play to "
+                        "/api/v1/videos/{source}/{media_id}/plays/."
+                    ),
+                },
+                status=HTTP.BAD_REQUEST,
+            )
+
         if not request.data:
             return Response(
                 {"detail": "Missing body."},
@@ -977,6 +995,19 @@ class MediaTypeListView(drf_views.APIView):
             )
             serialized_data = serialize_data(media_form.instance)
             return Response(serialized_data, status=HTTP.CREATED)
+
+        if media_type == MediaTypes.EPISODE.value:
+            return Response(
+                {
+                    "detail": (
+                        "Provider episodes are recorded as plays "
+                        "(POST /media/tv/{source}/{media_id}/{season_number}"
+                        "/episodes/{episode_number}/watch/) or rated with "
+                        "PATCH .../episodes/{episode_number}/score/."
+                    ),
+                },
+                status=HTTP.BAD_REQUEST,
+            )
 
         media_id = body.get("media_id")
         if not media_id:

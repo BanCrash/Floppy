@@ -21,7 +21,12 @@ def get_items_to_process(user=None):
     media_types = [
         choice.value
         for choice in MediaTypes
-        if choice not in [MediaTypes.SEASON, MediaTypes.EPISODE, MediaTypes.MUSIC]
+        if choice
+        not in [
+            MediaTypes.SEASON,
+            MediaTypes.EPISODE,
+            MediaTypes.MUSIC,
+        ]
     ]
 
     query = Q()

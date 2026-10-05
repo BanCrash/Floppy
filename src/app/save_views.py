@@ -386,6 +386,7 @@ def media_save(request):
                     "current_instance": media,
                     "return_url": return_url,
                     "track_action_update": True,
+                    "swap_oob": True,
                 },
             )
 
@@ -434,11 +435,26 @@ def media_save(request):
                     request=request,
                 )
 
+            def _progress_card_fragment():
+                if media_type not in (MediaTypes.TV.value, MediaTypes.SEASON.value):
+                    return None
+                return render_to_string(
+                    "app/components/detail_progress_card_slot.html",
+                    {
+                        "media": media.item,
+                        "media_type": media_type,
+                        "current_instance": media,
+                        "progress_card_slot_oob": True,
+                    },
+                    request=request,
+                )
+
             def _card_rating_fragment():
                 return render_to_string(
                     "app/components/media_card_rating_oob.html",
                     {
                         "media_instance_id": media.id,
+                        "rating_media_type": media.item.media_type,
                         "rating_value": media.formatted_score,
                         "rate_url": reverse(
                             "update_media_score",
@@ -496,6 +512,7 @@ def media_save(request):
             for label, build in (
                 ("activity subtitle", _activity_subtitle_fragment),
                 ("score chip", _score_chip_fragment),
+                ("progress card", _progress_card_fragment),
                 ("card rating", _card_rating_fragment),
                 ("status chip", _status_chip_fragment),
                 ("season cascade pill", _season_cascade_fragment),
@@ -559,6 +576,7 @@ def media_save(request):
                     "track_open": True,
                     "track_modal_content": modal_response.content.decode(),
                     "track_action_update": True,
+                    "swap_oob": True,
                 },
             )
             response["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -874,7 +892,7 @@ def _render_notes_section_oob(
     )
 
 
-def _render_track_action_oob(request, instance, return_url):
+def _render_track_action_oob(request, instance, return_url, *, polled=False):
     """Render a tracked instance's own status pill as an OOB swap.
 
     Watching an episode (or a webhook/scrobbler writing one with no open
@@ -884,6 +902,9 @@ def _render_track_action_oob(request, instance, return_url):
     to refresh this pill, so callers on any side of that need to push it
     explicitly. Works for any tracked instance with an `.item` (Season,
     TV, ...), not just seasons.
+
+    `polled` marks a background refresh: the page skips that swap while the
+    tracking dialog is open, so polling never closes it or drops the form.
     """
     return render_to_string(
         "app/components/detail_track_action.html",
@@ -893,6 +914,7 @@ def _render_track_action_oob(request, instance, return_url):
             "return_url": return_url,
             "track_action_update": True,
             "swap_oob": True,
+            "polled": polled,
         },
         request=request,
     )
@@ -1022,6 +1044,14 @@ def _write_episode_save_oob(
         ),
     )
     response.write(_render_season_progress_oob(related_season))
+    response["HX-Trigger-After-Swap"] = json.dumps(
+        {
+            "detail-progress-updated": {
+                "id": related_season.id,
+                "completed": related_season.completed_episode_count,
+            },
+        },
+    )
     response.write(
         _render_track_action_oob(request, related_season, parsed_next),
     )
@@ -1351,11 +1381,20 @@ def episode_history_poll(request, season_id):
         )
 
     response.write(_render_season_progress_oob(related_season))
+    response["HX-Trigger-After-Swap"] = json.dumps(
+        {
+            "detail-progress-updated": {
+                "id": related_season.id,
+                "completed": related_season.completed_episode_count,
+            },
+        },
+    )
     response.write(
         _render_track_action_oob(
             request,
             related_season,
             media_url(related_season.item),
+            polled=True,
         ),
     )
     response["Cache-Control"] = "no-cache, no-store, must-revalidate"
