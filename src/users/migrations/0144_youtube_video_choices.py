@@ -6,10 +6,10 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('app', '0197_youtube_video_choices'),
+        ('app', '0198_youtube_video_choices'),
         ('auth', '0012_alter_user_first_name_max_length'),
         ('lists', '0015_customlist_source_wetrakr'),
-        ('users', '0142_rating_scale_disabled'),
+        ('users', '0143_home_screen_all_media'),
     ]
 
     operations = [
@@ -24,7 +24,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='homescreenrow',
             name='media_type',
-            field=models.CharField(choices=[('tv', 'TV Show'), ('season', 'TV Season'), ('episode', 'Episode'), ('movie', 'Movie'), ('anime', 'Anime'), ('manga', 'Manga'), ('game', 'Game'), ('book', 'Book'), ('comic', 'Comic'), ('comicissue', 'Comic Issue'), ('boardgame', 'Board Game'), ('music', 'Music'), ('podcast', 'Podcast'), ('video', 'Video')], max_length=16),
+            field=models.CharField(choices=[('all', 'All media'), ('tv', 'TV Show'), ('season', 'TV Season'), ('episode', 'Episode'), ('movie', 'Movie'), ('anime', 'Anime'), ('manga', 'Manga'), ('game', 'Game'), ('book', 'Book'), ('comic', 'Comic'), ('comicissue', 'Comic Issue'), ('boardgame', 'Board Game'), ('music', 'Music'), ('podcast', 'Podcast'), ('video', 'Video')], max_length=16),
         ),
         migrations.AlterField(
             model_name='savedview',
@@ -38,7 +38,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='homescreenrow',
-            constraint=models.CheckConstraint(condition=models.Q(('media_type__in', ['tv', 'season', 'movie', 'anime', 'manga', 'game', 'book', 'comic', 'comicissue', 'boardgame', 'music', 'podcast', 'video'])), name='home_screen_row_media_type_valid'),
+            constraint=models.CheckConstraint(condition=models.Q(('media_type__in', ['all', 'tv', 'season', 'movie', 'anime', 'manga', 'game', 'book', 'comic', 'comicissue', 'boardgame', 'music', 'podcast', 'video'])), name='home_screen_row_media_type_valid'),
         ),
         migrations.AddConstraint(
             model_name='user',

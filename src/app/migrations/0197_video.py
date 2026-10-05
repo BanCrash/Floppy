@@ -13,7 +13,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('app', '0195_music_origin_url'),
+        ('app', '0196_statisticssyncstate_lease_token'),
         ('integrations', '0052_kavitaaccount_kavitalink'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
