@@ -14,10 +14,68 @@
       }
     }
     .cards-preview-slot {
-      width: 18rem;
-      justify-self: end;
-      position: sticky;
-      top: 5rem;
+      width: 100%;
+      max-width: 18rem;
+      justify-self: center;
+      order: -1;
+    }
+    @media (min-width: 768px) {
+      .cards-preview-slot {
+        justify-self: end;
+        order: 0;
+        position: sticky;
+        top: 5rem;
+      }
+    }
+    .cards-type-wrap {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .cards-type-btn {
+      width: 100%;
+    }
+    .cards-menu-right {
+      right: 0;
+      left: auto;
+    }
+    @media (min-width: 768px) {
+      .cards-type-wrap {
+        flex: none;
+      }
+      .cards-type-btn {
+        width: 12rem;
+      }
+    }
+    .cards-opts {
+      display: grid;
+      grid-template-columns: 5.5rem minmax(0, 1fr);
+      align-items: center;
+      gap: 0.625rem 0.75rem;
+    }
+    .cards-opt-label {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--color-text-muted);
+    }
+    .cards-seg {
+      display: inline-flex;
+      border: 1px solid var(--color-border, #444);
+      border-radius: 0.375rem;
+      overflow: hidden;
+    }
+    .cards-seg button {
+      padding: 0.25rem 0.625rem;
+      font-size: 0.75rem;
+      line-height: 1.25rem;
+      color: var(--color-text-muted);
+    }
+    .cards-seg button + button {
+      border-left: 1px solid var(--color-border, #444);
+    }
+    .cards-seg button.is-on {
+      background: var(--color-surface-strong);
+      color: var(--color-text);
+      font-weight: 500;
     }
     .cards-pool,
     .cards-active {
@@ -61,116 +119,123 @@
 
     <div class="preferences-section">
       <h2 class="text-lg font-semibold text-[var(--color-text)] mb-1">{% translate "Media Cards" %}</h2>
-      <p class="text-sm text-[var(--color-text-muted)] mb-4">{% translate "Every property for this type starts in the pool below. Drag onto the card to show it. Up to three properties share one line. Drag lines to reorder." %}</p>
+      <p class="text-sm text-[var(--color-text-muted)] mb-4">{% translate "Choose what shows under each poster. Drag properties onto the card; up to three share a line." %}</p>
 
-      <div class="flex flex-wrap gap-2 mb-4">
-        <template x-for="entry in catalog" :key="entry.id">
-          <a :href="entry.href"
-             @click.prevent="switchType(entry.id)"
-             class="px-3 py-1 rounded-md text-sm border"
-             :class="active === entry.id ? 'bg-[var(--color-surface-strong)] text-[var(--color-text)] border-[var(--color-link)]' : 'text-[var(--color-text-muted)] border-transparent'"
-             x-text="entry.label"></a>
-        </template>
+      <div class="flex items-center gap-2 mb-5">
+        <div class="relative cards-type-wrap" @click.outside="typeOpen = false">
+          <button type="button"
+                  class="inline-flex cards-type-btn items-center justify-between gap-2 px-3 py-1.5 bg-[var(--color-panel)] border border-gray-600 rounded-md text-sm text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-link)]"
+                  @click="typeOpen = !typeOpen"
+                  :aria-expanded="typeOpen"
+                  aria-label="{% translate 'Media type' %}">
+            <span class="truncate" x-text="current ? current.label : ''"></span>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><path d="m6 9 6 6 6-6"></path></svg>
+          </button>
+          <div x-show="typeOpen" x-cloak style="max-height: min(26rem, 60vh)" class="absolute left-0 top-full z-20 mt-1 min-w-full py-1 bg-[var(--color-panel)] rounded-md shadow-lg border border-gray-600 max-h-64 overflow-y-auto">
+            <template x-for="entry in catalog" :key="'type-' + entry.id">
+              <button type="button"
+                      class="block w-full px-3 py-2 text-left text-sm whitespace-nowrap text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]"
+                      :class="active === entry.id && 'bg-[var(--color-surface-strong)] text-[var(--color-text)]'"
+                      @click="switchType(entry.id); typeOpen = false"
+                      x-text="entry.label"></button>
+            </template>
+          </div>
+        </div>
+        <div class="relative shrink-0" @click.outside="copyOpen = false">
+          <button type="button"
+                  class="inline-flex items-center gap-2 px-3 py-1.5 bg-[var(--color-panel)] border border-gray-600 rounded-md text-sm text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-link)]"
+                  @click="copyOpen = !copyOpen"
+                  :aria-expanded="copyOpen">
+            <span>{% translate "Copy from" %}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 shrink-0"><path d="m6 9 6 6 6-6"></path></svg>
+          </button>
+          <div x-show="copyOpen" x-cloak class="absolute left-0 top-full z-20 mt-1 min-w-full py-1 bg-[var(--color-panel)] rounded-md shadow-lg border border-gray-600 max-h-64 overflow-y-auto cards-menu-right">
+            <template x-for="entry in copySources()" :key="'copy-' + entry.id">
+              <button type="button"
+                      class="block w-full px-3 py-2 text-left text-sm whitespace-nowrap text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]"
+                      @click="copyFrom(entry.id); copyOpen = false"
+                      x-text="entry.label"></button>
+            </template>
+          </div>
+        </div>
+        <div class="relative shrink-0" @click.outside="actionsOpen = false">
+          <button type="button"
+                  class="inline-flex items-center justify-center w-9 h-9 bg-[var(--color-panel)] border border-gray-600 rounded-md text-sm text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-link)]"
+                  @click="actionsOpen = !actionsOpen"
+                  :aria-expanded="actionsOpen"
+                  aria-label="{% translate 'More actions' %}">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4"><circle cx="5" cy="12" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="19" cy="12" r="1.6"></circle></svg>
+          </button>
+          <div x-show="actionsOpen" x-cloak class="absolute left-0 top-full z-20 mt-1 min-w-full py-1 bg-[var(--color-panel)] rounded-md shadow-lg border border-gray-600 max-h-64 overflow-y-auto cards-menu-right">
+            <button type="button" class="block w-full px-3 py-2 text-left text-sm whitespace-nowrap text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]" @click="resetType(); actionsOpen = false">{% translate "Reset type" %}</button>
+            <button type="button" class="block w-full px-3 py-2 text-left text-sm whitespace-nowrap text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]" @click="useDefaults(); actionsOpen = false">{% translate "Use defaults" %}</button>
+            <button type="button" class="block w-full px-3 py-2 text-left text-sm whitespace-nowrap text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]" @click="setAllLinesMode('hover'); actionsOpen = false">{% translate "All hover" %}</button>
+            <button type="button" class="block w-full px-3 py-2 text-left text-sm whitespace-nowrap text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]" @click="setAllLinesMode('dormant'); actionsOpen = false">{% translate "All dormant" %}</button>
+          </div>
+        </div>
       </div>
 
       <template x-if="current">
         <div class="cards-layout">
           <div class="space-y-4">
-            <div class="flex flex-wrap gap-2">
-              <button type="button" class="text-sm text-[var(--color-link)]" @click="resetType()">{% translate "Reset type" %}</button>
-              <button type="button" class="text-sm text-[var(--color-link)]" @click="useDefaults()">{% translate "Use defaults" %}</button>
-              <button type="button" class="text-sm text-[var(--color-link)]" @click="setAllLinesMode('hover')">{% translate "All hover" %}</button>
-              <button type="button" class="text-sm text-[var(--color-link)]" @click="setAllLinesMode('dormant')">{% translate "All dormant" %}</button>
-              <div class="inline-flex items-center gap-2">
-                <span class="text-sm text-[var(--color-text-muted)]">{% translate "Copy from" %}</span>
-                <div class="relative" @click.outside="copyOpen = false">
-                <button type="button"
-                        class="inline-flex items-center justify-between gap-2 min-w-40 px-3 py-1 bg-[var(--color-panel)] border border-gray-600 rounded-md text-sm text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer"
-                        @click="copyOpen = !copyOpen"
-                        :aria-expanded="copyOpen">
-                  <span>{% translate "Choose a type" %}</span>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden="true">
-                    <path d="m6 9 6 6 6-6"></path>
-                  </svg>
-                </button>
-                <div x-show="copyOpen"
-                     x-cloak
-                     class="absolute left-0 top-full z-20 mt-1 min-w-full py-1 bg-[var(--color-panel)] rounded-md shadow-lg border border-gray-600 max-h-64 overflow-y-auto">
-                  <template x-for="entry in copySources()" :key="'copy-' + entry.id">
+            <div class="cards-opts">
+              <span class="cards-opt-label">{% translate "Score" %}</span>
+              <div>
+                <div class="cards-seg" role="group">
+                  <button type="button" :class="saved[active].options.rating.show !== false && 'is-on'" @click="setScoreShow(true)">{% translate "Show" %}</button>
+                  <button type="button" :class="saved[active].options.rating.show === false && 'is-on'" @click="setScoreShow(false)">{% translate "Hide" %}</button>
+                </div>
+              </div>
+
+              <div class="contents" x-show="saved[active].options.rating.show !== false">
+                <span></span>
+                <label class="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                  <input type="checkbox" x-model="saved[active].options.rating.hide_zero" @change="refreshPreview()">
+                  {% translate "Hide zero ratings" %}
+                </label>
+              </div>
+
+              <span class="cards-opt-label">{% translate "Title" %}</span>
+              <div>
+                <div class="cards-seg" role="group">
+                  <button type="button" :class="saved[active].options.title.overflow === 'ellipsis' && 'is-on'" @click="setTitleOverflow('ellipsis')">{% translate "Ellipsis" %}</button>
+                  <button type="button" :class="saved[active].options.title.overflow === 'wrap' && 'is-on'" @click="setTitleOverflow('wrap')">{% translate "Wrap" %}</button>
+                  <button type="button" :class="saved[active].options.title.overflow === 'clip' && 'is-on'" @click="setTitleOverflow('clip')">{% translate "Clip" %}</button>
+                </div>
+              </div>
+
+              <span class="cards-opt-label">{% translate "Lines" %}</span>
+              <div>
+                <div class="cards-seg" role="group">
+                  <template x-for="count in [1, 2, 3, 'all']" :key="'lines-' + count">
                     <button type="button"
-                            class="block w-full px-3 py-2 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-strong)] hover:text-[var(--color-text)]"
-                            @click="copyFrom(entry.id); copyOpen = false"
-                            x-text="entry.label"></button>
+                            :class="saved[active].options.title.lines === count && 'is-on'"
+                            @click="setTitleLines('lines', count)"
+                            x-text="count === 'all' ? '{% translate "All" %}' : count"></button>
+                  </template>
+                </div>
+              </div>
+
+              <span class="cards-opt-label">{% translate "On hover" %}</span>
+              <div>
+                <div class="cards-seg" role="group">
+                  <button type="button" :class="saved[active].options.title.hover === 'bleed' && 'is-on'" @click="setTitleHover('bleed')">{% translate "Expand" %}</button>
+                  <button type="button" :class="saved[active].options.title.hover === 'stay' && 'is-on'" @click="setTitleHover('stay')">{% translate "Stay put" %}</button>
+                </div>
+              </div>
+
+              <div class="contents" x-show="saved[active].options.title.hover === 'bleed'">
+                <span class="cards-opt-label">{% translate "Hover lines" %}</span>
+                <div>
+                  <div class="cards-seg" role="group">
+                  <template x-for="count in [1, 2, 3, 'all']" :key="'hover_lines-' + count">
+                    <button type="button" x-show="titleLineVisible(count)"
+                            :class="saved[active].options.title.hover_lines === count && 'is-on'"
+                            @click="setTitleLines('hover_lines', count)"
+                            x-text="count === 'all' ? '{% translate "All" %}' : count"></button>
                   </template>
                 </div>
                 </div>
-              </div>
-            </div>
-            <div class="space-y-2">
-              <p class="text-xs font-medium text-[var(--color-text-muted)]">{% translate "Score" %}</p>
-              <div class="flex flex-wrap gap-1">
-                <button type="button"
-                        class="px-2 py-0.5 rounded text-xs border"
-                        :class="saved[active].options.rating.show !== false ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setScoreShow(true)">{% translate "Show" %}</button>
-                <button type="button"
-                        class="px-2 py-0.5 rounded text-xs border"
-                        :class="saved[active].options.rating.show === false ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setScoreShow(false)">{% translate "Hide" %}</button>
-              </div>
-              <label class="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]"
-                     x-show="saved[active].options.rating.show !== false">
-                <input type="checkbox" x-model="saved[active].options.rating.hide_zero" @change="refreshPreview()">
-                {% translate "Hide zero ratings" %}
-              </label>
-            </div>
-
-            <div class="space-y-2">
-              <p class="text-xs font-medium text-[var(--color-text-muted)]">{% translate "Title" %}</p>
-              <div class="flex flex-wrap gap-1">
-                <button type="button"
-                        class="px-2 py-0.5 rounded text-xs border"
-                        :class="saved[active].options.title.overflow === 'ellipsis' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setTitleOverflow('ellipsis')">{% translate "Ellipsis" %}</button>
-                <button type="button"
-                        class="px-2 py-0.5 rounded text-xs border"
-                        :class="saved[active].options.title.overflow === 'wrap' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setTitleOverflow('wrap')">{% translate "Wrap" %}</button>
-                <button type="button"
-                        class="px-2 py-0.5 rounded text-xs border"
-                        :class="saved[active].options.title.overflow === 'clip' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setTitleOverflow('clip')">{% translate "Clip" %}</button>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-xs text-[var(--color-text-muted)]">{% translate "Lines" %}</span>
-                <template x-for="count in [1, 2, 3, 'all']" :key="'title-lines-' + count">
-                  <button type="button"
-                          class="px-2 py-0.5 rounded text-xs border"
-                          :class="saved[active].options.title.lines === count ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                          @click="setTitleLines('lines', count)"
-                          x-text="count === 'all' ? '{% translate "All" %}' : count"></button>
-                </template>
-              </div>
-              <div class="flex flex-wrap gap-1">
-                <button type="button"
-                        class="px-2 py-0.5 rounded text-xs border"
-                        :class="saved[active].options.title.hover === 'bleed' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setTitleHover('bleed')">{% translate "Bleed on hover" %}</button>
-                <button type="button"
-                        class="px-2 py-0.5 rounded text-xs border"
-                        :class="saved[active].options.title.hover === 'stay' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                        @click="setTitleHover('stay')">{% translate "Stay put" %}</button>
-              </div>
-              <div class="flex flex-wrap items-center gap-2" x-show="saved[active].options.title.hover === 'bleed'">
-                <span class="text-xs text-[var(--color-text-muted)]">{% translate "Hover lines" %}</span>
-                <template x-for="count in [1, 2, 3, 'all']" :key="'title-hover-lines-' + count">
-                  <button type="button"
-                          class="px-2 py-0.5 rounded text-xs border"
-                          x-show="titleLineVisible(count)"
-                          :class="saved[active].options.title.hover_lines === count ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                          @click="setTitleLines('hover_lines', count)"
-                          x-text="count === 'all' ? '{% translate "All" %}' : count"></button>
-                </template>
               </div>
             </div>
 
@@ -243,15 +308,9 @@
                           </template>
                           <span x-show="!line.fields.length" class="text-xs text-[var(--color-text-muted)] py-1">{% translate "Drop properties here" %}</span>
                         </div>
-                        <div class="mt-1 flex flex-wrap gap-1">
-                          <button type="button"
-                                  class="px-2 py-0.5 rounded text-xs border"
-                                  :class="line.display === 'hover' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                                  @click="setLineMode(lineIndex, 'hover')">{% translate "Hover" %}</button>
-                          <button type="button"
-                                  class="px-2 py-0.5 rounded text-xs border"
-                                  :class="line.display === 'dormant' ? 'border-[var(--color-link)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)]'"
-                                  @click="setLineMode(lineIndex, 'dormant')">{% translate "Dormant" %}</button>
+                        <div class="mt-1 cards-seg" role="group">
+                          <button type="button" :class="line.display === 'hover' && 'is-on'" @click="setLineMode(lineIndex, 'hover')">{% translate "Hover" %}</button>
+                          <button type="button" :class="line.display === 'dormant' && 'is-on'" @click="setLineMode(lineIndex, 'dormant')">{% translate "Dormant" %}</button>
                         </div>
                       </div>
                     </div>
@@ -305,6 +364,8 @@
         newLineOver: false,
         unmatched: {},
         copyOpen: false,
+        typeOpen: false,
+        actionsOpen: false,
         csrfToken: "",
         init() {
           this.catalog = JSON.parse(document.getElementById("card-catalog").textContent);
