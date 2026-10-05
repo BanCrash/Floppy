@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from django.conf import settings
@@ -141,6 +142,30 @@ def _queue_playback_webhook(user_id: int) -> None:
 def clear_user_playback_state(user_id: int) -> None:
     """Remove playback state from cache."""
     cache.delete(_cache_key(user_id))
+
+
+def get_session_start(user_id: int, *, playback_media_type: str, media_id):
+    """Return when Now Playing first saw this title playing, or None.
+
+    A stop or scrobble is what writes a tracking row, but by then the
+    play has already been underway; the session start is the real start time.
+    None when nothing is cached for this title (e.g. after a restart).
+    """
+    state = cache.get(_cache_key(user_id))
+    if not state or media_id is None:
+        return None
+    if (
+        state.get("media_type") != playback_media_type
+        or str(state.get("media_id") or "") != str(media_id)
+    ):
+        return None
+    started_at_ts = _coerce_int(state.get("started_at_ts"))
+    if not started_at_ts:
+        return None
+    return datetime.fromtimestamp(started_at_ts, tz=UTC).replace(
+        second=0,
+        microsecond=0,
+    )
 
 
 def _state_matches(
