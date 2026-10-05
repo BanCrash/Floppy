@@ -227,7 +227,7 @@ class MediaCardTemplateUsageTest(TestCase):
 
 
 class MusicGridRatingTest(TestCase):
-    """The music library's artist and album tiles rate through the same picker."""
+    """The music library's artist and album cards rate through the same picker."""
 
     def setUp(self):
         """Create an artist and an album the user tracks."""
@@ -248,8 +248,8 @@ class MusicGridRatingTest(TestCase):
             request,
         )
 
-    def test_artist_tile_rates_the_artist(self):
-        """An unrated artist tile offers the empty star and posts to the artist."""
+    def test_artist_card_rates_the_artist(self):
+        """An unrated artist card offers the empty star and posts to the artist."""
         tracker = ArtistTracker.objects.create(user=self.user, artist=self.artist)
         content = self.render_grid("app/components/artist_grid_items.html", tracker)
         self.assertIn("media-card-rate-button", content)
@@ -258,8 +258,8 @@ class MusicGridRatingTest(TestCase):
             content,
         )
 
-    def test_album_tile_rates_the_album(self):
-        """A rated album tile shows its score and posts to the album."""
+    def test_album_card_rates_the_album(self):
+        """A rated album card shows its score and posts to the album."""
         tracker = AlbumTracker.objects.create(
             user=self.user,
             album=self.album,
@@ -273,9 +273,9 @@ class MusicGridRatingTest(TestCase):
         )
 
 
-# Hand-rolled tiles that are not the shared card. Each one has to call the
-# profile tag. list_grid is a list index, not a media tile.
-PROFILE_TILES = (
+# Hand-rolled cards that are not the shared card. Each one has to call the
+# profile tag. list_grid is a list index, not a media card.
+PROFILE_CARDS = (
     "app/components/history_card.html",
     "app/components/artist_grid_items.html",
     "app/components/album_list_grid_items.html",
@@ -294,32 +294,32 @@ PROFILE_TILES = (
 )
 
 
-class TileProfileContractTest(TestCase):
-    """A tile that ignores the profile fails here."""
+class CardProfileContractTest(TestCase):
+    """A card that ignores the profile fails here."""
 
     def test_inventory_templates_read_the_profile(self):
-        """Every listed tile calls the shared line tag."""
+        """Every listed card calls the shared line tag."""
         missing = [
             name
-            for name in PROFILE_TILES
-            if "tile_lines" not in (TEMPLATES_DIR / name).read_text()
+            for name in PROFILE_CARDS
+            if "card_lines" not in (TEMPLATES_DIR / name).read_text()
         ]
         self.assertEqual(missing, [])
 
     def test_lists_index_has_no_hover_class(self):
-        """Item count stays visible. The index is not a media tile."""
+        """Item count stays visible. The index is not a media card."""
         source = (TEMPLATES_DIR / "lists/components/list_grid.html").read_text()
         self.assertNotIn("media-card-subtitle-always", source)
-        self.assertNotIn("tile_lines", source)
+        self.assertNotIn("card_lines", source)
 
     def test_custom_movie_fields_render_on_the_shared_card(self):
         """A saved field list replaces the default year line."""
         self.user = get_user_model().objects.create_user(
-            username="tile-user",
+            username="card-user",
             password="12345",
         )
         item = Item.objects.create(
-            media_id="tile-fields",
+            media_id="card-fields",
             source=Sources.TMDB.value,
             media_type=MediaTypes.MOVIE.value,
             title="Field Movie",
@@ -333,7 +333,7 @@ class TileProfileContractTest(TestCase):
             progress=1,
             score=8,
         )
-        self.user.tile_metadata = {
+        self.user.card_metadata = {
             "version": 1,
             "types": {
                 "movie": {
@@ -343,7 +343,7 @@ class TileProfileContractTest(TestCase):
                 }
             },
         }
-        self.user.save(update_fields=["tile_metadata"])
+        self.user.save(update_fields=["card_metadata"])
         request = RequestFactory().get("/")
         request.user = self.user
         template = engines["django"].from_string(

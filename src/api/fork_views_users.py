@@ -92,7 +92,7 @@ _STATS_SENSITIVE_FIELDS = {
 
 def _field_choices(user, field_name):
     if field_name == "media_card_subtitle_display":
-        from users.tile_metadata import DISPLAY_CHOICES
+        from users.card_metadata import DISPLAY_CHOICES
 
         return list(DISPLAY_CHOICES)
     field = user._meta.get_field(field_name)
@@ -100,7 +100,7 @@ def _field_choices(user, field_name):
 
 
 def _serialize_preferences(user):
-    from users.tile_metadata import OMIT, absorbed_preference_value
+    from users.card_metadata import OMIT, absorbed_preference_value
 
     payload = {}
     readable = (
@@ -166,11 +166,11 @@ class UserPreferencesView(drf_views.APIView):
                     status=HTTP.BAD_REQUEST,
                 )
             if field == "media_card_subtitle_display":
-                from users.tile_metadata import apply_absorbed_preference
+                from users.card_metadata import apply_absorbed_preference
 
                 apply_absorbed_preference(user, field, value)
-                if "tile_metadata" not in fields_to_update:
-                    fields_to_update.append("tile_metadata")
+                if "card_metadata" not in fields_to_update:
+                    fields_to_update.append("card_metadata")
                 changed.add(field)
                 continue
             if getattr(user, field) != value:
@@ -188,11 +188,11 @@ class UserPreferencesView(drf_views.APIView):
                     status=HTTP.BAD_REQUEST,
                 )
             if field in {"progress_bar", "hide_zero_rating"}:
-                from users.tile_metadata import apply_absorbed_preference
+                from users.card_metadata import apply_absorbed_preference
 
                 apply_absorbed_preference(user, field, value)
-                if "tile_metadata" not in fields_to_update:
-                    fields_to_update.append("tile_metadata")
+                if "card_metadata" not in fields_to_update:
+                    fields_to_update.append("card_metadata")
                 changed.add(field)
                 continue
             if getattr(user, field) != value:

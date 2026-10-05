@@ -3,24 +3,24 @@
 from django.db import migrations, models
 
 
-def seed_tile_metadata(apps, schema_editor):
-    """Copy the three global tile prefs onto every media type."""
+def seed_card_metadata(apps, schema_editor):
+    """Copy the three global card prefs onto every media type."""
     user_model = apps.get_model("users", "User")
-    from users.tile_metadata import profiles_from_legacy
+    from users.card_metadata import profiles_from_legacy
 
     pending = []
     for user in user_model.objects.all().iterator():
-        user.tile_metadata = profiles_from_legacy(
+        user.card_metadata = profiles_from_legacy(
             user.media_card_subtitle_display,
             user.progress_bar,
             user.hide_zero_rating,
         )
         pending.append(user)
         if len(pending) >= 500:
-            user_model.objects.bulk_update(pending, ["tile_metadata"])
+            user_model.objects.bulk_update(pending, ["card_metadata"])
             pending = []
     if pending:
-        user_model.objects.bulk_update(pending, ["tile_metadata"])
+        user_model.objects.bulk_update(pending, ["card_metadata"])
 
 
 class Migration(migrations.Migration):
@@ -32,12 +32,12 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name="user",
-            name="tile_metadata",
+            name="card_metadata",
             field=models.JSONField(
                 blank=True,
                 default=dict,
-                help_text="Per-media-type subtitle fields shown under a tile title",
+                help_text="Per-media-type subtitle fields shown under a card title",
             ),
         ),
-        migrations.RunPython(seed_tile_metadata, migrations.RunPython.noop),
+        migrations.RunPython(seed_card_metadata, migrations.RunPython.noop),
     ]

@@ -989,33 +989,33 @@ def appearance(request):
     return render(request, "users/appearance.html", context)
 
 
-def _tiles_redirect(media_type):
-    """Return the settings URL for one tile type, or the first type."""
-    from users.tile_metadata import PROFILE_TYPES
+def _cards_redirect(media_type):
+    """Return the settings URL for one card type, or the first type."""
+    from users.card_metadata import PROFILE_TYPES
 
     if media_type not in PROFILE_TYPES:
         media_type = PROFILE_TYPES[0]
-    return redirect("tiles_type", media_type=media_type)
+    return redirect("cards_type", media_type=media_type)
 
 
-def _tiles_catalog():
+def _cards_catalog():
     """Return the editor catalog with a child route for each type."""
     from django.urls import reverse
 
-    from users.tile_metadata import editor_catalog
+    from users.card_metadata import editor_catalog
 
     catalog = editor_catalog()
     for entry in catalog:
-        entry["href"] = reverse("tiles_type", kwargs={"media_type": entry["id"]})
+        entry["href"] = reverse("cards_type", kwargs={"media_type": entry["id"]})
     return catalog
 
 
 @require_http_methods(["GET", "POST"])
-def tiles(request, media_type=None):
+def cards(request, media_type=None):
     """Edit per-media-type subtitle fields."""
-    from users.tile_metadata import (
+    from users.card_metadata import (
         PROFILE_TYPES,
-        parse_tile_metadata,
+        parse_card_metadata,
         resolve_profile,
     )
 
@@ -1024,15 +1024,15 @@ def tiles(request, media_type=None):
     if request.method == "POST":
         if request.user.is_demo:
             messages.error(request, "This section is view-only for demo accounts.")
-            return _tiles_redirect(media_type)
-        request.user.tile_metadata = parse_tile_metadata(
-            request.POST.get("tile_metadata")
+            return _cards_redirect(media_type)
+        request.user.card_metadata = parse_card_metadata(
+            request.POST.get("card_metadata")
         )
-        request.user.save(update_fields=["tile_metadata"])
-        messages.success(request, "Tiles updated")
-        return _tiles_redirect(media_type)
+        request.user.save(update_fields=["card_metadata"])
+        messages.success(request, "Media cards updated")
+        return _cards_redirect(media_type)
     if media_type is None:
-        return _tiles_redirect(None)
+        return _cards_redirect(None)
 
     saved = {
         entry_type: resolve_profile(request.user, entry_type)
@@ -1040,21 +1040,21 @@ def tiles(request, media_type=None):
     }
     return render(
         request,
-        "users/tiles.html",
+        "users/cards.html",
         {
-            "tile_catalog_json": _tiles_catalog(),
-            "tile_saved_json": saved,
-            "tile_active_type": media_type,
+            "card_catalog_json": _cards_catalog(),
+            "card_saved_json": saved,
+            "card_active_type": media_type,
         },
     )
 
 
 @require_http_methods(["GET", "POST"])
-def tiles_preview(request):
+def cards_preview(request):
     """Return a real media card for the draft profile of one type."""
     import json
 
-    from users.tile_metadata import PROFILE_TYPES, parse_tile_metadata
+    from users.card_metadata import PROFILE_TYPES, parse_card_metadata
 
     media_type = "movie"
     draft_payload = {}
@@ -1077,17 +1077,17 @@ def tiles_preview(request):
         draft_payload = {}
     if "types" not in draft_payload and media_type in draft_payload:
         draft_payload = {"version": 1, "types": {media_type: draft_payload}}
-    request.user.tile_metadata = parse_tile_metadata(draft_payload)
-    sample = _tile_preview_sample(request.user, media_type)
+    request.user.card_metadata = parse_card_metadata(draft_payload)
+    sample = _card_preview_sample(request.user, media_type)
     if sample is None:
-        item, media = _tile_preview_stand_in(media_type)
+        item, media = _card_preview_stand_in(media_type)
         public_view = True
     else:
         item, media = sample
         public_view = False
     return render(
         request,
-        "users/tiles_preview.html",
+        "users/cards_preview.html",
         {
             "item": item,
             "media": media,
@@ -1097,7 +1097,7 @@ def tiles_preview(request):
     )
 
 
-def _tile_preview_stand_in(media_type):
+def _card_preview_stand_in(media_type):
     """Return a card-shaped sample when this account has no row of the type."""
     from types import SimpleNamespace
 
@@ -1123,7 +1123,7 @@ def _tile_preview_stand_in(media_type):
         "title": titles.get(media_type, "Sample"),
         "media_type": "movie" if media_type == "person" else media_type,
         "source": "manual",
-        "media_id": "tile-preview",
+        "media_id": "card-preview",
         "year": 2024,
         "genres": ["Drama", "Thriller"],
         "runtime": "42 min",
@@ -1225,7 +1225,7 @@ def _music_preview_item(album):
     }
 
 
-def _tile_preview_sample(user, media_type):
+def _card_preview_sample(user, media_type):
     """Return ``(item, media)`` for the user's newest row of this type."""
     model_names = {
         "movie": "Movie",

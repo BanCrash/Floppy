@@ -1,4 +1,4 @@
-"""Per-media-type tile subtitle profiles.
+"""Per-media-type card subtitle profiles.
 
 One JSON object on ``User`` stores which subtitle lines each media type shows.
 Missing or partial saves fall back to ``default_profile``, which matches the
@@ -37,7 +37,7 @@ def _field(label, types, cost=_CHEAP):
     return {"label": label, "types": frozenset(types), "cost": cost}
 
 
-TILE_FIELDS = {
+CARD_FIELDS = {
     "release_year": _field("Release year", _ALL_MEDIA),
     "episode_code": _field("Season and episode", {"episode", "season", "tv"}),
     "genres": _field("Genres", _ALL_MEDIA),
@@ -71,7 +71,7 @@ def _default_field_ids(media_type):
 
 
 def default_profile(media_type):
-    """Return the profile that reproduces today's tile for ``media_type``."""
+    """Return the profile that reproduces today's card for ``media_type``."""
     fields = list(_default_field_ids(media_type))
     return {
         "display": DISPLAY_HOVER,
@@ -107,7 +107,7 @@ def profiles_from_legacy(display, progress_bar, hide_zero):
 
 def _saved_types(user):
     """Return the stored type map, or an empty dict when nothing is saved."""
-    raw = getattr(user, "tile_metadata", None)
+    raw = getattr(user, "card_metadata", None)
     if not isinstance(raw, dict):
         return {}
     types = raw.get("types")
@@ -116,7 +116,7 @@ def _saved_types(user):
     return types
 
 
-def parse_tile_metadata(raw_payload):
+def parse_card_metadata(raw_payload):
     """Drop unknown types and fields. A bad display becomes hover.
 
     ``raw_payload`` is a JSON string from the settings form, or a dict.
@@ -139,7 +139,7 @@ def parse_tile_metadata(raw_payload):
             continue
         allowed = {
             field_id
-            for field_id, spec in TILE_FIELDS.items()
+            for field_id, spec in CARD_FIELDS.items()
             if media_type in spec["types"]
         }
         display = entry.get("display")
@@ -176,7 +176,7 @@ def resolve_profile(user, media_type):
                 base["options"],
             )
         return base
-    return parse_tile_metadata({"types": {media_type: saved}})["types"].get(
+    return parse_card_metadata({"types": {media_type: saved}})["types"].get(
         media_type, default_profile(media_type)
     )
 
@@ -419,7 +419,7 @@ def field_enabled(user, media_type, field_id):
 
 def extra_query_enabled(user, media_type, field_id):
     """Return whether an extra-query field is on for this type."""
-    spec = TILE_FIELDS.get(field_id)
+    spec = CARD_FIELDS.get(field_id)
     if spec is None or spec["cost"] != _EXTRA:
         return False
     return field_enabled(user, media_type, field_id)
@@ -596,7 +596,7 @@ def _episode_code(item, media, user):
 
 
 def _resolve_last_played_dt(item, media):
-    """Return the datetime that should represent last played on a tile."""
+    """Return the datetime that should represent last played on a card."""
     if media is None:
         return None
     media_type = _from_obj(item, "media_type")
@@ -752,7 +752,7 @@ _RENDERERS = {
 }
 
 
-def tile_lines(user, media_type, item=None, media=None):
+def card_lines(user, media_type, item=None, media=None):
     """Return enabled subtitle lines, skipping blanks.
 
     Each line is ``{"text", "dormant"}``. Dormant lines stay visible when the
@@ -799,7 +799,7 @@ def editor_catalog():
     types = []
     for media_type in PROFILE_TYPES:
         fields = []
-        for field_id, spec in TILE_FIELDS.items():
+        for field_id, spec in CARD_FIELDS.items():
             if media_type not in spec["types"]:
                 continue
             fields.append(
@@ -887,15 +887,15 @@ def absorbed_preference_value(user, field_name):
 def apply_absorbed_preference(user, field_name, value):
     """Copy one legacy preference onto every type profile."""
     if _saved_types(user):
-        base = user.tile_metadata
+        base = user.card_metadata
     else:
         base = profiles_from_legacy(
             getattr(user, "media_card_subtitle_display", DISPLAY_HOVER),
             getattr(user, "progress_bar", True),
             getattr(user, "hide_zero_rating", False),
         )
-    parsed = parse_tile_metadata(base)
+    parsed = parse_card_metadata(base)
     for media_type in PROFILE_TYPES:
         profile = parsed["types"].setdefault(media_type, default_profile(media_type))
         _write_scalar(profile, field_name, value, media_type)
-    user.tile_metadata = parsed
+    user.card_metadata = parsed

@@ -2827,7 +2827,7 @@ def media_list(request, media_type):
         context["current_subview"] = music_subview
 
         if music_subview == "albums":
-            from users.tile_metadata import extra_query_enabled
+            from users.card_metadata import extra_query_enabled
 
             album_related = ["album"]
             album_prefetches = []

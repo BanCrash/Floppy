@@ -161,7 +161,7 @@ class PreferencesTests(FloppyApiTestCase):
         )
         self.assertEqual(response.status_code, HTTP.OK)
         self.user1.refresh_from_db()
-        from users.tile_metadata import hides_zero_rating
+        from users.card_metadata import hides_zero_rating
 
         self.assertTrue(hides_zero_rating(self.user1, MediaTypes.MOVIE.value))
         self.assertTrue(hides_zero_rating(self.user1, MediaTypes.TV.value))

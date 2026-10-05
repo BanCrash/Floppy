@@ -1154,10 +1154,10 @@ class User(AbstractUser):
         help_text="Visible and ordered sections for each detail page family",
     )
 
-    tile_metadata = models.JSONField(
+    card_metadata = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Per-media-type subtitle fields shown under a tile title",
+        help_text="Per-media-type subtitle fields shown under a card title",
     )
 
     ui_language = models.CharField(

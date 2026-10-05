@@ -113,7 +113,7 @@
                 </span>
               {% endif %}
             </h2>
-            {% tile_lines 'episode' episode episode %}
+            {% card_lines 'episode' episode episode %}
           </div>
           {% if ep_detail_url %}</a>{% endif %}
           {% if not public_view|default:False %}
@@ -158,7 +158,7 @@
         </span>
       {% endif %}
     </p>
-    {% tile_lines 'episode' episode episode %}
+    {% card_lines 'episode' episode episode %}
     {% if ep_detail_url %}</a>{% endif %}
   </div>
 

@@ -3,65 +3,65 @@
 
 {% block settings_content %}
   <style>
-    .tiles-layout {
+    .cards-layout {
       display: grid;
       gap: 2rem;
       align-items: start;
     }
     @media (min-width: 768px) {
-      .tiles-layout {
+      .cards-layout {
         grid-template-columns: minmax(0, 1fr) 20rem;
       }
     }
-    .tiles-preview-slot {
+    .cards-preview-slot {
       width: 18rem;
       justify-self: end;
       position: sticky;
       top: 5rem;
     }
-    .tiles-pool,
-    .tiles-active {
+    .cards-pool,
+    .cards-active {
       border-radius: 0.5rem;
       padding: 0.75rem;
       min-height: 3rem;
     }
-    .tiles-pool {
+    .cards-pool {
       background: color-mix(in oklab, var(--color-surface-strong) 80%, transparent);
       border: 1px dashed var(--color-border, #444);
     }
-    .tiles-active {
+    .cards-active {
       background: color-mix(in oklab, var(--color-link) 12%, var(--color-surface));
       border: 1px solid color-mix(in oklab, var(--color-link) 35%, transparent);
     }
-    .tile-chip {
+    .card-chip {
       cursor: grab;
       user-select: none;
     }
-    .tile-chip:active {
+    .card-chip:active {
       cursor: grabbing;
     }
-    .tiles-line-slot {
+    .cards-line-slot {
       min-height: 2.25rem;
       border-radius: 0.375rem;
       border: 1px dashed transparent;
     }
-    .tiles-line-slot.is-over {
+    .cards-line-slot.is-over {
       border-color: var(--color-link);
       background: color-mix(in oklab, var(--color-link) 10%, transparent);
     }
   </style>
   <form method="post"
-        x-data="tilesEditor()"
+        x-data="cardsEditor()"
         x-init="init()"
         @submit="writePayload()">
     {% csrf_token %}
-    <input type="hidden" name="tile_metadata" x-ref="payload">
-    {{ tile_catalog_json|json_script:"tile-catalog" }}
-    {{ tile_saved_json|json_script:"tile-saved" }}
+    <input type="hidden" name="card_metadata" x-ref="payload">
+    {{ card_catalog_json|json_script:"card-catalog" }}
+    {{ card_saved_json|json_script:"card-saved" }}
 
     <div class="preferences-section">
-      <h2 class="text-lg font-semibold text-[var(--color-text)] mb-1">{% translate "Tiles" %}</h2>
-      <p class="text-sm text-[var(--color-text-muted)] mb-4">{% translate "Every property for this type starts in the pool below. Drag onto the tile to show it. Up to three properties share one line. Drag lines to reorder." %}</p>
+      <h2 class="text-lg font-semibold text-[var(--color-text)] mb-1">{% translate "Media Cards" %}</h2>
+      <p class="text-sm text-[var(--color-text-muted)] mb-4">{% translate "Every property for this type starts in the pool below. Drag onto the card to show it. Up to three properties share one line. Drag lines to reorder." %}</p>
 
       <div class="flex flex-wrap gap-2 mb-4">
         <template x-for="entry in catalog" :key="entry.id">
@@ -74,7 +74,7 @@
       </div>
 
       <template x-if="current">
-        <div class="tiles-layout">
+        <div class="cards-layout">
           <div class="space-y-4">
             <div class="flex flex-wrap gap-2">
               <button type="button" class="text-sm text-[var(--color-link)]" @click="resetType()">{% translate "Reset type" %}</button>
@@ -182,13 +182,13 @@
                         x-show="poolFields().length"
                         @click="addAllAvailable()">{% translate "Add all available" %}</button>
               </div>
-              <div class="tiles-pool flex flex-wrap gap-2"
+              <div class="cards-pool flex flex-wrap gap-2"
                    :class="poolOver ? 'is-over' : ''"
                    @dragover.prevent="poolOver = true"
                    @dragleave="poolOver = false"
                    @drop.prevent="dropOnPool()">
                 <template x-for="field in poolFields()" :key="field.id">
-                  <span class="tile-chip inline-flex items-center gap-1 px-2 py-1 rounded text-sm border text-[var(--color-text-secondary)]"
+                  <span class="card-chip inline-flex items-center gap-1 px-2 py-1 rounded text-sm border text-[var(--color-text-secondary)]"
                         :class="field.unmatched ? 'bg-orange-400/20 border-orange-300/70' : 'bg-[var(--color-surface)] border-[var(--color-border,#444)]'"
                         draggable="true"
                         @dragstart="startFieldDrag($event, field.id, null)"
@@ -197,13 +197,13 @@
                     <span x-show="field.extra" class="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{% translate "extra" %}</span>
                   </span>
                 </template>
-                <span x-show="!poolFields().length" class="text-sm text-[var(--color-text-muted)]">{% translate "Everything is on the tile." %}</span>
+                <span x-show="!poolFields().length" class="text-sm text-[var(--color-text-muted)]">{% translate "Everything is on the card." %}</span>
               </div>
             </div>
 
             <div>
-              <p class="text-xs font-medium text-[var(--color-text-muted)] mb-2">{% translate "On tile" %}</p>
-              <div class="tiles-active space-y-2">
+              <p class="text-xs font-medium text-[var(--color-text-muted)] mb-2">{% translate "On card" %}</p>
+              <div class="cards-active space-y-2">
                 <template x-for="(line, lineIndex) in saved[active].lines" :key="lineIndex + ':' + line.fields.join(',')">
                   <div class="rounded-md p-2 bg-[var(--color-surface)]/60"
                        x-show="line.fields.length"
@@ -219,13 +219,13 @@
                               @dragstart="startLineDrag($event, lineIndex)"
                               @dragend="clearDrag()">⋮⋮</button>
                       <div class="flex-1 min-w-0">
-                        <div class="tiles-line-slot flex flex-wrap gap-1 p-1"
+                        <div class="cards-line-slot flex flex-wrap gap-1 p-1"
                              :class="lineOverIndex === lineIndex && dragKind === 'field' ? 'is-over' : ''"
                              @dragover.prevent="onFieldSlotDragOver(lineIndex)"
                              @dragleave="onFieldSlotDragLeave(lineIndex)"
                              @drop.prevent="dropOnLine(lineIndex, $event)">
                           <template x-for="fieldId in line.fields" :key="fieldId">
-                            <span class="tile-chip inline-flex items-center gap-1 px-2 py-0.5 rounded text-sm bg-[var(--color-surface-strong)] text-[var(--color-text)]"
+                            <span class="card-chip inline-flex items-center gap-1 px-2 py-0.5 rounded text-sm bg-[var(--color-surface-strong)] text-[var(--color-text)]"
                                   :class="fieldOver && fieldOver.lineIndex === lineIndex && fieldOver.fieldId === fieldId ? 'ring-2 ring-[var(--color-link)]' : ''"
                                   draggable="true"
                                   @dragstart="startFieldDrag($event, fieldId, lineIndex)"
@@ -257,7 +257,7 @@
                     </div>
                   </div>
                 </template>
-                <div class="tiles-line-slot p-3 text-center text-sm text-[var(--color-text-muted)]"
+                <div class="cards-line-slot p-3 text-center text-sm text-[var(--color-text-muted)]"
                      :class="newLineOver ? 'is-over' : ''"
                      @dragover.prevent="newLineOver = true"
                      @dragleave="newLineOver = false"
@@ -266,14 +266,14 @@
                   {% translate "Drop here to start a new line" %}
                 </div>
                 <p x-show="!saved[active].lines.length" class="text-sm text-[var(--color-text-muted)] text-center py-4">
-                  {% translate "Nothing on the tile yet. Drag properties from Available." %}
+                  {% translate "Nothing on the card yet. Drag properties from Available." %}
                 </p>
               </div>
             </div>
           </div>
-          <div class="tiles-preview-slot">
+          <div class="cards-preview-slot">
             <p class="text-xs text-[var(--color-text-muted)] mb-2">{% translate "Preview" %}</p>
-            <div id="tile-preview" x-html="previewHtml"></div>
+            <div id="card-preview" x-html="previewHtml"></div>
           </div>
         </div>
       </template>
@@ -288,12 +288,12 @@
     </div>
   </form>
   <script>
-    function tilesEditor() {
+    function cardsEditor() {
       return {
         catalog: [],
         saved: {},
         defaults: {},
-        active: "{{ tile_active_type|escapejs }}",
+        active: "{{ card_active_type|escapejs }}",
         previewHtml: "",
         dragKind: "",
         dragFieldId: "",
@@ -307,8 +307,8 @@
         copyOpen: false,
         csrfToken: "",
         init() {
-          this.catalog = JSON.parse(document.getElementById("tile-catalog").textContent);
-          this.saved = JSON.parse(document.getElementById("tile-saved").textContent);
+          this.catalog = JSON.parse(document.getElementById("card-catalog").textContent);
+          this.saved = JSON.parse(document.getElementById("card-saved").textContent);
           this.csrfToken = document.querySelector("[name=csrfmiddlewaretoken]")?.value || "";
           for (const entry of this.catalog) {
             this.ensureProfile(entry.id);
@@ -317,7 +317,7 @@
           if (!this.saved[this.active]) {
             this.active = this.catalog[0] ? this.catalog[0].id : "movie";
           }
-          history.replaceState({ tileType: this.active }, "", this.typeHref(this.active) || window.location.href);
+          history.replaceState({ cardType: this.active }, "", this.typeHref(this.active) || window.location.href);
           window.addEventListener("popstate", () => {
             const typeId = this.typeFromLocation();
             if (typeId && typeId !== this.active) this.switchType(typeId, false);
@@ -355,7 +355,7 @@
           if (!updateHistory || !href) return;
           const nextPath = new URL(href, window.location.origin).pathname;
           if (window.location.pathname !== nextPath) {
-            history.pushState({ tileType: typeId }, "", href);
+            history.pushState({ cardType: typeId }, "", href);
           }
         },
         fieldLabel(fieldId) {
@@ -784,7 +784,7 @@
         },
         refreshPreview() {
           this.flatten(this.active);
-          fetch("{% url 'tiles_preview' %}", {
+          fetch("{% url 'cards_preview' %}", {
             method: "POST",
             credentials: "same-origin",
             headers: {

@@ -2,7 +2,7 @@
 {% load i18n %}
 {% load app_tags %}
 
-<div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card group{% tile_subtitle_class entry.media_type %}">
+<div class="media-card bg-[var(--color-surface)] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card group{% card_subtitle_class entry.media_type %}">
   <div class="relative">
     {% if show_watched_runtime_chip and entry.watched_person_runtime_display %}
       <span class="absolute top-2 right-2 z-10 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md shadow-md">
@@ -43,7 +43,7 @@
         </a>
       {% endif %}
     </div>
-    {% tile_lines entry.media_type entry entry %}
-    {% tile_lines 'person' entry %}
+    {% card_lines entry.media_type entry entry %}
+    {% card_lines 'person' entry %}
   </div>
 </div>

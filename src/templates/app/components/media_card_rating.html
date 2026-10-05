@@ -3,7 +3,7 @@
 {% comment %}
   The rating in a card's title row. With `rate_url` it is a button that opens the
   shared rating picker (see media_card_rate_button.html); without it, a read-only value.
-  Visibility follows the tile profile for this media type.
+  Visibility follows the card profile for this media type.
 {% endcomment %}
 {% score_is_visible rating_value as show_score %}
 {% if not user.ratings_enabled %}

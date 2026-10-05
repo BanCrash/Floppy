@@ -1670,7 +1670,7 @@ html.light .theme-toggle-icon-moon {
 }
 
 /*
- * Title treatment from the tile settings. Unset variables keep today's look:
+ * Title treatment from the card settings. Unset variables keep today's look:
  * one ellipsis line at rest, three wrapped lines when the row opens.
  */
 .search-result-card.media-card-title-stay:hover .media-card-title-row,
