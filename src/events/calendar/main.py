@@ -9,9 +9,9 @@ from .anime import process_anime_bulk
 from .comic import process_comic
 from .other import process_other
 from .podcast import process_podcast
-from .video import process_video
 from .selectors import get_items_to_process
 from .tv import process_tv
+from .video import process_video
 
 logger = logging.getLogger(__name__)
 
