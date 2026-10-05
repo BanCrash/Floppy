@@ -225,6 +225,13 @@ class MediaProviderPreferenceView(drf_views.APIView):
         return Response({"provider": provider}, status=HTTP.OK)
 
 
+EPISODE_NOT_TRACKED_DETAIL = (
+    "Episode not tracked: a score is stored on a play. "
+    "Record one first with POST .../episodes/{episode_number}/watch/, "
+    "which also accepts `score`."
+)
+
+
 # /api/v1/media/[...]/[season_number]/episodes/[episode_number]/score/
 class MediaEpisodeScoreView(drf_views.APIView):
     """Set or clear the score on all plays of an episode."""
@@ -246,6 +253,8 @@ class MediaEpisodeScoreView(drf_views.APIView):
 
         Body: {"score": 8.5} or {"score": null} to clear. Scores use the raw
         0-10 storage scale like the other media score fields in this API.
+        The episode must already have a play (a score is stored on plays and
+        never creates one); otherwise 404 points to the watch route.
         """
         if media_type != MediaTypes.TV.value:
             return Response(
@@ -273,7 +282,7 @@ class MediaEpisodeScoreView(drf_views.APIView):
         season = get_tracked_season(request.user, media_id, source, season_number)
         if season is None:
             return Response(
-                {"detail": "Season not found or not tracked."},
+                {"detail": EPISODE_NOT_TRACKED_DETAIL},
                 status=HTTP.NOT_FOUND,
             )
 
@@ -288,7 +297,7 @@ class MediaEpisodeScoreView(drf_views.APIView):
 
         if not apply_episode_score(season, episode_number, score):
             return Response(
-                {"detail": "Episode not tracked."},
+                {"detail": EPISODE_NOT_TRACKED_DETAIL},
                 status=HTTP.NOT_FOUND,
             )
 

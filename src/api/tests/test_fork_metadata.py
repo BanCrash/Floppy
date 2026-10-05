@@ -324,6 +324,15 @@ class EpisodeScoreTests(FloppyApiTestCase):
             )
             self.assertEqual(response.status_code, HTTP.BAD_REQUEST)
 
+    def _patch_score_for_episode(self, episode_number):
+        return self.call_api(
+            "patch",
+            "api_media_episode_score",
+            args=("tv", "tmdb", "1001", 1, episode_number),
+            payload={"score": 5},
+            headers=self.auth_headers,
+        )
+
     def test_untracked_episode_not_found(self):
         """Episodes with no plays return 404."""
         response = self.call_api(
@@ -334,6 +343,51 @@ class EpisodeScoreTests(FloppyApiTestCase):
             headers=self.auth_headers,
         )
         self.assertEqual(response.status_code, HTTP.NOT_FOUND)
+
+
+    def test_untracked_show_score_points_to_watch_route(self):
+        """Scoring an untracked show creates nothing and says how to record a play (#1448)."""
+        response = self.call_api(
+            "patch",
+            "api_media_episode_score",
+            args=("tv", "tmdb", "424242", 1, 1),
+            payload={"score": 7.0},
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, HTTP.NOT_FOUND)
+        self.assertIn("/watch/", response.json()["detail"])
+        self.assertFalse(Season.objects.filter(item__media_id="424242").exists())
+        self.assertFalse(Episode.objects.filter(item__media_id="424242").exists())
+
+    def test_untracked_episode_score_points_to_watch_route(self):
+        """A tracked season with no play for the episode gets the same pointer."""
+        Episode.objects.filter(
+            related_season__item__media_id="1001",
+            item__episode_number=3,
+        ).delete()
+        response = self._patch_score_for_episode(3)
+        self.assertEqual(response.status_code, HTTP.NOT_FOUND)
+        self.assertIn("/watch/", response.json()["detail"])
+
+
+    @patch("api.views.services.get_media_metadata", return_value={"title": "X"})
+    def test_post_provider_episode_is_rejected_not_500(self, _mock):
+        """Tracking a provider episode over POST returns 400, not a 500 (#1448)."""
+        response = self.call_api(
+            "post",
+            "api_media_type_list",
+            args=(MediaTypes.EPISODE.value,),
+            payload={
+                "source": "tmdb",
+                "media_id": "424242",
+                "season_number": 1,
+                "episode_number": 1,
+                "score": 7,
+            },
+            headers=self.auth_headers,
+        )
+        self.assertEqual(response.status_code, HTTP.BAD_REQUEST)
+        self.assertIn("/watch/", response.json()["detail"])
 
 
 class EpisodePatchScoreTests(FloppyApiTestCase):
