@@ -242,14 +242,20 @@ def _play_link_label(url):
 def _external_play_links(tracks_with_data):
     """Return one play chip per distinct SoundCloud or Spotify URL on this album."""
     links = {}
+    seen_urls = set()
     for track_data in tracks_with_data:
         url = track_data.get("origin_url") or ""
         label = _play_link_label(url)
-        if not label:
+        if not label or url in seen_urls:
             continue
-        if label in links and links[label] != url:
+        seen_urls.add(url)
+        if label in links:
             label = track_data["track"].title or url
-        links.setdefault(label, url)
+        base_label, suffix = label, 2
+        while label in links:
+            label = f"{base_label} ({suffix})"
+            suffix += 1
+        links[label] = url
     return links
 
 

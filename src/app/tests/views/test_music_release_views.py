@@ -459,3 +459,19 @@ class PlayLinkLabelTests(TestCase):
 
         self.assertEqual(_play_link_label("https://evil.example/?q=soundcloud.com"), "")
         self.assertEqual(_play_link_label("https://notspotify.com/track/1"), "")
+
+    def test_same_title_tracks_keep_their_own_play_links(self):
+        from types import SimpleNamespace
+
+        from app.music_views import _external_play_links
+
+        urls = [f"https://soundcloud.com/artist/{n}" for n in ("one", "two", "three")]
+        tracks = [
+            {"track": SimpleNamespace(title="Same Title"), "origin_url": url}
+            for url in urls
+        ]
+        tracks.append(tracks[0])  # the same URL again adds no chip
+
+        links = _external_play_links(tracks)
+
+        self.assertEqual(sorted(links.values()), sorted(urls))
