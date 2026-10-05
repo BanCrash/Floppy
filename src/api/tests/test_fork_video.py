@@ -122,3 +122,29 @@ class VideoPlayApiTests(FloppyApiTestCase):
                 history_cache.history_day_key(play.end_date),
                 history_cache.build_history_index(self.user1, style),
             )
+
+    def test_bad_seconds_are_clamped_not_a_server_error(self):
+        """Negative or huge numbers must never reach the database."""
+        response = self._post(lengthSeconds=-1, progressSeconds=-5)
+        self.assertEqual(response.status_code, 201)
+        response = self._post(lengthSeconds=10**12, progressSeconds=10**12)
+        self.assertEqual(response.status_code, 200)
+        video = Video.objects.get()
+        self.assertEqual(video.length_seconds, 2_147_483_647)
+
+    def test_a_repeated_post_does_not_create_a_second_play(self):
+        """A retry of the same report is the same play."""
+        for _ in range(3):
+            self._post()
+        self.assertEqual(VideoPlay.objects.count(), 1)
+
+    def test_the_generic_create_route_points_to_the_plays_route(self):
+        """A new video cannot be created through the provider-backed route."""
+        response = self.client.post(
+            "/api/v1/media/video/",
+            {"media_id": "x", "source": "youtube", "status": "Planning"},
+            format="json",
+            **self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("plays", response.data["detail"])
