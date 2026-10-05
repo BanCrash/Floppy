@@ -1000,9 +1000,10 @@ class MediaTypeListView(drf_views.APIView):
             return Response(
                 {
                     "detail": (
-                        "Provider episodes are recorded as plays: "
-                        "POST /media/tv/{source}/{media_id}/{season_number}"
-                        "/episodes/{episode_number}/watch/."
+                        "Provider episodes are recorded as plays "
+                        "(POST /media/tv/{source}/{media_id}/{season_number}"
+                        "/episodes/{episode_number}/watch/) or rated with "
+                        "PATCH .../episodes/{episode_number}/score/."
                     ),
                 },
                 status=HTTP.BAD_REQUEST,

@@ -10,11 +10,13 @@ from rest_framework.response import Response
 
 from app import custom_metadata
 from app import metadata_sync_views as web_metadata_views
+from app.fork_services_episode import resolve_or_create_season
 from app.models import (
     Item,
     MediaTypes,
     MetadataProviderPreference,
     Sources,
+    Status,
 )
 from app.services import metadata_resolution
 from app.services.metadata_projection import project_item_metadata
@@ -225,13 +227,6 @@ class MediaProviderPreferenceView(drf_views.APIView):
         return Response({"provider": provider}, status=HTTP.OK)
 
 
-EPISODE_NOT_TRACKED_DETAIL = (
-    "Episode not tracked: a score is stored on a play. "
-    "Record one first with POST .../episodes/{episode_number}/watch/, "
-    "which also accepts `score`."
-)
-
-
 # /api/v1/media/[...]/[season_number]/episodes/[episode_number]/score/
 class MediaEpisodeScoreView(drf_views.APIView):
     """Set or clear the score on all plays of an episode."""
@@ -253,8 +248,9 @@ class MediaEpisodeScoreView(drf_views.APIView):
 
         Body: {"score": 8.5} or {"score": null} to clear. Scores use the raw
         0-10 storage scale like the other media score fields in this API.
-        The episode must already have a play (a score is stored on plays and
-        never creates one); otherwise 404 points to the watch route.
+        An episode nobody has watched is rated too: the season is tracked as
+        Planning and the rating is stored without a play (it never counts as
+        a watch). Clearing a score that does not exist returns 404.
         """
         if media_type != MediaTypes.TV.value:
             return Response(
@@ -279,13 +275,6 @@ class MediaEpisodeScoreView(drf_views.APIView):
         if coordinate_error:
             return coordinate_error
 
-        season = get_tracked_season(request.user, media_id, source, season_number)
-        if season is None:
-            return Response(
-                {"detail": EPISODE_NOT_TRACKED_DETAIL},
-                status=HTTP.NOT_FOUND,
-            )
-
         if "score" not in request.data:
             return Response(
                 {"detail": "'score' is required (number or null)."},
@@ -295,9 +284,27 @@ class MediaEpisodeScoreView(drf_views.APIView):
         if error:
             return error
 
-        if not apply_episode_score(season, episode_number, score):
+        season = get_tracked_season(request.user, media_id, source, season_number)
+        if season is None and score is not None:
+            # Like movies, shows and seasons, rating an untracked episode
+            # starts tracking it as Planning; the rating is not a watch.
+            try:
+                season = resolve_or_create_season(
+                    request.user,
+                    media_id,
+                    source,
+                    int(season_number),
+                    status=Status.PLANNING.value,
+                )
+            except Exception:
+                logger.exception("Could not create season for episode score.")
+                return Response(
+                    {"detail": "Could not resolve season."},
+                    status=HTTP.NOT_FOUND,
+                )
+        if season is None or not apply_episode_score(season, episode_number, score):
             return Response(
-                {"detail": EPISODE_NOT_TRACKED_DETAIL},
+                {"detail": "Episode has no rating to clear."},
                 status=HTTP.NOT_FOUND,
             )
 
