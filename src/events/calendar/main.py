@@ -9,6 +9,7 @@ from .anime import process_anime_bulk
 from .comic import process_comic
 from .other import process_other
 from .podcast import process_podcast
+from .video import process_video
 from .selectors import get_items_to_process
 from .tv import process_tv
 
@@ -55,6 +56,8 @@ def process_items(items_to_process):
             checked = process_comic(item, events_bulk)
         elif item.media_type == MediaTypes.PODCAST.value:
             checked = process_podcast(item, events_bulk)
+        elif item.media_type == MediaTypes.VIDEO.value:
+            checked = process_video(item, events_bulk)
         else:
             checked = process_other(item, events_bulk)
 
