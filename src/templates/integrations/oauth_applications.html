@@ -37,7 +37,7 @@
               <form method="post" action="{% url 'oauth_revoke_application' application.client.client_id %}">
                 {% csrf_token %}
                 <button type="submit"
-                        class="px-3 py-2 text-sm rounded-md border border-red-500/50 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer">
+                        class="px-3 py-2 text-sm rounded-md border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer">
                   Revoke access
                 </button>
               </form>
