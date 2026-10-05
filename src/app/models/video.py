@@ -27,18 +27,25 @@ class Video(Media):
         """Create or raise the play for this external id.
 
         @param external_id - Idempotency key, `youtube:<id>:<day>`.
-        @param progress_seconds - Resume position in seconds.
+        @param progress_seconds - Position reached in this report, in seconds.
         @param end_date - When the watch counts. Defaults to now.
         @returns The play and whether it was created.
         """
         when = end_date or timezone.now()
+        # A report can arrive late or out of order, so nothing here moves
+        # backwards: progress and dates only grow, and a completed video stays
+        # completed when a later day is reported at a lower position.
+        self.progress = max(self.progress, progress_seconds)
         completed = (
             self.length_seconds > 0
-            and progress_seconds >= COMPLETED_RATIO * self.length_seconds
+            and self.progress >= COMPLETED_RATIO * self.length_seconds
         )
-        self.progress = progress_seconds
-        self.status = Status.COMPLETED.value if completed else Status.IN_PROGRESS.value
-        self.end_date = when
+        if completed or self.status == Status.COMPLETED.value:
+            self.status = Status.COMPLETED.value
+        else:
+            self.status = Status.IN_PROGRESS.value
+        if not self.end_date or when > self.end_date:
+            self.end_date = when
         self.save(
             update_fields=[
                 "progress",
@@ -60,8 +67,8 @@ class Video(Media):
                 end_date=when,
             )
         else:
-            play.progress = progress_seconds
-            play.end_date = when
+            play.progress = max(play.progress, progress_seconds)
+            play.end_date = max(play.end_date, when)
             play.save(update_fields=["progress", "end_date"])
         return play, created
 

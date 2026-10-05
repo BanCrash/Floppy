@@ -2,7 +2,8 @@
 
 from django.urls import reverse
 
-from app.models import MediaTypes, Status, VideoPlay
+from app import history_cache
+from app.models import Item, MediaTypes, Status, Video, VideoPlay
 
 from .base import FloppyApiTestCase
 
@@ -43,3 +44,81 @@ class VideoPlayApiTests(FloppyApiTestCase):
         )
         self.assertEqual(history.status_code, 200)
         self.assertIn(payload["title"], str(history.data))
+
+    def _post(self, media_id="vid1", **overrides):
+        """Post one play for a 1000 second video."""
+        url = reverse(
+            "api_video_play",
+            kwargs={"source": "youtube", "media_id": media_id},
+        )
+        payload = {
+            "title": "A Video",
+            "lengthSeconds": 1000,
+            "progressSeconds": 100,
+            "externalId": "youtube:vid1:2026-10-02",
+        }
+        payload.update(overrides)
+        return self.client.post(url, payload, format="json", **self.auth_headers)
+
+    def test_a_completed_video_stays_completed_on_a_later_low_report(self):
+        """A rewatch that starts at 10% must not undo the completion."""
+        self._post(progressSeconds=900)
+        response = self._post(
+            progressSeconds=100,
+            externalId="youtube:vid1:2026-10-03",
+        )
+        self.assertEqual(response.data["status"], Status.COMPLETED.value)
+        video = Video.objects.get()
+        # Completing fills the bar, as for every other media type.
+        self.assertEqual(video.progress, 1000)
+        self.assertEqual(VideoPlay.objects.count(), 2)
+
+    def test_a_stale_report_does_not_lower_progress_or_dates(self):
+        """Re-sending an older day with less progress changes nothing."""
+        self._post(progressSeconds=600, externalId="youtube:vid1:2026-10-03")
+        before = Video.objects.get()
+        self._post(progressSeconds=50, externalId="youtube:vid1:2026-10-02")
+        video = Video.objects.get()
+        self.assertEqual(video.progress, 600)
+        self.assertEqual(video.end_date, before.end_date)
+        self._post(progressSeconds=50, externalId="youtube:vid1:2026-10-03")
+        self.assertEqual(VideoPlay.objects.get(external_id__endswith="10-03").progress, 600)
+
+    def test_a_later_post_does_not_rename_the_shared_item(self):
+        """The item is shared between users, so only the first post names it."""
+        self._post(title="First Title")
+        self._post(title="Renamed Title")
+        self.assertEqual(Item.objects.get(media_id="vid1").title, "First Title")
+
+    def test_video_pages_that_do_not_exist_yet_are_not_found(self):
+        """The list page is a 404, not a server error."""
+        self._post()
+        self.client.force_login(self.user1)
+        self.assertEqual(self.client.get("/medialist/video").status_code, 404)
+
+    def test_video_details_page_renders_from_the_stored_item(self):
+        """History links here, so it must render without a provider."""
+        self._post()
+        self._metadata_patcher.stop()  # the base class mocks the metadata lookup
+        self.client.force_login(self.user1)
+        response = self.client.get("/details/youtube/video/vid1/a-video")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media"]["title"], "A Video")
+
+    def test_video_track_modal_renders(self):
+        """The edit button on a History card opens this modal."""
+        self._post()
+        self.client.force_login(self.user1)
+        response = self.client.get("/track_modal/youtube/video/vid1")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Progress (Seconds)")
+
+    def test_the_history_index_lists_the_day_of_a_video_play(self):
+        """A day whose only activity is a video must be asked for."""
+        self._post()
+        play = VideoPlay.objects.get()
+        for style in ("sessions", "repeats"):
+            self.assertIn(
+                history_cache.history_day_key(play.end_date),
+                history_cache.build_history_index(self.user1, style),
+            )

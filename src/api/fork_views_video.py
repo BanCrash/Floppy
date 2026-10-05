@@ -8,7 +8,7 @@ from django.utils.dateparse import parse_date
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from app.models import Item, MediaTypes, Video
+from app.models import Item, MediaTypes, Status, Video
 
 from .helpers import check_source_type
 
@@ -50,6 +50,8 @@ class VideoPlayView(APIView):
         except (TypeError, ValueError):
             return Response({"detail": "seconds must be integers"}, status=HTTP.BAD_REQUEST)
 
+        # The item is shared by every user who tracks this video, so a later
+        # post never renames it.
         item, _created = Item.objects.get_or_create(
             media_id=media_id,
             source=source,
@@ -57,14 +59,14 @@ class VideoPlayView(APIView):
             library_media_type=MediaTypes.VIDEO.value,
             defaults={"title": title},
         )
-        if item.title != title:
-            item.title = title
-            item.save(update_fields=["title"])
 
         video, _video_created = Video.objects.get_or_create(
             item=item,
             user=request.user,
             defaults={
+                # The model defaults to Completed, which would fill the
+                # progress bar on creation. The first report decides.
+                "status": Status.IN_PROGRESS.value,
                 "channel": str(request.data.get("channel") or ""),
                 "watch_url": str(request.data.get("url") or ""),
                 "length_seconds": max(length_seconds, 0),

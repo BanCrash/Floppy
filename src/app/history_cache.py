@@ -1461,7 +1461,11 @@ def build_history_days(
     if process_all or MediaTypes.VIDEO.value in media_type_filter:
         from app.models import VideoPlay
 
-        plays = VideoPlay.objects.filter(video__user=user).select_related("video__item")
+        plays = (
+            VideoPlay.objects.filter(video__user=user)
+            .select_related("video__item")
+            .defer(*history_deferred_item_fields("video__item"))
+        )
         if start_date:
             plays = plays.filter(end_date__gte=start_date)
         if end_date:

@@ -834,7 +834,9 @@ def build_history_day(user, day_key, logging_style_override=None, media_types=No
             video__user=user,
             end_date__gte=day_start,
             end_date__lt=day_end,
-        ).select_related("video__item")
+        ).select_related("video__item").defer(
+            *history_deferred_item_fields("video__item"),
+        )
         for play in plays:
             entry = _build_video_play_entry(play)
             if entry:
