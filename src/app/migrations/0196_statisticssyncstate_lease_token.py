@@ -35,7 +35,7 @@ class AddFieldIfNotExists(migrations.AddField):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("app", "0194_add_mangabaka_source"),
+        ("app", "0195_music_origin_url"),
     ]
 
     operations = [

@@ -153,7 +153,7 @@ A worker that loses its lease gets `status="lost_lease"` and stops touching the
 user's state; the inline read path treats that like `busy` and leaves durable
 work for the successor. Dirty-day clearing also checks the captured dirty
 token so a newer invalidation remains queued. **Drain all old workers before
-upgrading and restart them together after migration 0195.** Old workers do
+upgrading and restart them together after migration 0196.** Old workers do
 not rotate or honor the fencing token; mixed-version execution does not have
 the new ownership guarantees.
 
