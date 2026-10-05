@@ -292,9 +292,16 @@ jobs:
           TAG: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # A rerun of the same failed tag must not file a second issue.
+          title="[BUG] No container image was published for release $TAG"
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            echo "Issue #$existing already reports this tag"
+            exit 0
+          fi
           gh issue create \
             --label bug \
-            --title "[BUG] No container image was published for release $TAG" \
+            --title "$title" \
             --body "The Docker Image workflow failed for tag \`$TAG\`, so no image was published for it: $RUN_URL
 
           Open the failed job for the cause. A tag cannot be rebuilt once fixed, so publish a new release tag from a green \`latest\`."
