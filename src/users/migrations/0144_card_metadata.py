@@ -26,7 +26,7 @@ def seed_card_metadata(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("users", "0142_rating_scale_disabled"),
+        ("users", "0143_home_screen_all_media"),
     ]
 
     operations = [
