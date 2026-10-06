@@ -39,36 +39,36 @@ def revoke_refresh_token_family(
 ) -> None:
     """Revoke every refresh and access token in one rotation lineage."""
     now = revoked_at or timezone.now()
-    pending = {refresh_token.pk}
-    refresh_token_ids = set()
-    access_token_ids = set()
 
     with transaction.atomic():
+        # Rotation keeps the user and client, so one query loads every candidate
+        # row and the lineage is walked in memory (a year of hourly refreshes
+        # would otherwise cost thousands of queries).
+        rows = list(
+            OAuthRefreshToken.objects.select_for_update()
+            .filter(user_id=refresh_token.user_id, client_id=refresh_token.client_id)
+            .values("id", "access_token_id", "replaced_by_id")
+        )
+        neighbours: dict[int, set[int]] = {}
+        for row in rows:
+            neighbours.setdefault(row["id"], set())
+            if row["replaced_by_id"] is not None:
+                neighbours[row["id"]].add(row["replaced_by_id"])
+                neighbours.setdefault(row["replaced_by_id"], set()).add(row["id"])
+
+        refresh_token_ids = set()
+        pending = [refresh_token.pk]
         while pending:
             token_id = pending.pop()
-            if token_id in refresh_token_ids:
-                continue
+            if token_id not in refresh_token_ids:
+                refresh_token_ids.add(token_id)
+                pending.extend(neighbours.get(token_id, ()))
 
-            current = (
-                OAuthRefreshToken.objects.select_for_update()
-                .filter(pk=token_id)
-                .values("id", "access_token_id", "replaced_by_id")
-                .first()
-            )
-            if current is None:
-                continue
-
-            refresh_token_ids.add(current["id"])
-            if current["access_token_id"] is not None:
-                access_token_ids.add(current["access_token_id"])
-            if current["replaced_by_id"] is not None:
-                pending.add(current["replaced_by_id"])
-
-            pending.update(
-                OAuthRefreshToken.objects.select_for_update()
-                .filter(replaced_by_id=current["id"])
-                .values_list("id", flat=True)
-            )
+        access_token_ids = {
+            row["access_token_id"]
+            for row in rows
+            if row["id"] in refresh_token_ids and row["access_token_id"] is not None
+        }
 
         OAuthRefreshToken.objects.filter(
             pk__in=refresh_token_ids,

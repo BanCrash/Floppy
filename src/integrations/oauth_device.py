@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.cache import cache
 from django.http import HttpRequest, JsonResponse
@@ -28,7 +29,11 @@ CLIENT_NAME_MAX_LENGTH = 60
 
 def _rate_limited(request: HttpRequest, bucket: str) -> bool:
     """Count this caller's requests to one endpoint in the current minute window."""
-    caller = request.META.get("HTTP_X_REAL_IP") or request.META.get("REMOTE_ADDR", "")
+    # Same trusted header allauth uses; it is only set in production, where
+    # nginx overwrites it, so a caller cannot choose their own bucket.
+    header = getattr(settings, "ALLAUTH_TRUSTED_CLIENT_IP_HEADER", None)
+    forwarded = header and request.META.get("HTTP_" + header.upper().replace("-", "_"))
+    caller = forwarded or request.META.get("REMOTE_ADDR", "")
     key = f"{bucket}:{caller}"
     cache.add(key, 0, timeout=DEVICE_AUTHORIZATION_WINDOW_SECONDS)
     try:

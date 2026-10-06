@@ -3,7 +3,9 @@ from http import HTTPStatus as HTTP  # noqa: N814
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase
+from django.db import connection
+from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed
@@ -534,3 +536,61 @@ class OAuthDeviceFlowTests(TestCase):
         self.assertFalse(OAuthClient.objects.filter(pk=unused.pk).exists())
         self.assertTrue(OAuthClient.objects.filter(pk=self.oauth_client.pk).exists())
         self.assertTrue(OAuthClient.objects.filter(name="New").exists())
+
+    def test_rate_limit_ignores_a_spoofed_header_unless_it_is_the_trusted_one(self):
+        """A caller cannot dodge the limit by sending their own X-Real-IP."""
+        for index in range(10):
+            self.client.post(
+                reverse("oauth_register"),
+                {"client_name": "App"},
+                HTTP_X_REAL_IP=f"10.0.0.{index}",
+            )
+
+        spoofed = self.client.post(
+            reverse("oauth_register"),
+            {"client_name": "App"},
+            HTTP_X_REAL_IP="10.0.0.99",
+        )
+        self.assertEqual(spoofed.status_code, HTTP.TOO_MANY_REQUESTS)
+
+        cache.clear()
+        with override_settings(ALLAUTH_TRUSTED_CLIENT_IP_HEADER="X-Real-IP"):
+            for index in range(10):
+                response = self.client.post(
+                    reverse("oauth_register"),
+                    {"client_name": "App"},
+                    HTTP_X_REAL_IP=f"10.0.1.{index}",
+                )
+                self.assertEqual(response.status_code, HTTP.CREATED)
+            other_caller = self.client.post(
+                reverse("oauth_register"),
+                {"client_name": "App"},
+                HTTP_X_REAL_IP="10.0.1.99",
+            )
+        self.assertEqual(other_caller.status_code, HTTP.CREATED)
+
+    def test_replay_revokes_a_long_refresh_chain_in_constant_queries(self):
+        """Revoking a long rotation lineage does not query once per link."""
+        _device, first = self.approve_and_exchange()
+        refresh = first["refresh_token"]
+        for _ in range(12):
+            refreshed = self.client.post(
+                reverse("oauth_token"),
+                {
+                    "client_id": self.oauth_client.client_id,
+                    "grant_type": OAUTH_REFRESH_TOKEN_GRANT,
+                    "refresh_token": refresh,
+                },
+            ).json()
+            refresh = refreshed["refresh_token"]
+
+        with CaptureQueriesContext(connection) as short_chain:
+            self.client.post(
+                reverse("oauth_revoke"),
+                {"client_id": self.oauth_client.client_id, "token": refresh},
+            )
+
+        self.assertLess(len(short_chain), 12)
+        self.assertFalse(
+            OAuthRefreshToken.objects.filter(revoked_at__isnull=True).exists()
+        )
