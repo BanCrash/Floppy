@@ -319,6 +319,24 @@ def _touch(paths):
             continue
 
 
+def cached_image_path(url, *, fetch=True):
+    """Return the cached file for an approved provider image, or None.
+
+    Server-side code that needs the pixels (the tier board export) uses this
+    instead of the browser, because covers are not always same-origin. With
+    ``fetch=False`` only a copy already on disk is returned.
+    """
+    if not is_approved_url(url):
+        return None
+    data_path, metadata_path = _paths(url)
+    if (
+        not data_path.is_file() or _metadata(data_path, metadata_path) is None
+    ) and not (fetch and _fetch_to_disk(url)):
+        return None
+    _touch((data_path, metadata_path))
+    return data_path
+
+
 def serve_cached_image(token, request):
     """Return a cached image, fetching it only when the feature is enabled."""
     url = _url_for_token(token)
