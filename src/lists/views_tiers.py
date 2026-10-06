@@ -10,7 +10,6 @@ from django.utils.text import slugify
 from django.views.decorators.http import require_GET, require_POST
 
 from lists.models import CustomList, CustomListItem
-from lists.tier_export import render_board
 from lists.tiers import clean_tiers, resolve_tiers
 from lists.views_add_reorder import apply_full_order
 
@@ -80,6 +79,9 @@ def export_tiers(request, list_id):
     custom_list = get_object_or_404(CustomList, id=list_id)
     if custom_list.is_smart or not custom_list.user_can_view(request.user):
         raise Http404
+    # Imported here so serving other requests does not load Pillow.
+    from lists.tier_export import render_board
+
     response = HttpResponse(render_board(custom_list), content_type="image/png")
     filename = f"{slugify(custom_list.name) or 'list'}-tiers.png"
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
