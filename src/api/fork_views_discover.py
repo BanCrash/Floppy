@@ -164,8 +164,8 @@ def _recommendation_ids(candidate):
                 provider_external_ids=metadata.get("provider_external_ids"),
             ),
         )
-    if candidate["source"] == Sources.TMDB.value:
-        ids.setdefault("tmdb", str(candidate["media_id"]))
+    if candidate["source"] in {Sources.TMDB.value, Sources.TVDB.value}:
+        ids.setdefault(candidate["source"], str(candidate["media_id"]))
     return ids
 
 
@@ -175,8 +175,10 @@ class RecommendationsView(DiscoverEnabledMixin, drf_views.APIView):
 
     For external clients (for example a media-server plugin) that build their
     own libraries from IMDb/TMDB/TVDB ids rather than Floppy's item ids. Picks
-    come from the Discover row, so they already exclude titles the user
-    tracks, and follow the same cache and refresh rules.
+    are the Discover row, so they follow its cache and refresh rules. Movie
+    picks are the Planning list plus new titles matching the user's taste,
+    never completed, dropped or in-progress ones. TV picks are the Planning
+    list, ranked.
     """
 
     @extend_schema(

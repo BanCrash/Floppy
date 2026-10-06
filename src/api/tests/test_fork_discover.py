@@ -261,6 +261,26 @@ class RecommendationsTests(FloppyApiTestCase):
             {"imdb": "tt0903747", "tvdb": "81189", "tmdb": "555"},
         )
 
+    def test_tvdb_source_keeps_its_id_when_lookup_fails(self):
+        """A TVDB-sourced pick still reports its TVDB id without provider data."""
+        pick = CandidateItem(
+            media_type=MediaTypes.TV.value,
+            source=Sources.TVDB.value,
+            media_id="81189",
+            title="TVDB Show",
+        )
+        rows = [self._row("top_picks_for_you", pick)]
+        with (
+            patch("api.fork_views_discover._discover_response_rows", return_value=rows),
+            patch(
+                "api.fork_views_discover.services.get_media_metadata",
+                side_effect=services.ProviderAPIError(Sources.TVDB.value, None),
+            ),
+        ):
+            response = self._get({"media_type": MediaTypes.TV.value})
+
+        self.assertEqual(response.json()["results"][0]["ids"], {"tvdb": "81189"})
+
     def test_provider_failure_keeps_pick(self):
         """A provider outage drops the extra ids but keeps the recommendation."""
         rows = [self._row("top_picks_for_you", self._pick("42", "Offline"))]

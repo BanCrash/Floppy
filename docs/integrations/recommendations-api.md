@@ -27,8 +27,13 @@ default token preset already holds the scopes below.
 `GET /api/v1/recommendations/?media_type=movie|tv&limit=20&offset=0`
 
 Returns the user's "Top Picks For You" Discover row as a flat, paginated list.
-Titles the user already tracks are excluded, so picks stay new to them even after
-files are deleted from the media server.
+What is in it differs by type:
+
+- `movie`: the user's Planning list plus new titles that match their taste.
+  Anything completed, dropped or in progress is left out, so a movie they
+  watched stays out even after the file is deleted from the media server.
+- `tv`: the user's Planning list, ranked by taste. Floppy has no row of new,
+  untracked TV recommendations, so a client wanting those must look elsewhere.
 
 ```json
 {
