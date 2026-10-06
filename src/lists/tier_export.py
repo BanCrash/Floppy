@@ -52,13 +52,13 @@ def _hex(color):
 
 def _cover(url, deadline):
     """Return the cover as a tile-sized image, or None when it is not available."""
-    path = image_cache.cached_image_path(url, fetch=time.monotonic() < deadline)
-    if path is None:
+    data = image_cache.cover_bytes(url, fetch=time.monotonic() < deadline)
+    if data is None:
         return None
     try:
-        with Image.open(path) as source:
+        with Image.open(io.BytesIO(data)) as source:
             return ImageOps.fit(source.convert("RGB"), (TILE_W, TILE_H))
-    except (OSError, ValueError):
+    except (OSError, ValueError, Image.DecompressionBombError):
         return None
 
 
@@ -98,21 +98,26 @@ def _label(draw, box, text, color):
 
 def render_board(custom_list):
     """Return the board as PNG bytes: each tier, then the unranked items."""
+    from app.models import Item
     from lists.models import CustomListItem
 
-    rows = list(
-        CustomListItem.objects.filter(custom_list=custom_list)
-        .select_related("item")
-        .order_by("date_added", "id")[:EXPORT_LIMIT],
-    )
     groups = [
         (tier["name"], tier["color"], tier["id"]) for tier in resolve_tiers(custom_list)
     ]
-    known = {tier_id for _, _, tier_id in groups}
-    by_tier = {tier_id: [] for tier_id in known}
+    rank = {tier_id: index for index, (_, _, tier_id) in enumerate(groups)}
+    # The same cut as the board: tier order, then place in the list, before the
+    # limit, so a long list shows the same items on screen and in the picture.
+    memberships = sorted(
+        CustomListItem.objects.filter(custom_list=custom_list)
+        .order_by("date_added", "id")
+        .values_list("item_id", "tier"),
+        key=lambda membership: rank.get(membership[1], len(rank)),
+    )[:EXPORT_LIMIT]
+    items = Item.objects.in_bulk([item_id for item_id, _ in memberships])
+    by_tier = {tier_id: [] for _, _, tier_id in groups}
     unranked = []
-    for row in rows:
-        (by_tier[row.tier] if row.tier in known else unranked).append(row.item)
+    for item_id, tier in memberships:
+        (by_tier[tier] if tier in rank else unranked).append(items[item_id])
     layout = [(name, color, by_tier[tier_id]) for name, color, tier_id in groups]
     if unranked:
         layout.append(("Unranked", "#aab2bd", unranked))

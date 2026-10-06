@@ -3,8 +3,9 @@
 import io
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from django.test import override_settings
 from django.urls import reverse
 from PIL import Image
 
@@ -48,13 +49,12 @@ class ExportTests(TierTestCase):
 
     def test_cover_is_drawn_in_its_tier_row(self):
         """A cached cover shows up at the first tile position of the first row."""
-        with tempfile.TemporaryDirectory() as folder:
-            cover = Path(folder) / "cover.png"
-            Image.new("RGB", (40, 60), (200, 10, 10)).save(cover)
-            self.items["One"].image = "https://image.tmdb.org/t/p/w500/one.jpg"
-            self.items["One"].save(update_fields=["image"])
-            with patch.object(image_cache, "cached_image_path", return_value=cover):
-                _, image = self.export()
+        cover = io.BytesIO()
+        Image.new("RGB", (40, 60), (200, 10, 10)).save(cover, "PNG")
+        self.items["One"].image = "https://image.tmdb.org/t/p/w500/one.jpg"
+        self.items["One"].save(update_fields=["image"])
+        with patch.object(image_cache, "cover_bytes", return_value=cover.getvalue()):
+            _, image = self.export()
         x, y = tile_origin()
         red, green, blue = image.getpixel(
             (x + tier_export.TILE_W // 2, y + tier_export.TILE_H // 2)
@@ -83,11 +83,25 @@ class ExportTests(TierTestCase):
         )
         self.assertEqual(image.height, expected)
 
+    def test_limit_keeps_the_same_items_as_the_board(self):
+        """Past the limit, ranked items win over earlier unranked ones."""
+        self.place(One="", Two="s", Three="a")
+        drawn = []
+        original = tier_export._title_tile
+        with (
+            patch.object(tier_export, "EXPORT_LIMIT", 2),
+            patch.object(
+                tier_export,
+                "_title_tile",
+                side_effect=lambda title: drawn.append(title) or original(title),
+            ),
+        ):
+            self.export()
+        self.assertEqual(sorted(drawn), ["Three", "Two"])
+
     def test_covers_stop_being_fetched_after_the_time_budget(self):
         """Past the deadline only covers already on disk are used."""
-        with patch.object(
-            image_cache, "cached_image_path", return_value=None
-        ) as lookup:
+        with patch.object(image_cache, "cover_bytes", return_value=None) as lookup:
             tier_export._cover("https://image.tmdb.org/t/p/w500/x.jpg", deadline=0)
         lookup.assert_called_once_with(
             "https://image.tmdb.org/t/p/w500/x.jpg", fetch=False
@@ -133,21 +147,49 @@ class ExportTests(TierTestCase):
         self.assertNotContains(self.client.get(page, {"layout": "tiers"}), self.url)
 
 
-class CachedImagePathTests(TierTestCase):
+class CoverBytesTests(TierTestCase):
     """The helper the export uses to get cover pixels."""
+
+    URL = "https://image.tmdb.org/t/p/w500/cover.jpg"
+
+    def setUp(self):
+        """Point the image cache at an empty folder."""
+        super().setUp()
+        self.data_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.data_dir.cleanup)
+        override = override_settings(FLOPPY_DATA_DIR=self.data_dir.name)
+        override.enable()
+        self.addCleanup(override.disable)
 
     def test_unapproved_urls_are_never_fetched(self):
         """Only approved provider hosts are fetched, like the image proxy."""
-        with patch.object(image_cache, "_fetch_to_disk") as fetch:
-            self.assertIsNone(image_cache.cached_image_path("http://127.0.0.1/a.jpg"))
-        fetch.assert_not_called()
+        with patch.object(image_cache, "_open_image_response") as opener:
+            self.assertIsNone(image_cache.cover_bytes("http://127.0.0.1/a.jpg"))
+        opener.assert_not_called()
 
-    def test_fetch_false_only_returns_what_is_already_on_disk(self):
+    def test_fetch_false_only_returns_what_is_already_cached(self):
         """With fetching off, a missing file is None and nothing is downloaded."""
-        with patch.object(image_cache, "_fetch_to_disk") as fetch:
-            path = image_cache.cached_image_path(
-                "https://image.tmdb.org/t/p/w500/never-cached.jpg",
-                fetch=False,
-            )
-        self.assertIsNone(path)
-        fetch.assert_not_called()
+        with patch.object(image_cache, "_open_image_response") as opener:
+            self.assertIsNone(image_cache.cover_bytes(self.URL, fetch=False))
+        opener.assert_not_called()
+
+    def test_download_stays_in_memory_when_caching_is_off(self):
+        """Image caching is off by default; an export must not write cache files."""
+        response = Mock()
+        response.iter_content.return_value = [b"abc", b"def"]
+        with patch.object(
+            image_cache, "_open_image_response", return_value=(response, "image/jpeg")
+        ):
+            self.assertEqual(image_cache.cover_bytes(self.URL), b"abcdef")
+        response.close.assert_called_once()
+        self.assertEqual(list(Path(self.data_dir.name).rglob("*.data")), [])
+
+    def test_oversized_downloads_are_dropped(self):
+        """A body past the size limit is not used."""
+        response = Mock()
+        response.iter_content.return_value = [b"x" * (image_cache.MAX_IMAGE_BYTES + 1)]
+        with patch.object(
+            image_cache, "_open_image_response", return_value=(response, "image/jpeg")
+        ):
+            self.assertIsNone(image_cache.cover_bytes(self.URL))
+        response.close.assert_called_once()
