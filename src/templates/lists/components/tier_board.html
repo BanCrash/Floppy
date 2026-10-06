@@ -8,7 +8,7 @@
     <p class="mb-3 text-sm text-[var(--color-text-muted)]">{% blocktranslate with count=tier_limit %}Showing the first {{ count }} items. Filter the list to see the rest.{% endblocktranslate %}</p>
   {% endif %}
 
-  <div class="flex flex-col gap-1.5">
+  <div class="flex flex-col gap-1">
     {% for column in tier_columns %}
       <div class="tier-row">
         {% if can_edit %}

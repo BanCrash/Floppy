@@ -8619,8 +8619,8 @@ html.light .theme-toggle-icon-moon {
 }
 .tier-row {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  min-height: 7rem;
+  grid-template-columns: 88px minmax(0, 1fr);
+  min-height: 3.25rem;
   overflow: hidden;
   border-radius: 0.5rem;
   background: var(--color-surface);
@@ -8656,9 +8656,9 @@ button.tier-label:hover .tier-label-edit, button.tier-label:focus-visible .tier-
   flex-wrap: wrap;
   align-content: flex-start;
   gap: 0.5rem;
-  min-height: 7rem;
+  min-height: 3.25rem;
   min-width: 0;
-  padding: 0.5rem;
+  padding: 0.375rem 0.5rem;
 }
 .tier-tile {
   position: relative;
@@ -8668,6 +8668,9 @@ button.tier-label:hover .tier-label-edit, button.tier-label:focus-visible .tier-
 }
 .tier-tile .media-card-year, .tier-tile .media-card-lines {
   display: none;
+}
+.tier-tile .media-card {
+  aspect-ratio: 3 / 4;
 }
 .tier-tile .media-card-body {
   padding: 0.375rem;
@@ -8710,19 +8713,19 @@ button.tier-label:hover .tier-label-edit, button.tier-label:focus-visible .tier-
   background: var(--color-surface-dim);
 }
 .tier-unranked .tier-drop {
-  min-height: 6rem;
+  min-height: 4rem;
 }
 @media (max-width: 560px) {
   .tier-row {
-    grid-template-columns: 64px minmax(0, 1fr);
-    min-height: 6rem;
+    grid-template-columns: 60px minmax(0, 1fr);
+    min-height: 3rem;
   }
   .tier-label {
     font-size: 1.0625rem;
   }
   .tier-drop {
     gap: 0.375rem;
-    padding: 0.375rem;
+    padding: 0.3125rem 0.375rem;
   }
   .tier-tile {
     width: 4.25rem;
