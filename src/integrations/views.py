@@ -72,6 +72,7 @@ from integrations import plex_cover as plex_cover_proxy
 from integrations.gpodder_api import GPodderAuthError, GPodderClientError
 from integrations.imports import anilist, helpers, mdblist, simkl, stremio, trakt
 from integrations.imports import plex as plex_import
+from integrations.imports import psn as psn_import
 from integrations.imports.audiobookshelf import (
     AudiobookshelfAuthError,
     AudiobookshelfClient,
@@ -3807,6 +3808,58 @@ def import_xbox(request):
     return redirect("import_data")
 
 
+def _psn_import_existing_playtime(request, default=True):
+    """Read the setup choice posted with the PSN forms."""
+    value = request.POST.get("existing_playtime")
+    return default if value is None else value != "new_only"
+
+
+def _ensure_psn_schedule(user):
+    """Keep exactly one recurring PSN sync for the user, at the fixed cadence.
+
+    PSN has no per-user frequency setting: a sync is cheap, and the sooner the
+    next one runs the narrower the window its new entry is slotted into. A
+    schedule left from the earlier daily/2-day choice is replaced.
+    """
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    crontab, _ = CrontabSchedule.objects.get_or_create(
+        # Spread users across the hour instead of syncing them all at once.
+        minute=str(user.id % 60),
+        hour=f"*/{psn_import.SYNC_EVERY_HOURS}",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+        timezone=timezone.get_default_timezone(),
+    )
+    own_tasks = PeriodicTask.objects.filter(
+        _periodic_task_filter_for_user(user.id),
+        task=PSN_RECURRING_TASK_NAME,
+    )
+    own_tasks.exclude(crontab=crontab).delete()
+
+    kwargs = json.dumps({"user_id": user.id, "mode": "new"})
+    task = own_tasks.first()
+    if task:
+        task.kwargs = kwargs
+        task.enabled = True
+        task.save(update_fields=["kwargs", "enabled"])
+        return
+
+    # The id keeps the name unique when a username is changed and reused.
+    PeriodicTask.objects.create(
+        name=(
+            f"Import from PSN for {user.username} (#{user.id}) "
+            f"every {psn_import.SYNC_EVERY_HOURS} hours"
+        ),
+        task=PSN_RECURRING_TASK_NAME,
+        crontab=crontab,
+        kwargs=kwargs,
+        start_time=_next_crontab_run(crontab),
+        enabled=True,
+    )
+
+
 @require_POST
 def psn_connect(request):
     """Connect a PlayStation Network account using an NPSSO token."""
@@ -3840,6 +3893,7 @@ def psn_connect(request):
                 "npsso": helpers.encrypt(npsso),
                 "account_id": account_id,
                 "online_id": online_id,
+                "import_existing_playtime": _psn_import_existing_playtime(request),
                 "connection_broken": False,
                 "last_error_message": "",
             },
@@ -3849,13 +3903,28 @@ def psn_connect(request):
         request,
         f"Connected to PlayStation Network as {online_id or account_id}.",
     )
-    _run_with_lock_retry(
-        "schedule PSN import",
-        lambda: _start_console_import(
-            request, "PSN", tasks.import_psn, PSN_RECURRING_TASK_NAME
-        ),
-    )
+    _run_with_lock_retry("schedule PSN import", lambda: _sync_psn_now(request))
     return redirect("import_data")
+
+
+def _sync_psn_now(request):
+    """Queue a sync now and make sure the recurring one is in place."""
+    _ensure_psn_schedule(request.user)
+    if (
+        _queue_task_or_message(
+            request,
+            tasks.import_psn,
+            user_id=request.user.id,
+            mode="new",
+        )
+        is False
+    ):
+        return
+    messages.info(
+        request,
+        "The PlayStation sync has been queued. It repeats every "
+        f"{psn_import.SYNC_EVERY_HOURS} hours.",
+    )
 
 
 @require_POST
@@ -3883,7 +3952,15 @@ def import_psn(request):
         messages.error(request, "Connect PlayStation Network before importing.")
         return redirect("import_data")
 
-    _start_console_import(request, "PSN", tasks.import_psn, PSN_RECURRING_TASK_NAME)
+    wants_existing = _psn_import_existing_playtime(
+        request,
+        default=account.import_existing_playtime,
+    )
+    if wants_existing != account.import_existing_playtime:
+        account.import_existing_playtime = wants_existing
+        account.save(update_fields=["import_existing_playtime"])
+
+    _run_with_lock_retry("schedule PSN import", lambda: _sync_psn_now(request))
     return redirect("import_data")
 
 
