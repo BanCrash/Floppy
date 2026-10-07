@@ -1,7 +1,8 @@
 # Floppy tracking client guide
 
-What a third-party client (Nuvio TV, Nuvio Mobile, Kodi, a scrobbler) needs to
-implement two-way tracking against Floppy, without reading Floppy's source.
+What a third-party client (Kodi, a scrobbler, or a Nuvio client, should Nuvio
+ever ship one) needs to implement two-way tracking against Floppy, without
+reading Floppy's source.
 
 The runnable half of this document is
 `src/api/tests/test_nuvio_conformance.py`. Every numbered step below has a test
@@ -26,10 +27,90 @@ to request is published rather than guessed.
 
 ## 1. Connect
 
-The user creates a token in **Settings → Integrations → App tokens**, names it
-after the device, and pastes it into the client. The secret is shown once.
+### Preferred: OAuth device flow
 
-Send it any of three ways:
+A public client should use Floppy's OAuth device flow instead of asking the
+user to copy a long-lived token.
+
+First introduce your app once per Floppy server and keep the returned
+`client_id`. The name is shown to the user, who sees it marked "Unverified".
+Limit: 10 requests a minute, name up to 60 characters. A registration that no
+one ever signed in with is deleted after a day; if the device endpoint answers
+`invalid_client`, register again.
+
+```http
+POST /oauth/register
+
+client_name=Nuvio on Living Room TV
+```
+
+The reply is `201` with `client_id`, `client_name`, `grant_types` and
+`token_endpoint_auth_method` (`none`).
+
+Discover the endpoints and supported scopes from:
+
+```
+GET /.well-known/oauth-authorization-server
+GET /oauth/scopes
+```
+
+Request a device code:
+
+```http
+POST /oauth/device/authorization
+
+client_id=flp_oauth_...
+scope=scrobble:write progress:read progress:write watchlist:read watchlist:write catalog:read sync:read
+```
+
+Show the returned `verification_uri_complete` (or `verification_uri` plus
+`user_code`) to the user. Poll the token endpoint no faster than the returned
+`interval`:
+
+```http
+POST /oauth/token
+
+client_id=flp_oauth_...
+grant_type=urn:ietf:params:oauth:grant-type:device_code
+device_code=flp_device_...
+```
+
+Before approval, the token endpoint returns `authorization_pending`. Polling
+too quickly returns `slow_down`. After approval it returns a one-hour bearer
+access token and a rotating refresh token.
+
+Refresh with:
+
+```http
+POST /oauth/token
+
+client_id=flp_oauth_...
+grant_type=refresh_token
+refresh_token=flp_refresh_...
+```
+
+A successful refresh returns a new access token **and a new refresh token**.
+Replace the old refresh token atomically; reusing a rotated token is treated as
+possible replay and revokes that rotation family. A refresh request may retain
+or narrow its scopes, but cannot broaden the user's original grant.
+
+The user can review and revoke grants under **Settings → Connected
+Applications**. A client may also call `POST /oauth/revoke` with its
+`client_id` and access or refresh token.
+
+Send the access token as:
+
+```
+Authorization: Bearer flp_xxx
+```
+
+### Manual-token fallback
+
+For clients that do not implement the device flow, the user can still create a
+token in **Settings → Integrations → App tokens**, name it after the device, and
+paste it into the client. The secret is shown once.
+
+Manual tokens may be sent as:
 
 ```
 Authorization: Bearer flp_xxx
@@ -37,8 +118,7 @@ Authorization: Token flp_xxx
 X-API-Key: flp_xxx
 ```
 
-A token minted with the default preset carries exactly what a tracking client
-needs:
+The default tracking preset carries exactly what a tracking client needs:
 
 ```
 scrobble:write  progress:read  progress:write
@@ -46,8 +126,8 @@ watchlist:read  watchlist:write  catalog:read  sync:read
 ```
 
 It cannot reach lists, music, podcasts, imports, exports, user settings, or
-metadata writes. Ask the user to tick extra permissions if you need them; do not
-ask for a broader token "just in case".
+metadata writes. Request only the additional permissions your client actually
+needs.
 
 Then call `GET /api/v1/sync/connections/` and keep each `origin_key`. You need
 it in step 5, and without it your position can never be recorded.
@@ -160,7 +240,12 @@ erase" as one action.
 
 ## NuvioTV's Floppy tracker
 
-NuvioTV (Settings, Trackers, Floppy) is a scrobble-only client of this API. The
+**Status: not released.** Nuvio does not officially support Floppy. This is an
+unmerged proposal ([NuvioMedia/NuvioTV#3811](https://github.com/NuvioMedia/NuvioTV/pull/3811))
+awaiting maintainer approval ([#2935](https://github.com/NuvioMedia/NuvioTV/issues/2935))
+and device testing. Nuvio Mobile has no Floppy client.
+
+The proposed NuvioTV tracker (Settings, Trackers, Floppy) is scrobble-only. The
 user enters their server address and the app token; NuvioTV checks it with
 `GET /api/v1/sync/connections/` and sends playback to `POST /api/v1/scrobble/`.
 
@@ -179,7 +264,7 @@ anime. An event with none of them, an episode with no season and episode number,
 or an episode numbered by TVDB order is not sent, because Floppy never matches by
 title.
 
-What it does not do yet: send a resume position (it has no seconds to send),
+What it does not do: send a resume position (it has no seconds to send),
 read history or lists back, or send ratings. The Nuvio and Floppy sides of those
 are separate changes.
 
@@ -234,7 +319,7 @@ the suite end to end.
 
 | Floppy revision | Client revision | Result | Date |
 |---|---|---|---|
-| `efbb545` | dannyvfilms/NuvioTV `13f4bb3` (unmerged fork branch) | Scrobble only. Client code ran against a live Floppy (connection check, start, early stop, finished stop) and the JVM unit tests pass. Not `verified`: the Android build was not compiled and nothing ran on a device. | 2026-10-01 |
+| `efbb545` | dannyvfilms/NuvioTV `13f4bb3` (unmerged fork branch, proposed upstream as NuvioTV#3811) | Scrobble only. Client code ran against a live Floppy (connection check, start, early stop, finished stop) and the JVM unit tests pass. Not `verified`: the Android build was not compiled and nothing ran on a device. | 2026-10-01 |
 
 ### Nuvio Mobile — https://github.com/NuvioMedia/NuvioMobile
 
