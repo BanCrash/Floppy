@@ -637,3 +637,64 @@ class ImportSimkl(TestCase):
 
         response = self.client.get(reverse("history"), {"y": now.year, "m": now.month})
         self.assertContains(response, "Perfect Blue")
+
+    @patch("integrations.imports.simkl.SimklImporter._get_user_list")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_importer_survives_show_stored_in_two_library_buckets(
+        self,
+        mock_tv_with_seasons,
+        mock_user_list,
+    ):
+        """A show present as both 'tv' and 'season' rows must not abort the import (#1500)."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Cowboy Bebop",
+            "image": "https://image.tmdb.org/t/p/w500/test.jpg",
+            "season/1": {
+                "image": "https://image.tmdb.org/t/p/w500/season1.jpg",
+                "max_progress": 1,
+                "episodes": [{"episode_number": 1, "still_path": "/ep1.jpg"}],
+            },
+        }
+        mock_user_list.return_value = {
+            "shows": [
+                {
+                    "last_watched_at": "2023-01-02T00:00:00Z",
+                    "show": {"title": "Cowboy Bebop", "ids": {"tmdb": 30991}},
+                    "status": "watching",
+                    "user_rating": 8,
+                    "seasons": [],
+                    "memo": {},
+                },
+            ],
+            "movies": [],
+            "anime": [],
+        }
+        tracked_tv = Item.objects.create(
+            media_id="30991",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.TV.value,
+            title="Cowboy Bebop",
+            image="https://image.tmdb.org/t/p/w500/test.jpg",
+        )
+        Item.objects.create(
+            media_id="30991",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.SEASON.value,
+            title="Cowboy Bebop",
+            image="https://image.tmdb.org/t/p/w500/test.jpg",
+        )
+
+        imported_counts, warnings = self.importer.import_data()
+
+        self.assertEqual(warnings, "")
+        self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
+        self.assertEqual(
+            Item.objects.filter(
+                media_id="30991",
+                media_type=MediaTypes.TV.value,
+            ).count(),
+            2,
+        )
+        self.assertEqual(TV.objects.get(user=self.user).item, tracked_tv)

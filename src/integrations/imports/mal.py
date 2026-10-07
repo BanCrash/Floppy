@@ -162,7 +162,7 @@ class MyAnimeListImporter:
         ):
             return
 
-        item, _ = app.models.Item.objects.get_or_create(
+        item, _ = helpers.get_or_create_item_across_buckets(
             media_id=str(content["node"]["id"]),
             source=Sources.MAL.value,
             media_type=media_type,

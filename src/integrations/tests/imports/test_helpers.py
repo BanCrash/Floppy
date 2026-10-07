@@ -701,3 +701,46 @@ class HelpersTest(TestCase):
 
         schedule = CrontabSchedule.objects.first()
         self.assertEqual(schedule.day_of_week, "*/2")
+
+
+class GetOrCreateItemAcrossBucketsTests(TestCase):
+    """An identity stored in several library buckets must not abort an import."""
+
+    identity = {
+        "media_id": "1396",
+        "source": Sources.TMDB.value,
+        "media_type": MediaTypes.TV.value,
+    }
+
+    def _create(self, bucket):
+        return Item.objects.create(
+            **self.identity,
+            library_media_type=bucket,
+            title="Breaking Bad",
+            image="https://example.com/bb.jpg",
+        )
+
+    def test_reuses_existing_row_when_identity_is_in_two_buckets(self):
+        """Prefers the requested bucket, where get_or_create raised."""
+        tv = self._create(MediaTypes.TV.value)
+        self._create(MediaTypes.SEASON.value)
+
+        item, created = helpers.get_or_create_item_across_buckets(
+            preferred_bucket=MediaTypes.TV.value,
+            defaults={"title": "ignored", "image": "x"},
+            **self.identity,
+        )
+
+        self.assertFalse(created)
+        self.assertEqual(item, tv)
+        self.assertEqual(Item.objects.filter(**self.identity).count(), 2)
+
+    def test_creates_row_when_identity_is_missing(self):
+        """Falls back to a plain get_or_create when nothing exists."""
+        item, created = helpers.get_or_create_item_across_buckets(
+            defaults={"title": "Breaking Bad", "image": "x"},
+            **self.identity,
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(item.title, "Breaking Bad")

@@ -98,6 +98,19 @@ def find_item_across_buckets(preferred_bucket=None, **identity):
     return candidates[0]
 
 
+def get_or_create_item_across_buckets(preferred_bucket=None, defaults=None, **identity):
+    """``get_or_create`` for an Item identity that tolerates several buckets.
+
+    Returns ``(item, created)`` like ``get_or_create``, but reuses a row from
+    any library bucket (see ``find_item_across_buckets``) instead of raising
+    ``MultipleObjectsReturned`` when the identity exists in more than one.
+    """
+    item = find_item_across_buckets(preferred_bucket, **identity)
+    if item is not None:
+        return item, False
+    return app.models.Item.objects.get_or_create(defaults=defaults, **identity)
+
+
 # Importers read identity fields off the preloaded items, never these. Loading
 # them for a whole library (``watch_providers`` is ~146 KiB a title) ran a large
 # Trakt export import out of memory before it wrote anything (#1252).

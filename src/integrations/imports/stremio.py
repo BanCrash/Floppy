@@ -562,7 +562,7 @@ class StremioImporter:
                 return
             raise
 
-        movie_item, _ = app.models.Item.objects.get_or_create(
+        movie_item, _ = helpers.get_or_create_item_across_buckets(
             media_id=tmdb_id,
             source=Sources.TMDB.value,
             media_type=MediaTypes.MOVIE.value,
@@ -1144,7 +1144,7 @@ class StremioImporter:
             )
             return
 
-        anime_item, _ = app.models.Item.objects.get_or_create(
+        anime_item, _ = helpers.get_or_create_item_across_buckets(
             media_id=mal_id,
             source=Sources.MAL.value,
             media_type=MediaTypes.ANIME.value,
