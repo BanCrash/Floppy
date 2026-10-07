@@ -131,6 +131,7 @@ from integrations.models import (
     LastFMAccount,
     MDBListAccount,
     MylarInstance,
+    PlaytimeSnapshot,
     PlexAccount,
     PlexWebhookShare,
     PocketCastsAccount,
@@ -3885,9 +3886,13 @@ def psn_connect(request):
         )
         return redirect("import_data")
 
-    _run_with_lock_retry(
-        "connect PSN",
-        lambda: PSNAccount.objects.update_or_create(
+    def _connect():
+        # Remembered totals belong to one PSN account: another account's totals
+        # would read as fabricated (or hidden) play against the old ones.
+        previous = PSNAccount.objects.filter(user=request.user).first()
+        if previous is None or previous.account_id != account_id:
+            PlaytimeSnapshot.objects.filter(user=request.user, source="psn").delete()
+        PSNAccount.objects.update_or_create(
             user=request.user,
             defaults={
                 "npsso": helpers.encrypt(npsso),
@@ -3897,8 +3902,9 @@ def psn_connect(request):
                 "connection_broken": False,
                 "last_error_message": "",
             },
-        ),
-    )
+        )
+
+    _run_with_lock_retry("connect PSN", _connect)
     messages.success(
         request,
         f"Connected to PlayStation Network as {online_id or account_id}.",
@@ -3938,6 +3944,7 @@ def psn_disconnect(request):
             task=PSN_RECURRING_TASK_NAME,
         ).delete()
         PSNAccount.objects.filter(user=request.user).delete()
+        PlaytimeSnapshot.objects.filter(user=request.user, source="psn").delete()
 
     _run_with_lock_retry("disconnect PSN", _disconnect)
     messages.info(request, "Disconnected PlayStation Network.")

@@ -400,6 +400,41 @@ class ImportPSN(TestCase):
         self.assertFalse(Game.objects.filter(user=self.user).exists())
         self.assertEqual(PlaytimeSnapshot.objects.get(user=self.user).minutes, 600)
 
+    def test_failed_snapshot_save_does_not_leave_logged_play_behind(self):
+        """Play logged without its remembered total would be logged again."""
+        with (
+            patch.object(
+                psn.PSNImporter,
+                "_save_snapshots",
+                side_effect=RuntimeError("disk full"),
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            self.sync(self.halo(1250, timezone.now()))
+
+        self.assertFalse(Game.objects.filter(user=self.user).exists())
+
+    def test_overlapping_syncs_do_not_run_twice(self):
+        """A second sync started while one runs is skipped, not double-logged."""
+        from integrations import tasks
+
+        cache.set(f"psn_import_lock_{self.user.id}", "other-task", 60)
+
+        with patch("integrations.tasks._media_imports.import_media") as run:
+            message = tasks.import_psn_recurring(user_id=self.user.id)
+
+        run.assert_not_called()
+        self.assertIn("already in progress", message)
+
+    def test_sync_releases_its_lock_when_done(self):
+        """The lock doesn't outlive the sync it guards."""
+        from integrations import tasks
+
+        with patch("integrations.tasks._media_imports.import_media", return_value="ok"):
+            tasks.import_psn(user_id=self.user.id)
+
+        self.assertIsNone(cache.get(f"psn_import_lock_{self.user.id}"))
+
     def test_task_reports_what_a_sync_did(self):
         """A sync that only logs new time doesn't read as "No media imported"."""
         from integrations import tasks
@@ -1110,6 +1145,48 @@ class PSNViewTests(TestCase):
                 kwargs__contains=f'"user_id": {self.user.id}',
             ).exists(),
         )
+
+    @patch("integrations.views.tasks.import_psn.delay")
+    @patch("integrations.views.psn_api.get_account")
+    def test_remembered_totals_follow_the_connected_account(
+        self,
+        mock_account,
+        _mock_delay,
+    ):
+        """Another PSN account's totals would read as fabricated or hidden play."""
+        mock_account.return_value = ("1234567890", "TestPlayer")
+        self.client.post(reverse("psn_connect"), {"npsso": "npsso-token"})
+        PlaytimeSnapshot.objects.create(
+            user=self.user,
+            source="psn",
+            media_id="1",
+            minutes=600,
+            seen_at=timezone.now(),
+        )
+
+        # Reconnecting the same account keeps what was remembered.
+        self.client.post(reverse("psn_connect"), {"npsso": "new-token"})
+        self.assertEqual(PlaytimeSnapshot.objects.filter(user=self.user).count(), 1)
+
+        # A different account starts fresh.
+        mock_account.return_value = ("999", "OtherPlayer")
+        self.client.post(reverse("psn_connect"), {"npsso": "other-token"})
+        self.assertFalse(PlaytimeSnapshot.objects.filter(user=self.user).exists())
+
+    def test_disconnect_forgets_the_remembered_totals(self):
+        """Disconnecting clears them, so a later account never inherits them."""
+        self._connect_account()
+        PlaytimeSnapshot.objects.create(
+            user=self.user,
+            source="psn",
+            media_id="1",
+            minutes=600,
+            seen_at=timezone.now(),
+        )
+
+        self.client.post(reverse("psn_disconnect"))
+
+        self.assertFalse(PlaytimeSnapshot.objects.filter(user=self.user).exists())
 
     @patch("integrations.views.tasks.import_psn.delay")
     def test_sync_now_requires_connected_account(self, mock_delay):

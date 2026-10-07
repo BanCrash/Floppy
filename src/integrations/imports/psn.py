@@ -22,6 +22,7 @@ import re
 from collections import defaultdict
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
 import app
@@ -239,8 +240,11 @@ class PSNImporter:
             self._mark_failed(msg, auth=False)
             raise MediaImportError(msg)
 
-        helpers.bulk_create_media(self.bulk_media, self.user)
-        self._save_snapshots()
+        # One transaction, so a failed snapshot save can't leave logged play
+        # without its remembered total (it would be logged again next sync).
+        with transaction.atomic():
+            helpers.bulk_create_media(self.bulk_media, self.user)
+            self._save_snapshots()
 
         if self.to_update_meta:
             app.models.Item.objects.bulk_update(
