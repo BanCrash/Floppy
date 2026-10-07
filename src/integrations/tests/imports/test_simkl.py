@@ -698,3 +698,69 @@ class ImportSimkl(TestCase):
             2,
         )
         self.assertEqual(TV.objects.get(user=self.user).item, tracked_tv)
+
+    @patch("integrations.imports.simkl.SimklImporter._get_user_list")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_importer_keeps_the_users_own_row_when_another_user_uses_tv_bucket(
+        self,
+        mock_tv_with_seasons,
+        mock_user_list,
+    ):
+        """The importing user's row wins even when it is not in the 'tv' bucket (#1500)."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Cowboy Bebop",
+            "image": "https://image.tmdb.org/t/p/w500/test.jpg",
+        }
+        mock_user_list.return_value = {
+            "shows": [
+                {
+                    "last_watched_at": "2023-01-02T00:00:00Z",
+                    "show": {"title": "Cowboy Bebop", "ids": {"tmdb": 30991}},
+                    "status": "watching",
+                    "user_rating": 8,
+                    "seasons": [],
+                    "memo": {},
+                },
+            ],
+            "movies": [],
+            "anime": [],
+        }
+        other_user = get_user_model().objects.create_user(
+            username="other",
+            password="12345",
+        )
+        other_item = Item.objects.create(
+            media_id="30991",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.TV.value,
+            title="Cowboy Bebop",
+            image="https://image.tmdb.org/t/p/w500/test.jpg",
+        )
+        TV.objects.create(
+            item=other_item,
+            user=other_user,
+            status=Status.PLANNING.value,
+        )
+        my_item = Item.objects.create(
+            media_id="30991",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.SEASON.value,
+            title="Cowboy Bebop",
+            image="https://image.tmdb.org/t/p/w500/test.jpg",
+        )
+        TV.objects.create(item=my_item, user=self.user, status=Status.PLANNING.value)
+        importer = simkl.SimklImporter(
+            helpers.encrypt("token"),
+            self.user,
+            "overwrite",
+        )
+
+        imported_counts, warnings = importer.import_data()
+
+        self.assertEqual(warnings, "")
+        self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
+        self.assertEqual(TV.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(TV.objects.get(user=self.user).item, my_item)
+        self.assertEqual(TV.objects.get(user=other_user).item, other_item)

@@ -744,3 +744,28 @@ class GetOrCreateItemAcrossBucketsTests(TestCase):
 
         self.assertTrue(created)
         self.assertEqual(item.title, "Breaking Bad")
+
+    def test_prefers_the_row_the_user_already_tracks(self):
+        """Another user's row in the preferred bucket must not win."""
+        user = get_user_model().objects.create_user(username="a", password="x")
+        other = get_user_model().objects.create_user(username="b", password="x")
+        self._create(MediaTypes.TV.value)
+        mine = self._create(MediaTypes.SEASON.value)
+        TV.objects.create(item=mine, user=user, status=Status.PLANNING.value)
+        TV.objects.create(
+            item=Item.objects.get(
+                **self.identity,
+                library_media_type=MediaTypes.TV.value,
+            ),
+            user=other,
+            status=Status.PLANNING.value,
+        )
+
+        item, created = helpers.get_or_create_item_across_buckets(
+            preferred_bucket=MediaTypes.TV.value,
+            user=user,
+            **self.identity,
+        )
+
+        self.assertFalse(created)
+        self.assertEqual(item, mine)

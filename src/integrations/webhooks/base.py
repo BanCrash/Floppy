@@ -1411,6 +1411,7 @@ class BaseWebhookProcessor:
 
         movie_metadata = app.providers.tmdb.movie(media_id)
         movie_item, _ = import_helpers.get_or_create_item_across_buckets(
+            user=user,
             media_id=media_id,
             source=Sources.TMDB.value,
             media_type=MediaTypes.MOVIE.value,
@@ -2392,6 +2393,7 @@ class BaseWebhookProcessor:
         from integrations.imports import helpers as import_helpers
 
         anime_item, _ = import_helpers.get_or_create_item_across_buckets(
+            user=user,
             media_id=media_id,
             source=Sources.MAL.value,
             media_type=MediaTypes.ANIME.value,

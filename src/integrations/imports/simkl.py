@@ -318,6 +318,7 @@ class SimklImporter:
 
                 if should_process_tv:
                     tv_item, _ = helpers.get_or_create_item_across_buckets(
+                        user=self.user,
                         preferred_bucket=MediaTypes.TV.value,
                         media_id=tv_media_id,
                         source=tv_source,
@@ -637,6 +638,7 @@ class SimklImporter:
                     raise
 
                 movie_item, _ = helpers.get_or_create_item_across_buckets(
+                    user=self.user,
                     media_id=tmdb_id,
                     source=Sources.TMDB.value,
                     media_type=MediaTypes.MOVIE.value,
@@ -724,6 +726,7 @@ class SimklImporter:
             raise
 
         anime_item, _ = helpers.get_or_create_item_across_buckets(
+            user=self.user,
             media_id=mal_id,
             source=Sources.MAL.value,
             media_type=MediaTypes.ANIME.value,

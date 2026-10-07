@@ -297,6 +297,7 @@ class AniListImporter:
             status = content["status"].capitalize()
 
         item, _ = helpers.get_or_create_item_across_buckets(
+            user=self.user,
             media_id=str(content["media"]["idMal"]),
             source=Sources.MAL.value,
             media_type=media_type,

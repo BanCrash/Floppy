@@ -324,6 +324,7 @@ class KitsuImporter:
         image_url = self._get_image_url(kitsu_metadata)
 
         item, _ = helpers.get_or_create_item_across_buckets(
+            user=self.user,
             media_id=media_id,
             source=source,
             media_type=media_type,

@@ -892,6 +892,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             return
 
         movie_item, _ = get_or_create_item_across_buckets(
+            user=user,
             media_id=tmdb_id,
             source=Sources.TMDB.value,
             media_type=MediaTypes.MOVIE.value,
@@ -1084,6 +1085,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 return
 
             movie_item, _ = get_or_create_item_across_buckets(
+                user=user,
                 media_id=tmdb_id,
                 source=Sources.TMDB.value,
                 media_type=MediaTypes.MOVIE.value,
